@@ -1,0 +1,23 @@
+{
+  "name": "@vvfx/phaser-runtime",
+  "version": "0.13.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/vvfx-phaser-runtime.js",
+  "module": "./dist/vvfx-phaser-runtime.js",
+  "types": "./types/index.d.ts",
+  "files": [
+    "dist",
+    "types",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/vvfx-phaser-runtime.js"
+    }
+  },
+  "peerDependencies": {
+    "phaser": ">=3.90.0 <4"
+  }
+}

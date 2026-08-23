@@ -1,0 +1,876 @@
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { AssetPanel } from "../src/editor/components/AssetPanel";
+import { RangeField } from "../src/editor/components/Controls";
+import { ExportDialog } from "../src/editor/components/ExportDialog";
+import { GroupInspector } from "../src/editor/components/GroupInspector";
+import { LayerPanel } from "../src/editor/components/LayerPanel";
+import { Inspector } from "../src/editor/components/Inspector";
+import { OnboardingOverlay } from "../src/editor/components/LearningCenter";
+import {
+  RecoveryDialog,
+  SaveAsDialog,
+} from "../src/editor/components/ProjectSafetyDialogs";
+import { ProjectsDialog } from "../src/editor/components/ProjectsDialog";
+import { TemplateLibraryDialog } from "../src/editor/components/TemplateLibraryDialog";
+import { TopBar } from "../src/editor/components/TopBar";
+import {
+  Timeline,
+  groupDelayAfterTimelineDrag,
+  keyframeTimeAfterTimelineDrag,
+  timingAfterTimelineDrag,
+} from "../src/editor/components/Timeline";
+import { useHistoryState } from "../src/editor/useHistoryState";
+import {
+  createEmptyProject,
+  createGroup,
+  createLayer,
+} from "../src/vfx/defaults";
+import { createTemplateFromProject } from "../src/vfx/templates";
+import {
+  layerPositionAfterPreviewDrag,
+  pathPointAfterPreviewDrag,
+} from "../src/preview/dragPosition";
+
+describe("undo and redo", () => {
+  it("moves safely through editor history", () => {
+    const { result } = renderHook(() => useHistoryState({ value: 1 }));
+    act(() => result.current.set({ value: 2 }));
+    expect(result.current.value.value).toBe(2);
+    act(() => result.current.undo());
+    expect(result.current.value.value).toBe(1);
+    act(() => result.current.redo());
+    expect(result.current.value.value).toBe(2);
+  });
+
+  it("keeps preview-only changes out of authoring history", () => {
+    const { result } = renderHook(() =>
+      useHistoryState({ effectX: 0, zoom: 1 }),
+    );
+    act(() => result.current.set({ effectX: 40, zoom: 1 }));
+    act(() =>
+      result.current.setTransient((current) => ({ ...current, zoom: 2 })),
+    );
+
+    act(() => result.current.undo());
+    expect(result.current.value).toEqual({ effectX: 0, zoom: 2 });
+    act(() => result.current.redo());
+    expect(result.current.value).toEqual({ effectX: 40, zoom: 2 });
+  });
+});
+
+describe("beginner-friendly controls", () => {
+  it("moves preview layers by pointer delta without double-counting offsets", () => {
+    expect(
+      layerPositionAfterPreviewDrag({
+        layerX: 30,
+        layerY: -20,
+        startPreviewX: 460,
+        startPreviewY: 210,
+        endPreviewX: 540,
+        endPreviewY: 250,
+        zoom: 2,
+      }),
+    ).toEqual({ x: 70, y: 0 });
+  });
+
+  it("keeps the original position when preview drop coordinates are invalid", () => {
+    expect(
+      layerPositionAfterPreviewDrag({
+        layerX: 30,
+        layerY: -20,
+        startPreviewX: 460,
+        startPreviewY: 210,
+        endPreviewX: Number.NaN,
+        endPreviewY: Number.NaN,
+        zoom: 1,
+      }),
+    ).toEqual({ x: 30, y: -20 });
+  });
+
+  it("converts draggable path handles into local waypoint coordinates", () => {
+    expect(
+      pathPointAfterPreviewDrag({
+        layerX: 30,
+        layerY: -20,
+        previewCenterX: 400,
+        previewCenterY: 250,
+        endPreviewX: 560,
+        endPreviewY: 330,
+        zoom: 2,
+      }),
+    ).toEqual({ x: 50, y: 60 });
+  });
+
+  it("pairs a slider with a precise number field and visible unit", () => {
+    const onChange = vi.fn();
+    render(
+      <RangeField
+        label="How long it lasts"
+        value={700}
+        min={50}
+        max={2000}
+        unit="ms"
+        help="Lower is faster."
+        defaultValue={450}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByText("ms")).toBeInTheDocument();
+    expect(screen.getByLabelText("Help: Lower is faster.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("How long it lasts"), {
+      target: { value: "800" },
+    });
+    expect(onChange).toHaveBeenCalledWith(800);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reset How long it lasts to default",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith(450);
+  });
+
+  it("turns a dropped local file into an upload action instead of a file navigation", () => {
+    const onError = vi.fn();
+    render(
+      <AssetPanel
+        assets={[]}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onUpload={vi.fn()}
+        onRename={vi.fn()}
+        onChangeAsset={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onError={onError}
+      />,
+    );
+    const zone = screen.getByRole("button", { name: /bring in your images/i });
+    const file = new File(["not an image"], "photo.jpg", {
+      type: "image/jpeg",
+    });
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [file], types: ["Files"] },
+    });
+    expect(onError).toHaveBeenCalledWith(
+      "Vvfx can currently import PNG and WebP images.",
+    );
+  });
+
+  it("renames a layer directly in the layer list", () => {
+    const layer = createLayer("animated", "Old name");
+    const onUpdate = vi.fn();
+    render(
+      <LayerPanel
+        layers={[layer]}
+        groups={[]}
+        selectedId={layer.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onAdd={vi.fn()}
+        onAddPreset={vi.fn()}
+        onUpdate={onUpdate}
+        onDuplicate={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={vi.fn()}
+      />,
+    );
+    fireEvent.doubleClick(
+      screen.getByTitle("Select layer · double-click to rename"),
+    );
+    const input = screen.getByLabelText("Rename Old name");
+    fireEvent.change(input, { target: { value: "Shockwave ring" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onUpdate).toHaveBeenCalledWith(layer.id, {
+      name: "Shockwave ring",
+    });
+  });
+
+  it("edits a group's shared offsets and membership", () => {
+    const group = createGroup("Impact core");
+    const flash = createLayer("animated", "Flash");
+    const ring = createLayer("animated", "Ring");
+    flash.groupId = group.id;
+    const onChange = vi.fn();
+    const onLayerGroupChange = vi.fn();
+    const inspector = render(
+      <GroupInspector
+        group={group}
+        layers={[flash, ring]}
+        onChange={onChange}
+        onLayerGroupChange={onLayerGroupChange}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Group position X"), {
+      target: { value: "120" },
+    });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: group.id, x: 120 }),
+    );
+    fireEvent.click(
+      within(inspector.container).getByRole("checkbox", { name: /Ring/ }),
+    );
+    expect(onLayerGroupChange).toHaveBeenCalledWith(ring.id, group.id);
+  });
+
+  it("turns an uploaded image into a reusable sprite sheet", () => {
+    const layer = createLayer("animated", "Flame", "flame-sheet");
+    const asset = {
+      id: "flame-sheet",
+      name: "Flame sheet",
+      mimeType: "image/png" as const,
+      dataUrl: "data:image/png;base64,abc",
+      width: 128,
+      height: 32,
+      spriteSheet: null,
+    };
+    const onAssetChange = vi.fn();
+    render(
+      <Inspector
+        layer={layer}
+        assets={[asset]}
+        layers={[layer]}
+        onChange={vi.fn()}
+        onAssetChange={onAssetChange}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Use as a sprite sheet"));
+    expect(onAssetChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 4 },
+      }),
+    );
+  });
+
+  it("assigns a named Phaser texture-atlas frame to an uploaded image", () => {
+    const layer = createLayer("animated", "Spark", "atlas-spark");
+    const asset = {
+      id: "atlas-spark",
+      name: "Atlas spark",
+      mimeType: "image/png" as const,
+      dataUrl: "data:image/png;base64,abc",
+      width: 64,
+      height: 64,
+      spriteSheet: null,
+      atlasFrame: null,
+    };
+    const onAssetChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[asset]}
+        layers={[layer]}
+        onChange={vi.fn()}
+        onAssetChange={onAssetChange}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.change(
+      within(inspector.container).getByRole("textbox", {
+        name: "Atlas frame name",
+      }),
+      {
+        target: { value: "vfx/spark-01" },
+      },
+    );
+    expect(onAssetChange).toHaveBeenCalledWith(
+      expect.objectContaining({ atlasFrame: "vfx/spark-01" }),
+    );
+  });
+
+  it("enables motion trails from the selected layer settings", () => {
+    const layer = createLayer("animated", "Comet", "builtin-spark");
+    const onChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.click(
+      within(inspector.container).getByLabelText("Leave a motion trail"),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trail: expect.objectContaining({ enabled: true }),
+      }),
+    );
+  });
+
+  it("enables motion paths from the selected layer settings", () => {
+    const layer = createLayer("animated", "Orb", "builtin-ring");
+    const onChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.click(
+      within(inspector.container).getByLabelText("Follow a motion path"),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        motionPath: expect.objectContaining({ enabled: true }),
+      }),
+    );
+  });
+
+  it("initializes keyframes from the layer's existing start and end values", () => {
+    const layer = createLayer("animated", "Pulse", "builtin-ring");
+    layer.transform.startScale = 0.5;
+    layer.transform.endScale = 2;
+    layer.transform.endOpacity = 0.2;
+    layer.transform.rotationDuring = 180;
+    const onChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.click(
+      within(inspector.container).getByLabelText("Use multiple keyframes"),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyframes: expect.objectContaining({
+          enabled: true,
+          initialized: true,
+          frames: [
+            expect.objectContaining({ time: 0, scaleX: 0.5, opacity: 1 }),
+            expect.objectContaining({
+              time: 1,
+              scaleX: 2,
+              opacity: 0.2,
+              rotation: 180,
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("chooses an easing curve from the visual preset comparison", () => {
+    const layer = createLayer("animated", "Flash", "builtin-flash");
+    const onChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.click(
+      within(inspector.container).getByRole("button", {
+        name: "Use Bounce easing",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timing: expect.objectContaining({ easing: "bounce" }),
+      }),
+    );
+  });
+
+  it("edits custom easing handle values precisely", () => {
+    const layer = createLayer("animated", "Flash", "builtin-flash");
+    layer.timing.easing = "custom";
+    const onChange = vi.fn();
+    const inspector = render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    fireEvent.change(
+      within(inspector.container).getByLabelText("First handle height"),
+      { target: { value: "-35" } },
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timing: expect.objectContaining({
+          customEasing: expect.objectContaining({ y1: -0.35 }),
+        }),
+      }),
+    );
+  });
+
+  it("explains clean active-range WebM export before recording", () => {
+    const project = createEmptyProject("Preview export");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    render(
+      <ExportDialog
+        project={project}
+        activeDuration={900}
+        onRecordPreview={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("WebM video")).toBeInTheDocument();
+    expect(screen.getByText(/0.90 seconds at 30 FPS/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Removes the grid, selection outline/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Record & download .webm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Export & download .webm" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "gif" },
+    });
+    expect(screen.getAllByText(/Animated GIF/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Export & download .gif" }),
+    ).toBeInTheDocument();
+  });
+
+  it("moves a timeline layer while preserving its duration", () => {
+    const layer = createLayer("animated", "Moving flash");
+    layer.timing = { ...layer.timing, delay: 100, duration: 500 };
+
+    expect(timingAfterTimelineDrag(layer.timing, 2000, 400, "move")).toEqual({
+      delay: 500,
+      duration: 500,
+    });
+  });
+
+  it("resizes layer edges against absolute millisecond targets", () => {
+    const layer = createLayer("animated", "Impact ring");
+    layer.timing = { ...layer.timing, delay: 100, duration: 500 };
+
+    expect(timingAfterTimelineDrag(layer.timing, 2000, 100, "start")).toEqual({
+      delay: 200,
+      duration: 400,
+    });
+    expect(
+      timingAfterTimelineDrag(layer.timing, 2000, 18, "end", "markers", [
+        { id: "ring-end", time: 620, label: "Ring ends" },
+      ]),
+    ).toEqual({ delay: 100, duration: 520 });
+  });
+
+  it("moves only intermediate keyframe times and keeps them ordered", () => {
+    const layer = createLayer("animated", "Pulse");
+    layer.timing.duration = 1000;
+    layer.keyframes = {
+      enabled: true,
+      initialized: true,
+      frames: [
+        { time: 0, scaleX: 1, scaleY: 1, opacity: 1, rotation: 0 },
+        { time: 0.5, scaleX: 2, scaleY: 2, opacity: 0.5, rotation: 0 },
+        { time: 1, scaleX: 1, scaleY: 1, opacity: 0, rotation: 0 },
+      ],
+    };
+
+    expect(keyframeTimeAfterTimelineDrag(layer, 1, 200)).toBeCloseTo(0.7);
+    expect(keyframeTimeAfterTimelineDrag(layer, 1, 1000)).toBeCloseTo(0.99);
+    expect(keyframeTimeAfterTimelineDrag(layer, 0, 200)).toBe(0);
+  });
+
+  it("commits a timeline drag as one layer change", () => {
+    const layer = createLayer("animated", "Moving flash");
+    layer.timing = { ...layer.timing, delay: 100, duration: 500 };
+    const onLayerChange = vi.fn();
+    const { container } = render(
+      <Timeline
+        layers={[layer]}
+        groups={[]}
+        duration={2000}
+        time={0}
+        selectedId={layer.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onSeek={vi.fn()}
+        onLayerChange={onLayerChange}
+        onGroupChange={vi.fn()}
+        onDurationChange={vi.fn()}
+      />,
+    );
+    const track = container.querySelector(".timeline-tracks");
+    if (!(track instanceof HTMLElement)) throw new Error("Timeline missing");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1000,
+      bottom: 100,
+      left: 0,
+      width: 1000,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const bar = screen.getByRole("slider", {
+      name: "Move Moving flash on timeline",
+    });
+    fireEvent.pointerDown(bar, { button: 0, clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 300 });
+    expect(onLayerChange).not.toHaveBeenCalled();
+    expect(bar).toHaveAttribute("aria-valuenow", "500");
+    fireEvent.pointerUp(window, { clientX: 300 });
+
+    expect(onLayerChange).toHaveBeenCalledOnce();
+    expect(onLayerChange.mock.calls[0][0].timing).toMatchObject({
+      delay: 500,
+      duration: 500,
+    });
+  });
+
+  it("adds an exact saved marker at the playhead", () => {
+    const layer = createLayer("animated", "Critical flash");
+    const onTimelineChange = vi.fn();
+    render(
+      <Timeline
+        layers={[layer]}
+        groups={[]}
+        duration={1000}
+        time={120}
+        selectedId={layer.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onSeek={vi.fn()}
+        onLayerChange={vi.fn()}
+        onGroupChange={vi.fn()}
+        onDurationChange={vi.fn()}
+        timeline={{ markers: [], notes: "" }}
+        onTimelineChange={onTimelineChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add marker at 120 ms" }),
+    );
+    expect(onTimelineChange).toHaveBeenCalledOnce();
+    expect(onTimelineChange.mock.calls[0][0].markers[0]).toMatchObject({
+      time: 120,
+      label: "Marker 1",
+    });
+  });
+
+  it("aligns a multi-layer selection at the playhead as one batch", () => {
+    const flash = createLayer("animated", "Flash");
+    const ring = createLayer("animated", "Ring");
+    ring.timing.delay = 300;
+    const onLayersChange = vi.fn();
+    render(
+      <Timeline
+        layers={[flash, ring]}
+        groups={[]}
+        duration={1000}
+        time={180}
+        selectedId={flash.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onSeek={vi.fn()}
+        onLayerChange={vi.fn()}
+        onLayersChange={onLayersChange}
+        onGroupChange={vi.fn()}
+        onDurationChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Ring" }), {
+      ctrlKey: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Starts.*playhead/i }));
+
+    expect(onLayersChange).toHaveBeenCalledOnce();
+    expect(
+      onLayersChange.mock.calls[0][0].map(
+        (layer: ReturnType<typeof createLayer>) => layer.timing.delay,
+      ),
+    ).toEqual([180, 180]);
+  });
+
+  it("moves a whole group on the timeline as one change", () => {
+    const group = createGroup("Impact core");
+    group.delay = 100;
+    const layer = createLayer("animated", "Flash");
+    layer.groupId = group.id;
+    const onGroupChange = vi.fn();
+    const { container } = render(
+      <Timeline
+        layers={[layer]}
+        groups={[group]}
+        duration={2000}
+        time={0}
+        selectedId={null}
+        selectedGroupId={group.id}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onSeek={vi.fn()}
+        onLayerChange={vi.fn()}
+        onGroupChange={onGroupChange}
+        onDurationChange={vi.fn()}
+      />,
+    );
+    const track = container.querySelector(".timeline-tracks");
+    if (!(track instanceof HTMLElement)) throw new Error("Timeline missing");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1000,
+      bottom: 100,
+      left: 0,
+      width: 1000,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const bar = screen.getByRole("slider", {
+      name: "Move Impact core on timeline",
+    });
+    fireEvent.pointerDown(bar, { button: 0, clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 300 });
+    expect(onGroupChange).not.toHaveBeenCalled();
+    expect(bar).toHaveAttribute("aria-valuenow", "500");
+    fireEvent.pointerUp(window, { clientX: 300 });
+
+    expect(onGroupChange).toHaveBeenCalledOnce();
+    expect(onGroupChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: group.id, delay: 500 }),
+    );
+    expect(groupDelayAfterTimelineDrag(100, 2000, -500)).toBe(0);
+  });
+
+  it("explains the workspace through a step-based onboarding overlay", () => {
+    const onNext = vi.fn();
+    render(
+      <OnboardingOverlay
+        step={1}
+        onBack={vi.fn()}
+        onNext={onNext}
+        onSkip={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("The Asset Library holds your images"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect(onNext).toHaveBeenCalledOnce();
+  });
+
+  it("creates a named copy through Save As", () => {
+    const onSave = vi.fn();
+    render(
+      <SaveAsDialog
+        suggestedName="Impact copy"
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText("Project name");
+    fireEvent.change(input, { target: { value: "Blue impact" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save copy" }));
+    expect(onSave).toHaveBeenCalledWith("Blue impact");
+  });
+
+  it("offers to restore a separately autosaved editing session", () => {
+    const onRestore = vi.fn();
+    const project = createEmptyProject("Recovered sparks");
+    project.layers.push(createLayer("burst", "Sparks"));
+    render(
+      <RecoveryDialog
+        draft={{
+          id: "current",
+          project,
+          savedAt: "2026-08-20T12:00:00.000Z",
+        }}
+        onRestore={onRestore}
+        onDiscard={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Recovered sparks")).toBeInTheDocument();
+    expect(screen.getByText(/1 layer/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /restore session/i }));
+    expect(onRestore).toHaveBeenCalledOnce();
+  });
+
+  it("shows the current project protection state beside its name", () => {
+    render(
+      <TopBar
+        projectName="Impact"
+        canUndo={false}
+        canRedo={false}
+        saveStatus="protected"
+        onNameChange={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onSave={vi.fn()}
+        onSaveAs={vi.fn()}
+        onOpenProjects={vi.fn()}
+        onOpenTemplates={vi.fn()}
+        onImport={vi.fn()}
+        onExport={vi.fn()}
+        onNewProject={vi.fn()}
+        onLearn={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Unsaved · recovery protected")).toBeVisible();
+  });
+
+  it("duplicates a named save from the project list", () => {
+    const onDuplicate = vi.fn();
+    const project = createEmptyProject("Poison ooze");
+    render(
+      <ProjectsDialog
+        projects={[project]}
+        onLoad={vi.fn()}
+        onDuplicate={onDuplicate}
+        onDelete={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Duplicate Poison ooze" }),
+    );
+    expect(onDuplicate).toHaveBeenCalledWith(project);
+  });
+
+  it("saves and inserts effects through the local template library", async () => {
+    const project = createEmptyProject("Blue impact");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const template = createTemplateFromProject(project, "Enemy hit");
+    const onSaveCurrent = vi.fn().mockResolvedValue(undefined);
+    const onInsert = vi.fn();
+    const onImport = vi.fn().mockResolvedValue({
+      added: 1,
+      alreadyHere: 1,
+      importedAsCopy: 1,
+    });
+    const { container } = render(
+      <TemplateLibraryDialog
+        projectName={project.metadata.name}
+        canSaveCurrent
+        templates={[template]}
+        saveSummaries={{
+          effect: {
+            layerCount: 1,
+            groupCount: 0,
+            assetCount: 1,
+            uploadedAssetCount: 0,
+            omittedParentLinks: 0,
+            omittedEventLinks: 0,
+            timelineAnchor: 0,
+            duration: 900,
+          },
+        }}
+        onSaveCurrent={onSaveCurrent}
+        onInsert={onInsert}
+        onInsertBuiltIn={vi.fn()}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onDuplicate={vi.fn().mockResolvedValue(undefined)}
+        onExportOne={vi.fn()}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+        onImport={onImport}
+        onExport={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Complete-effect starters" }),
+    ).toBeVisible();
+    const picker =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(picker?.accept).toContain(".vvfx-template");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save current effect" }),
+    );
+    fireEvent.change(screen.getByLabelText("Template name"), {
+      target: { value: "Boss hit" },
+    });
+    fireEvent.change(screen.getByLabelText(/short reminder/i), {
+      target: { value: "Large blue burst" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save template" }));
+
+    await waitFor(() =>
+      expect(onSaveCurrent).toHaveBeenCalledWith(
+        "Boss hit",
+        "Large blue burst",
+        "effect",
+      ),
+    );
+    const savedTemplateCard = screen.getByText("Enemy hit").closest("article");
+    expect(savedTemplateCard).not.toBeNull();
+    fireEvent.click(
+      within(savedTemplateCard as HTMLElement).getByRole("button", {
+        name: "Insert copy",
+      }),
+    );
+    expect(onInsert).toHaveBeenCalledWith(template);
+
+    if (!picker) throw new Error("Missing template file picker");
+    const file = new File(["{}"], "shared.vvfx-template", {
+      type: "application/json",
+    });
+    fireEvent.change(picker, { target: { files: [file] } });
+    await waitFor(() => expect(onImport).toHaveBeenCalledWith(file));
+    expect(await screen.findByText(/Import complete:/)).toHaveTextContent(
+      "1 added · 1 already here · 1 imported as a copy",
+    );
+  }, 10_000);
+});

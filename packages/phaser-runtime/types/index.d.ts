@@ -1,6 +1,6 @@
 import type Phaser from "phaser";
 
-export type LayerType = "static" | "animated" | "burst" | "emitter";
+export type LayerType = "static" | "animated" | "beam" | "burst" | "emitter";
 export type EasingName =
   | "constant"
   | "fast-slow"
@@ -65,6 +65,18 @@ export interface TrailSettings {
   lifetime: number;
   opacity: number;
   scaleFalloff: number;
+}
+
+export interface BeamSettings {
+  endX: number;
+  endY: number;
+}
+
+export interface BeamEndpoints {
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
 }
 
 export type MotionPathMode = "curve" | "spiral" | "custom";
@@ -322,11 +334,12 @@ export interface VvfxRuntimeLayer {
   trail: TrailSettings;
   motionPath: MotionPathSettings;
   keyframes: KeyframeSettings;
+  beam: BeamSettings | null;
 }
 
 export interface VvfxRuntimeDefinition {
   format: "vvfx-runtime";
-  formatVersion: 14;
+  formatVersion: 15;
   name: string;
   duration: number;
   seed: number;
@@ -349,6 +362,7 @@ export interface VvfxEffectOptions {
   autoDestroy?: boolean;
   assetKeys?: Record<string, string>;
   assetFrames?: Record<string, string | number>;
+  beamEndpoints?: BeamEndpoints;
   onComplete?: () => void;
   onWarning?: (message: string) => void;
 }
@@ -367,6 +381,14 @@ export declare class VvfxEffect {
   restart(): this;
   stop(): this;
   setPosition(x: number, y: number): this;
+  setEndpoints(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    layerId?: string,
+  ): this;
+  clearEndpoints(layerId?: string): this;
   update(delta: number): void;
   destroy(): void;
 }

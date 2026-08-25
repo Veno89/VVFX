@@ -21,13 +21,19 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { COMPOSITION_PRESETS } from "../../vfx/presets";
 import {
   ASSET_PREP_CHECKLIST,
   PRODUCT_BOUNDARY,
   VFX_GLOSSARY,
 } from "../guidance";
+import { useFocusRegion } from "../useFocusRegion";
 
 export type TourFocus =
   | "welcome"
@@ -130,8 +136,10 @@ export function OnboardingOverlay({
 }) {
   const item = TOUR_STEPS[step];
   const last = step === TOUR_STEPS.length - 1;
+  const dialogRef = useFocusRegion<HTMLDivElement>({ onEscape: onSkip });
   return (
     <div
+      ref={dialogRef}
       className={`onboarding-overlay onboarding-overlay--${item.focus}`}
       role="dialog"
       aria-modal="true"
@@ -415,6 +423,7 @@ export function TutorialCenter({
   onBuildRecipe?: (recipeId: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<LearningTabId>("start");
+  const dialogRef = useFocusRegion<HTMLElement>({ onEscape: onClose });
   const activeIndex = LEARNING_TABS.findIndex((tab) => tab.id === activeTab);
 
   const handleTabKeys = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -445,6 +454,7 @@ export function TutorialCenter({
       }}
     >
       <section
+        ref={dialogRef}
         className="dialog learning-dialog"
         role="dialog"
         aria-modal="true"
@@ -1112,17 +1122,25 @@ export function FirstEffectGuide({
   onStepChange,
   onAction,
   onClose,
+  continueRef,
 }: {
   step: number;
   actionComplete: boolean;
   onStepChange: (step: number) => void;
   onAction: (step: number) => void;
   onClose: () => void;
+  continueRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const item = GUIDE_STEPS[step];
   const last = step === GUIDE_STEPS.length - 1;
+  const dialogRef = useFocusRegion<HTMLElement>({
+    autoFocus: false,
+    onEscape: onClose,
+    trapFocus: false,
+  });
   return (
     <aside
+      ref={dialogRef}
       className="tutorial-coach"
       role="dialog"
       aria-label="Build your first shockwave tutorial"
@@ -1166,6 +1184,7 @@ export function FirstEffectGuide({
           <ChevronLeft size={14} /> Back
         </button>
         <button
+          ref={continueRef}
           type="button"
           onClick={() => (last ? onClose() : onStepChange(step + 1))}
         >

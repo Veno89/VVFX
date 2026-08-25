@@ -60,7 +60,7 @@ describe("portable template format v2", () => {
     expect(result.pack?.templates[0]).toMatchObject({
       format: "vvfx-template",
       formatVersion: 2,
-      projectFormatVersion: 16,
+      projectFormatVersion: 17,
       id: template.id,
       scope: "effect",
       timelineAnchor: 0,
@@ -80,7 +80,7 @@ describe("portable template format v2", () => {
     expect(migrated.ok).toBe(true);
     expect(migrated.pack?.templates[0]).toMatchObject({
       formatVersion: 2,
-      projectFormatVersion: 16,
+      projectFormatVersion: 17,
       scope: "effect",
       timelineAnchor: 0,
       groups: [],
@@ -94,7 +94,7 @@ describe("portable template format v2", () => {
     });
     expect(
       deserializeTemplatePack(
-        JSON.stringify({ ...current, projectFormatVersion: 17 }),
+        JSON.stringify({ ...current, projectFormatVersion: 18 }),
       ),
     ).toMatchObject({ ok: false, error: expect.stringMatching(/newer/i) });
     expect(

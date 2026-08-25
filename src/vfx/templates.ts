@@ -5,7 +5,7 @@ import type { VfxAsset, VfxGroup, VfxLayer, VfxProject } from "./types";
 
 export const TEMPLATE_FORMAT_VERSION = 2 as const;
 export const TEMPLATE_PACK_FORMAT_VERSION = 2 as const;
-export const CURRENT_PROJECT_FORMAT_VERSION = 16 as const;
+export const CURRENT_PROJECT_FORMAT_VERSION = 17 as const;
 export const MAX_TEMPLATES_PER_PACK = 100;
 export const MAX_TEMPLATE_LAYERS = 250;
 export const MAX_TEMPLATE_ASSETS = 100;

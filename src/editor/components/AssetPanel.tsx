@@ -513,6 +513,7 @@ export function AssetPanel({
               type="button"
               onClick={() => onSelect(asset.id)}
               aria-label={`Select ${asset.name}`}
+              aria-pressed={selectedId === asset.id}
             >
               <span className="asset-card__thumb">
                 <AssetThumb asset={asset} />

@@ -1,8 +1,8 @@
 # Vvfx capability matrix
 
 This document is the source of truth for what Vvfx authors, previews, and
-exports today. It describes editable project format **version 16**, runtime
-format **version 14**, and local runtime package **0.13.0**.
+exports today. It describes editable project format **version 17**, runtime
+format **version 15**, and local runtime package **0.14.0**.
 
 The generated Phaser TypeScript export is an exact integration path: it embeds
 the runtime definition and calls `playVvfx` from `@vvfx/phaser-runtime`. It does
@@ -13,12 +13,25 @@ not maintain a second, approximate animation implementation.
 | Area                | Vvfx owns                                                                                                                                                                                                                                                | Use another tool for                                                                                                                                          |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Asset creation      | Importing transparent PNG/WebP artwork, four simple built-in practice shapes, uniform sprite-sheet slicing, optional Phaser atlas-frame names, and bounded alpha sampling for spawn stencils                                                             | Drawing or repairing silhouettes, smoke texture, lightning branches, runes, painted highlights, detailed gradients, and hand-drawn animation frames           |
-| VFX behavior        | Layering, timing, layer and copy-finish events, movement, whole-image tinting, color over lifetime, silhouette spawning, randomness, behaviors, trails, paths, flipbooks, property curves, and composition                                               | Repainting pixels, collision/gameplay callbacks, or changing the internal drawing without a sprite sheet                                                      |
+| VFX behavior        | Layering, timing, endpoint-fitted beams, layer and copy-finish events, movement, whole-image tinting, color over lifetime, silhouette spawning, randomness, behaviors, trails, paths, flipbooks, property curves, and composition                        | Repainting pixels, procedural lightning branches, collision/gameplay callbacks, or changing the internal drawing without a sprite sheet                       |
 | Preview environment | Checkerboard, black, dark, white, or custom-color workspace backgrounds; grid; zoom; selection and path guides                                                                                                                                           | A game scene, camera, lighting system, or final environment art                                                                                               |
 | Advanced rendering  | Normal/additive blending plus Experimental WebGL still-image clipping masks, blur, outer glow, brightness/exposure, animated shine, two-color spatial gradient, straight-wipe dissolve, seeded noisy erosion, sprite warp, and sprite-local heat shimmer | Scene-behind refraction/heat haze, animated/layer-to-layer/camera masks, lighting, fluid simulation, a general compositing graph, and custom shader pipelines |
 
 Vvfx is therefore a **2D effect behavior compositor**, not an image editor and
 not a general-purpose shader authoring tool.
+
+## Beam layer
+
+| Capability                                                 | Editor preview                                            | Runtime JSON v15              | Generated Phaser TS                                 | Important limits                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------- | ----------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Authored endpoints                                         | Exact, with draggable endpoint B                          | Exact                         | Exact via runtime                                   | Endpoint B is stored as a local offset from the layer position (A)                                         |
+| Automatic fitting                                          | Centers, rotates, and stretches one image between A and B | Exact                         | Exact via runtime                                   | Source art must be tightly cropped and drawn left to right; this is not a segmented spline or tiled ribbon |
+| Flipbook, tint, additive blend, glow, flicker, and opacity | Supported                                                 | Exact                         | Exact via runtime                                   | The current frame is fitted as one sprite; VVFX does not draw procedural branches                          |
+| Moving game targets                                        | Not a gameplay simulation                                 | World-space endpoint override | `beamEndpoints` plus `VvfxEffect.setEndpoints(...)` | Target selection, collision, sound, and scene lighting remain owned by the host game                       |
+
+Beam layers use the ordinary layer Timeline and appearance controls. Their
+length and angle remain pinned to the endpoints; authored movement paths and
+manual rotation do not compete with endpoint fitting.
 
 ## Layer and export matrix
 
@@ -27,7 +40,7 @@ copy` means each burst/emitter instance evaluates the feature across its own
 lifetime. `--` means the public editor intentionally does not expose it for
 that layer type.
 
-| Capability                                                  | Still image             | Animated image            | Burst                     | Repeating copies       | Editor preview          | Runtime JSON v14    | Generated Phaser TS | Presets/help                        | Important limits                                                                                                                                                                                                                                                    |
+| Capability                                                  | Still image             | Animated image            | Burst                     | Repeating copies       | Editor preview          | Runtime JSON v15    | Generated Phaser TS | Presets/help                        | Important limits                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------- | ----------------------- | ------------------------- | ------------------------- | ---------------------- | ----------------------- | ------------------- | ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | One positioned image                                        | Yes                     | Yes                       | --                        | --                     | Exact                   | Exact               | Exact via runtime   | First-effect guide                  | A still image has a delay and finite authored lifetime, but no movement/easing controls                                                                                                                                                                             |
 | One transforming image                                      | --                      | Yes                       | --                        | --                     | Exact                   | Exact               | Exact via runtime   | Impact flash, Shockwave, Smoke wisp | Changes happen during one layer lifetime                                                                                                                                                                                                                            |

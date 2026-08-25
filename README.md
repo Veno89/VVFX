@@ -45,7 +45,11 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 
 - Live Phaser 3 preview with play, pause, restart, content-aware loop, four
   playback speeds, zoom, grid, and several test backgrounds.
-- Still image, animated image, burst, and repeating-copy/emitter layers.
+- Still image, animated image, endpoint-fitted Beam, burst, and
+  repeating-copy/emitter layers.
+- Beam endpoint authoring with a draggable preview handle, automatic rotation
+  and length fitting for left-to-right artwork, plus Phaser world-space
+  `setEndpoints(...)` updates for moving targets.
 - Position, separate or uniform scale, opacity, rotation, movement, visual
   easing presets, editable cubic curves, delay, duration, repeats, yoyo, tint,
   tint strength, and normal/additive blending.
@@ -179,8 +183,8 @@ Both are exact evaluator paths; the generated file is not a separate set of
 approximate tweens. Map asset IDs to textures already loaded by the game with
 `assetKeys`, and optionally override atlas frames with `assetFrames`.
 
-Current formats are editable project **v16** and Runtime JSON **v14**. The local
-`@vvfx/phaser-runtime` package is **v0.13.0**. Older supported formats are
+Current formats are editable project **v17** and Runtime JSON **v15**. The local
+`@vvfx/phaser-runtime` package is **v0.14.0**. Older supported formats are
 normalized during import; unknown future versions are rejected.
 
 ## Development commands

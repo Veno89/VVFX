@@ -23,6 +23,7 @@ import {
 import { serializeProject } from "../../vfx/serialization";
 import { hasEnabledRenderingEffects } from "../../vfx/renderingEffects";
 import type { VfxProject } from "../../vfx/types";
+import { useFocusRegion } from "../useFocusRegion";
 
 type ExportTab = "preview" | "runtime" | "phaser" | "project";
 type PreviewFormat = PreviewRecordingRequest["format"];
@@ -70,6 +71,10 @@ export function ExportDialog({
     null,
   );
   const [webmSupported, setWebmSupported] = useState(false);
+  const dialogRef = useFocusRegion<HTMLElement>({
+    escapeEnabled: !recording,
+    onEscape: onClose,
+  });
   useEffect(() => {
     const timer = window.setTimeout(() => setWebmSupported(canRecordWebm()), 0);
     return () => window.clearTimeout(timer);
@@ -138,6 +143,7 @@ export function ExportDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="dialog export-dialog"
         role="dialog"
         aria-modal="true"

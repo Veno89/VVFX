@@ -382,7 +382,7 @@ describe("event validation and portability", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0]).toMatchObject({
       startMode: "timeline",
       events: [],
@@ -415,7 +415,7 @@ describe("event validation and portability", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].events[0]).toMatchObject({
       trigger: "copy-finish",
       chance: 1,
@@ -480,7 +480,7 @@ describe("event validation and portability", () => {
 
     const definition = createRuntimeDefinition(project);
     const result = validateRuntimeDefinition(definition);
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(result.ok).toBe(true);
     expect(result.definition?.layers[0].events).toEqual(source.events);
     expect(result.definition?.layers[1].startMode).toBe("triggered");
@@ -496,7 +496,7 @@ describe("event validation and portability", () => {
     delete legacyEvents[0].chance;
     delete legacyEvents[0].maxTriggers;
     const migratedRuntime = validateRuntimeDefinition(legacyRuntime).definition;
-    expect(migratedRuntime?.formatVersion).toBe(14);
+    expect(migratedRuntime?.formatVersion).toBe(15);
     expect(migratedRuntime?.layers[0].events[0]).toMatchObject({
       chance: 1,
       maxTriggers: 32,

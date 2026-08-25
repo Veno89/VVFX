@@ -70,7 +70,7 @@ describe("visual-mask project and runtime schema", () => {
 
     const migrated = validateProject(project);
     expect(migrated.ok).toBe(true);
-    expect(migrated.project?.formatVersion).toBe(16);
+    expect(migrated.project?.formatVersion).toBe(17);
     expect(migrated.project?.layers[0].appearance.effects.visualMask).toEqual(
       createDefaultRenderingEffects().visualMask,
     );
@@ -89,7 +89,7 @@ describe("visual-mask project and runtime schema", () => {
     delete (runtimeAppearance.effects as Record<string, unknown>).visualMask;
     const runtimeResult = validateRuntimeDefinition(legacyRuntime);
     expect(runtimeResult.ok).toBe(true);
-    expect(runtimeResult.definition?.formatVersion).toBe(14);
+    expect(runtimeResult.definition?.formatVersion).toBe(15);
     expect(
       runtimeResult.definition?.layers[0].appearance.effects.visualMask,
     ).toEqual(createDefaultRenderingEffects().visualMask);
@@ -104,7 +104,7 @@ describe("visual-mask project and runtime schema", () => {
 
     const definition = createRuntimeDefinition(project);
     const validated = validateRuntimeDefinition(definition);
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(definition.layers[0].appearance.effects.visualMask).toEqual(
       layer.appearance.effects.visualMask,
     );
@@ -217,7 +217,7 @@ describe("visual-mask asset dependencies", () => {
     const template = createTemplateFromProject(project, "Masked glow", "", [
       layer.id,
     ]);
-    expect(template.projectFormatVersion).toBe(16);
+    expect(template.projectFormatVersion).toBe(17);
     expect(template.assets.map((asset) => asset.id)).toContain(mask.id);
 
     const destination = createEmptyProject("Destination");

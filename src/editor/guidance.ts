@@ -5,6 +5,7 @@ import { isSpawnLayer } from "../vfx/types";
 export const LAYER_TYPE_LABELS: Record<LayerType, string> = {
   static: "Still image",
   animated: "Animated image",
+  beam: "Beam",
   burst: "Burst",
   emitter: "Repeating copies",
 };
@@ -76,6 +77,18 @@ export function describeLayer(layer: VfxLayer): string {
       ? " It also uses Experimental WebGL pixel effects, with a plain-image Canvas fallback."
       : "";
     return `${name} is a still image at ${size} and ${Math.round(layer.transform.startOpacity * 100)}% opacity. ${timing}${appearance}${rendering}`;
+  }
+
+  if (layer.type === "beam") {
+    const length = Math.round(Math.hypot(layer.beam.endX, layer.beam.endY));
+    const extras = [
+      layer.appearance.blendMode === "add" ? "additive blending" : null,
+      layer.behavior.flicker.enabled ? "flicker" : null,
+      hasEnabledRenderingEffects(layer.appearance.effects)
+        ? "Experimental WebGL pixel effects"
+        : null,
+    ].filter(Boolean);
+    return `${name} fits one left-to-right image across a ${length} px connection and keeps both ends joined while it plays. ${timing}${extras.length ? ` It uses ${extras.join(", ")}.` : ""}`;
   }
 
   const changes: string[] = [];

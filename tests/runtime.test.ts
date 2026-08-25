@@ -199,6 +199,38 @@ function createFakeScene(initialTextureKeys: string[] = []) {
 }
 
 describe("Phaser runtime package", () => {
+  it("updates Beam layers from world-space endpoints", () => {
+    const project = createEmptyProject("Runtime beam");
+    project.preview.duration = 500;
+    const beam = createLayer("beam", "Lightning", "builtin-spark");
+    beam.behavior.flicker.enabled = false;
+    beam.transform.startOpacity = 1;
+    beam.transform.endOpacity = 1;
+    project.layers.push(beam);
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      "vvfx-missing",
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      originX: 10,
+      originY: 20,
+      autoDestroy: false,
+    });
+
+    effect.setEndpoints(100, 200, 400, 600);
+
+    expect(fake.sprites[0]?.x).toBeCloseTo(250);
+    expect(fake.sprites[0]?.y).toBeCloseTo(400);
+    expect(fake.sprites[0]?.scaleX).toBeCloseTo(500 / 128);
+    expect(fake.sprites[0]?.scaleY).toBeCloseTo(1);
+    expect(fake.sprites[0]?.angle).toBeCloseTo(53.1301, 3);
+
+    effect.clearEndpoints();
+    expect(fake.sprites[0]?.x).toBeCloseTo(130);
+    expect(fake.sprites[0]?.y).toBeCloseTo(20);
+  });
+
   it("resolves mapped and unchanged-key atlas mask frames without CPU mask data", () => {
     const fake = createFakeScene(["runtime-mask", "host-atlas"]);
     fake.addTextureFrame("runtime-mask", "definition-mask-frame");
@@ -257,7 +289,7 @@ describe("Phaser runtime package", () => {
     const result = validateRuntimeDefinition(JSON.stringify(definition));
 
     expect(result.ok).toBe(true);
-    expect(result.definition?.formatVersion).toBe(14);
+    expect(result.definition?.formatVersion).toBe(15);
     expect(result.definition?.format).toBe("vvfx-runtime");
     expect(result.definition?.layers[0].name).toBe("Sparks");
     expect(
@@ -266,7 +298,7 @@ describe("Phaser runtime package", () => {
     expect(
       validateRuntimeDefinition({ ...definition, formatVersion: 1 }).definition
         ?.formatVersion,
-    ).toBe(14);
+    ).toBe(15);
     const versionThree = JSON.parse(JSON.stringify(definition)) as Record<
       string,
       unknown
@@ -305,7 +337,7 @@ describe("Phaser runtime package", () => {
         delete (layer.spawn as Record<string, unknown>).distribution;
     });
     const migratedSeven = validateRuntimeDefinition(versionSeven).definition;
-    expect(migratedSeven?.formatVersion).toBe(14);
+    expect(migratedSeven?.formatVersion).toBe(15);
     expect(migratedSeven?.layers[0].behavior.physics).toEqual({
       gravity: 0,
       drag: 0,
@@ -348,7 +380,7 @@ describe("Phaser runtime package", () => {
       delete dissolve.noiseScale;
     }
     const migratedTwelve = validateRuntimeDefinition(versionTwelve).definition;
-    expect(migratedTwelve?.formatVersion).toBe(14);
+    expect(migratedTwelve?.formatVersion).toBe(15);
     expect(
       migratedTwelve?.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({ pattern: "directional", noiseScale: 6 });
@@ -481,7 +513,7 @@ describe("Phaser runtime package", () => {
     });
     effect.update(100);
 
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(
       definition.assets.find((asset) => asset.id === "atlas-spark"),
     ).toMatchObject({ atlasFrame: "vfx/spark-01" });

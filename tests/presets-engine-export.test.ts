@@ -283,7 +283,7 @@ describe("game exports", () => {
   it("creates a clean versioned runtime definition", () => {
     const project = createExampleProject();
     const runtime = createRuntimeDefinition(project);
-    expect(runtime.formatVersion).toBe(14);
+    expect(runtime.formatVersion).toBe(15);
     expect(runtime.name).toBe("Simple Magic Impact");
     expect(runtime.layers).toHaveLength(4);
     expect(runtime.layers[0]).not.toHaveProperty("solo");
@@ -318,7 +318,7 @@ describe("game exports", () => {
     });
     expect(code).toContain('from "@vvfx/phaser-runtime"');
     expect(code).toContain("export const vvfxDefinition");
-    expect(code).toContain('"formatVersion": 14');
+    expect(code).toContain('"formatVersion": 15');
     expect(code).toContain("return playVvfx(scene, definition");
     expect(code).toContain("assetKeys: options.assetKeys");
     expect(code).toContain("autoDestroy: options.autoDestroy");

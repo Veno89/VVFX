@@ -2,6 +2,7 @@
 
 import { CopyPlus, FolderOpen, Trash2, X } from "lucide-react";
 import type { VfxProject } from "../../vfx/types";
+import { useFocusRegion } from "../useFocusRegion";
 
 export function ProjectsDialog({
   projects,
@@ -16,6 +17,7 @@ export function ProjectsDialog({
   onDelete: (id: string) => void;
   onClose: () => void;
 }) {
+  const dialogRef = useFocusRegion<HTMLElement>({ onEscape: onClose });
   return (
     <div
       className="dialog-backdrop"
@@ -25,6 +27,7 @@ export function ProjectsDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="dialog projects-dialog"
         role="dialog"
         aria-modal="true"

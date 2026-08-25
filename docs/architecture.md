@@ -18,7 +18,7 @@ Phaser preview bridge and @vvfx/phaser-runtime
 
 Project files currently use format version 16. Clean game-facing runtime
 definitions use format version 14, and the local `@vvfx/phaser-runtime` package
-is version 0.13.0.
+is version 0.14.0.
 
 ## Main modules
 
@@ -26,7 +26,7 @@ is version 0.13.0.
 
 This directory has no React dependency.
 
-- `types.ts` defines project v16, assets, settings, the discriminated layer
+- `types.ts` defines project v17, assets, settings, the discriminated layer
   union, and evaluated instances.
 - `defaults.ts` contains safe defaults, four built-in procedural practice
   assets, and the complete Magic Impact example.
@@ -78,7 +78,7 @@ This directory has no React dependency.
   gating, dependency summaries, bounded embedded-asset validation, raw single
   and pack serialization, content-relative Timeline anchors, and insertion
   remapping for asset, layer, group, attachment, mask, and event-target IDs.
-- `exporters.ts` creates runtime v14 and the supported exact Phaser TypeScript
+- `exporters.ts` creates runtime v15 and the supported exact Phaser TypeScript
   integration. Generated TypeScript embeds the definition and calls
   `playVvfx`; an explicitly named standalone generator remains only as an
   educational approximation.
@@ -158,11 +158,12 @@ and project duration remain undoable.
 
 ### `packages/phaser-runtime`
 
-The local `@vvfx/phaser-runtime` package (v0.13.0) validates runtime v14, loads
+The local `@vvfx/phaser-runtime` package (v0.14.0) validates runtime v15, loads
 embedded or mapped Phaser textures, and plays effects through the same
 deterministic evaluator used by the editor preview. Its `VvfxEffect` handle
-owns scene update registration, sprite reuse, world-origin positioning,
-pause/restart controls, completion, and cleanup. When WebGL is active it also
+owns scene update registration, sprite reuse, world-origin positioning, Beam
+endpoint overrides, pause/restart controls, completion, and cleanup. When
+WebGL is active it also
 applies exported Experimental sprite effects. Canvas fallback skips those
 controllers while retaining the ordinary sprite and all deterministic
 behavior. The production bundle contains no React or editor UI.
@@ -319,6 +320,15 @@ brightness/spatial gradient, sprite warp, dissolve/noisy erosion, shine, then
 blur/outer glow. This makes later silhouette effects react predictably to
 clipping. Templates retain and remap mask-only assets just like spawn-silhouette
 dependencies.
+
+Project v17/runtime v15 add an endpoint-fitted Beam layer. The ordinary layer
+position is authored endpoint A and `beam.endX/endY` is endpoint B's local
+offset. Evaluation converts those points into one sprite midpoint, angle, and
+horizontal fit scale using the source frame width. Phaser runtime overrides
+are supplied to the same evaluator, so `VvfxEffect.setEndpoints(...)` can pin
+the Beam to moving world-space targets without mutating or reparsing the
+definition. This is deliberately one fitted sprite, not a spline mesh,
+segmented ribbon, or procedural branching system.
 
 Phaser's sprite effects have no Canvas counterpart. The defined fallback is the
 ordinary undistorted sprite, never a missing layer or an export-time omission.

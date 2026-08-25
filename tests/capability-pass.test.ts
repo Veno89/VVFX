@@ -90,14 +90,21 @@ describe("beginner-facing layer guidance", () => {
     expect(LAYER_TYPE_LABELS).toEqual({
       static: "Still image",
       animated: "Animated image",
+      beam: "Beam",
       burst: "Burst",
       emitter: "Repeating copies",
     });
     expect(
-      (["static", "animated", "burst", "emitter"] as LayerType[]).map(
+      (["static", "animated", "beam", "burst", "emitter"] as LayerType[]).map(
         layerTypeLabel,
       ),
-    ).toEqual(["Still image", "Animated image", "Burst", "Repeating copies"]);
+    ).toEqual([
+      "Still image",
+      "Animated image",
+      "Beam",
+      "Burst",
+      "Repeating copies",
+    ]);
   });
 });
 
@@ -381,7 +388,7 @@ describe("runtime-backed export boundary", () => {
     const runtime = createRuntimeDefinition(project);
     const serialized = JSON.stringify(runtime);
 
-    expect(runtime.formatVersion).toBe(14);
+    expect(runtime.formatVersion).toBe(15);
     expect(runtime.layers).toHaveLength(1);
     expect(runtime.layers[0]).not.toHaveProperty("visible");
     expect(runtime.layers[0]).not.toHaveProperty("solo");

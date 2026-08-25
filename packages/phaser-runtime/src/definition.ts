@@ -46,7 +46,8 @@ export function validateRuntimeDefinition(
     value.formatVersion !== 11 &&
     value.formatVersion !== 12 &&
     value.formatVersion !== 13 &&
-    value.formatVersion !== 14
+    value.formatVersion !== 14 &&
+    value.formatVersion !== 15
   )
     return {
       ok: false,
@@ -183,6 +184,7 @@ export function validateRuntimeDefinition(
       trail: layer.trail,
       motionPath: layer.motionPath,
       keyframes: layer.keyframes,
+      beam: layer.beam,
     };
   });
   if (layers.some((layer) => layer === null))
@@ -190,7 +192,7 @@ export function validateRuntimeDefinition(
 
   const now = new Date().toISOString();
   const candidate = {
-    formatVersion: 16,
+    formatVersion: 17,
     metadata: {
       id: "runtime-project",
       name: value.name,
@@ -230,7 +232,7 @@ export function runtimeDefinitionToProject(
   const normalized = result.definition;
   const now = new Date().toISOString();
   const candidate = {
-    formatVersion: 16,
+    formatVersion: 17,
     metadata: {
       id: "runtime-project",
       name: normalized.name,
@@ -283,6 +285,7 @@ export function runtimeDefinitionToProject(
       trail: layer.trail,
       motionPath: layer.motionPath,
       keyframes: layer.keyframes,
+      beam: layer.beam,
     })),
   };
   const project = validateProject(candidate);

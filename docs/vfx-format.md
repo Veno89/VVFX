@@ -8,7 +8,7 @@ The `.vvfx` file is UTF-8 JSON. It contains editor metadata, embedded image data
 
 ```json
 {
-  "formatVersion": 15,
+  "formatVersion": 17,
   "metadata": {
     "id": "project-...",
     "name": "Simple Magic Impact",
@@ -244,6 +244,14 @@ The stored 64 x 64 `asset.alphaMask` grid remains CPU spawn-position data. The
 visual mask samples the referenced still texture at rendering resolution and
 does not reuse that compact grid.
 
+Version 17 adds the `beam` layer type and a nullable `beam` field on every
+normalized layer. A Beam stores `{ endX, endY }`, measured as a local offset
+from the layer position (endpoint A) to endpoint B. The evaluator centers and
+rotates a tightly cropped, left-to-right image between those points and fits
+its horizontal scale to the connection length. Sprite-sheet frame width,
+uploaded image width, or a safe 128 px fallback supplies the source length.
+Other layer types normalize to `beam: null`; Beam layers use `spawn: null`.
+
 For example, a spawn layer can use a separate silhouette asset and fire smoke
 at accepted copy endpoints:
 
@@ -323,14 +331,16 @@ additional spawn data:
 
 - `static`: one image that remains in place;
 - `animated`: one image evaluated through its timing curve;
+- `beam`: one image fitted between endpoint A and a local endpoint-B offset;
 - `burst`: several instances starting together;
 - `emitter`: instances scheduled repeatedly over time.
 
-Only `burst` and `emitter` layers contain a non-null `spawn` object.
+Only `burst` and `emitter` layers contain a non-null `spawn` object. Only a
+`beam` layer contains a non-null `beam` object.
 
 ### Units
 
-- position and movement: pixels;
+- position, movement, and Beam endpoint offsets: pixels;
 - delay, duration, intervals: milliseconds;
 - rotation, line/arc angles, artwork-forward angle, and alignment variation:
   degrees;
@@ -349,7 +359,7 @@ Runtime export removes preview background, editor selection/solo state, browser 
 ```json
 {
   "format": "vvfx-runtime",
-  "formatVersion": 13,
+  "formatVersion": 15,
   "name": "Simple Magic Impact",
   "duration": 3000,
   "seed": 8421,
@@ -368,7 +378,7 @@ flag remains the game-facing playback switch.
 
 ### Phaser runtime usage
 
-Build local `@vvfx/phaser-runtime` v0.13.0 with `npm run build:runtime`, then
+Build local `@vvfx/phaser-runtime` v0.14.0 with `npm run build:runtime`, then
 add `packages/phaser-runtime` to a Phaser game as a local package. Runtime JSON
 can be played directly:
 
@@ -381,6 +391,26 @@ await playVvfx(scene, impact, {
   originY: player.y,
 });
 ```
+
+A Beam effect can receive world-space endpoints at startup or while targets
+move:
+
+```ts
+const lightning = await playVvfx(scene, chainLink, {
+  beamEndpoints: {
+    startX: caster.x,
+    startY: caster.y,
+    endX: target.x,
+    endY: target.y,
+  },
+});
+
+lightning.setEndpoints(caster.x, caster.y, target.x, target.y);
+```
+
+Omit the optional layer ID to update every Beam layer in the effect, which is
+useful for a core/glow stack. Pass a Beam layer ID as the fifth argument to
+override only that layer. `clearEndpoints()` restores authored endpoints.
 
 Embedded PNG/WebP data, sprite-sheet/flipbook frames, transform keyframes,
 motion paths, motion trails, layer events, whole-image color stops, pulse,
@@ -435,13 +465,19 @@ inversion, strength, pass ordering, and cleanup behavior. Runtime versions 1
 through 13 receive a disabled visual-mask default. Canvas and missing-mask
 fallback keep the ordinary unmasked sprite and issue a one-time warning.
 
+Runtime version 15 adds project-v17 Beam layers, authored endpoint offsets, and
+world-space `beamEndpoints`/`setEndpoints(...)` overrides. The same evaluator
+fits preview and runtime sprites, so moving endpoints do not require rewriting
+or reloading Runtime JSON.
+
 ### Generated Phaser TypeScript
 
 The Phaser TypeScript tab is a runtime-backed export, not a hand-written tween
 approximation. It embeds a `VvfxRuntimeDefinition`, imports `playVvfx` and the
 runtime types from `@vvfx/phaser-runtime`, and exports a typed play function.
-The function accepts world origin, texture/frame mappings, seed override,
-depth, looping, and auto-destroy options, then returns `Promise<VvfxEffect>`.
+The function accepts world origin, texture/frame mappings, optional Beam
+endpoints, seed override, depth, looping, and auto-destroy options, then
+returns `Promise<VvfxEffect>`.
 
 This keeps burst/emitter scheduling, color/behavior evaluation, paths, trails,
 keyframes, attachments, frame animation, cleanup, and future runtime fixes on
@@ -460,7 +496,7 @@ groups referenced by those layers:
 {
   "format": "vvfx-template",
   "formatVersion": 2,
-  "projectFormatVersion": 16,
+  "projectFormatVersion": 17,
   "id": "template-...",
   "name": "Enemy hit",
   "description": "Short blue impact",
@@ -519,8 +555,8 @@ a future project format is rejected rather than guessed.
 
 ## Compatibility
 
-The current editor emits project `formatVersion: 16`; versions 1 through 16 are
-accepted, with versions 1 through 15 normalized to the current shape. Version 1
+The current editor emits project `formatVersion: 17`; versions 1 through 17 are
+accepted, with versions 1 through 16 normalized to the current shape. Version 1
 receives still-image frame defaults, versions 1 and 2 receive disabled
 motion-trail defaults, versions 1 through 3 receive disabled motion-path
 defaults, and all older versions receive a safe custom easing curve. Versions 1
@@ -543,8 +579,10 @@ placement pattern during migration.
 Version 14 receives `pattern: "directional"` and `noiseScale: 6` on its existing
 dissolve settings, preserving the straight-wipe appearance.
 Version 15 receives a disabled visual-mask default with no mask asset reference.
+Version 16 receives `beam: null` on its existing layer types; migration never
+converts an existing image into a Beam automatically.
 
-Runtime JSON is `formatVersion: 14`; versions 1 through 14 inclusive are
+Runtime JSON is `formatVersion: 15`; versions 1 through 15 inclusive are
 accepted and normalized. Effect
 group position and timing remain flattened into ordinary layer values during
 export. Unknown future versions are rejected rather than guessed. Runtime

@@ -123,12 +123,15 @@ Image silhouette spawning is not part of Experimental rendering. It converts
 an imported image's alpha into ordinary deterministic spawn-position data and
 works without WebGL.
 
-## The four layer types
+## The five layer types
 
 - **Still image**: one image with a position, starting look, delay, and finite
   lifetime. Use it for a puddle, scorch mark, persistent rune, or base shape.
 - **Animated image**: one image that can move, grow, fade, rotate, change
   color, pulse, flicker, drift, follow a path, and leave a trail.
+- **Beam**: one tightly cropped, left-to-right image automatically rotated and
+  stretched between endpoints A and B. Drag B in the preview; a Phaser game
+  can replace both points with `setEndpoints(...)` while targets move.
 - **Burst**: several copies created together. Use it for sparks, debris,
   droplets, petals, or a one-moment spray.
 - **Repeating copies**: an emitter that keeps making copies at an interval.

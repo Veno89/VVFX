@@ -43,7 +43,9 @@ decision-deferrals below, not left looking like a queued phase.
 
 ### Core authoring
 
-- [x] Still, animated, burst, and repeating-copy layers.
+- [x] Still, animated, endpoint-fitted Beam, burst, and repeating-copy layers.
+- [x] Beam endpoint authoring, exact editor/runtime fitting, draggable endpoint
+      B, and world-space Phaser `setEndpoints(...)` overrides.
 - [x] Transform animation, separate X/Y scale, opacity, rotation, delay,
       repeats, yoyo, built-in easing, and custom cubic easing.
 - [x] Seeded variation for position, size, rotation, duration, movement,
@@ -80,8 +82,8 @@ decision-deferrals below, not left looking like a queued phase.
       for rectangle/circle spawn areas.
 - [x] Clear language separating additive blending from true glow and
       whole-image color changes from spatial gradients.
-- [x] Versioned project v16 and runtime v14 normalization, with the local
-      `@vvfx/phaser-runtime` package at v0.13.0. Timeline markers and notes
+- [x] Versioned project v17 and runtime v15 normalization, with the local
+      `@vvfx/phaser-runtime` package at v0.14.0. Timeline markers and notes
       deliberately remain editor-only; playback capabilities retain exact
       runtime parity.
 
@@ -120,9 +122,10 @@ that did not earn an implementation is recorded as explicitly deferred.
       targets, while seeded chance, a per-event maximum-play limit, cycle/depth
       and activation guards, plus the shared sprite budget prevent unbounded
       sub-effects. Trail afterimages never fire these events.
-- [x] **True ribbon geometry decision: deferred.** Repeated-sprite trails cover
-      the current proven 2D workflows. Revisit only with concrete user effects
-      that justify new geometry plus defined Phaser fallback/export behavior.
+- [x] **Endpoint-fitted Beam layer.** One prepared horizontal image or flipbook
+      is fitted between authored or runtime-provided endpoints. True segmented
+      ribbon meshes and procedural branching remain deferred until concrete
+      effects justify the extra geometry and fallback behavior.
 - [x] **Behavior envelopes and timing stages.** Pulse, flicker, organic
       movement/sway, and gravity can fade in, hold, and fade out across each
       copy's existing lifetime without creating another project Timeline.

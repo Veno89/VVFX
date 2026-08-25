@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Gauge, Info } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type Ref } from "react";
 import {
   MAX_STRESS_INSTANCES,
   STRESS_COPY_OPTIONS,
@@ -23,6 +23,8 @@ export function PerformanceInspector({
   captureMode,
   onCopiesChange,
   onResetPeak,
+  dialogRef,
+  dialogId,
 }: {
   project: VfxProject;
   sample: PreviewPerformanceSample;
@@ -31,6 +33,8 @@ export function PerformanceInspector({
   captureMode: boolean;
   onCopiesChange: (copies: StressCopyCount) => void;
   onResetPeak: () => void;
+  dialogRef?: Ref<HTMLElement>;
+  dialogId?: string;
 }) {
   const estimate = useMemo(() => analyzeProjectPerformance(project), [project]);
   const displayedEffectiveCopies =
@@ -43,6 +47,8 @@ export function PerformanceInspector({
 
   return (
     <section
+      ref={dialogRef}
+      id={dialogId}
       className="performance-menu"
       role="dialog"
       aria-label="Effect performance"

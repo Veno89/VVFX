@@ -1,5 +1,6 @@
 import {
   BUILT_IN_ASSETS,
+  DEFAULT_BEAM,
   DEFAULT_APPEARANCE,
   DEFAULT_BEHAVIOR,
   DEFAULT_COLOR_OVER_LIFETIME,
@@ -142,6 +143,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   if (
     type !== "static" &&
     type !== "animated" &&
+    type !== "beam" &&
     type !== "burst" &&
     type !== "emitter"
   )
@@ -165,6 +167,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   const trail = isRecord(value.trail) ? value.trail : {};
   const motionPath = isRecord(value.motionPath) ? value.motionPath : {};
   const keyframes = isRecord(value.keyframes) ? value.keyframes : {};
+  const beam = isRecord(value.beam) ? value.beam : {};
   const base = {
     id: stringOr(value.id, `imported-layer-${index}`),
     name: stringOr(value.name, `Imported layer ${index + 1}`),
@@ -536,7 +539,17 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   };
 
   if (type === "static" || type === "animated")
-    return { ...baseWithKeyframes, type, spawn: null } as VfxLayer;
+    return { ...baseWithKeyframes, type, spawn: null, beam: null } as VfxLayer;
+  if (type === "beam")
+    return {
+      ...baseWithKeyframes,
+      type,
+      spawn: null,
+      beam: {
+        endX: clamp(numberOr(beam.endX, DEFAULT_BEAM.endX), -5000, 5000),
+        endY: clamp(numberOr(beam.endY, DEFAULT_BEAM.endY), -5000, 5000),
+      },
+    } as VfxLayer;
   const spawn = isRecord(value.spawn) ? value.spawn : {};
   const normalizedSpawnShape = [
     "point",
@@ -561,6 +574,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   return {
     ...baseWithKeyframes,
     type,
+    beam: null,
     spawn: {
       count: Math.max(
         1,
@@ -741,12 +755,13 @@ export function validateProject(input: unknown): ValidationResult {
     input.formatVersion !== 13 &&
     input.formatVersion !== 14 &&
     input.formatVersion !== 15 &&
-    input.formatVersion !== 16
+    input.formatVersion !== 16 &&
+    input.formatVersion !== 17
   )
     return {
       ok: false,
       error:
-        "This project uses a Vvfx format version that this app cannot open yet. Versions 1 through 16 are supported.",
+        "This project uses a Vvfx format version that this app cannot open yet. Versions 1 through 17 are supported.",
     };
   if (!Array.isArray(input.layers) || !Array.isArray(input.assets)) {
     return {
@@ -995,7 +1010,7 @@ export function validateProject(input: unknown): ValidationResult {
   const now = new Date().toISOString();
   const previewDuration = clamp(numberOr(preview.duration, 3000), 500, 30_000);
   const project: VfxProject = {
-    formatVersion: 16,
+    formatVersion: 17,
     metadata: {
       id: stringOr(metadata.id, `project-${Date.now()}`),
       name: stringOr(metadata.name, "Imported Vvfx project"),

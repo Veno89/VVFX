@@ -20,6 +20,7 @@ import type {
   AnimatedLayer,
   BurstLayer,
   EmitterLayer,
+  BeamLayer,
 } from "./types";
 import { createDefaultRenderingEffects } from "./renderingEffects";
 
@@ -217,6 +218,11 @@ export const DEFAULT_TRAIL: TrailSettings = {
   scaleFalloff: 0.05,
 };
 
+export const DEFAULT_BEAM = {
+  endX: 240,
+  endY: 0,
+} as const;
+
 export const DEFAULT_MOTION_PATH: MotionPathSettings = {
   enabled: false,
   mode: "curve",
@@ -265,6 +271,11 @@ export function createLayer(
   assetId?: string | null,
 ): AnimatedLayer;
 export function createLayer(
+  type: "beam",
+  name?: string,
+  assetId?: string | null,
+): BeamLayer;
+export function createLayer(
   type: "burst",
   name?: string,
   assetId?: string | null,
@@ -285,9 +296,11 @@ export function createLayer(
     ? "Repeating particles"
     : type === "burst"
       ? "Particle burst"
-      : type === "static"
-        ? "Static image"
-        : "Animated image",
+      : type === "beam"
+        ? "Beam"
+        : type === "static"
+          ? "Static image"
+          : "Animated image",
   assetId: string | null = "builtin-flash",
 ): VfxLayer {
   const base = {
@@ -343,6 +356,7 @@ export function createLayer(
       ...DEFAULT_KEYFRAMES,
       frames: DEFAULT_KEYFRAMES.frames.map((frame) => ({ ...frame })),
     },
+    beam: null,
   };
   if (type === "static") {
     return {
@@ -358,6 +372,25 @@ export function createLayer(
     };
   }
   if (type === "animated") return { ...base, type, spawn: null };
+  if (type === "beam") {
+    return {
+      ...base,
+      type,
+      spawn: null,
+      beam: { ...DEFAULT_BEAM },
+      transform: {
+        ...base.transform,
+        startOpacity: 1,
+        endOpacity: 0,
+      },
+      timing: { ...base.timing, duration: 220 },
+      appearance: { ...base.appearance, blendMode: "add" },
+      behavior: {
+        ...base.behavior,
+        flicker: { ...base.behavior.flicker, enabled: true },
+      },
+    };
+  }
   return { ...base, type, spawn: { ...DEFAULT_SPAWN } };
 }
 
@@ -486,7 +519,7 @@ export function createExampleProject(): VfxProject {
   };
 
   return {
-    formatVersion: 16,
+    formatVersion: 17,
     metadata: {
       id: makeId("project"),
       name: "Simple Magic Impact",
@@ -512,7 +545,7 @@ export function createExampleProject(): VfxProject {
 export function createEmptyProject(name = "Untitled Effect"): VfxProject {
   const now = new Date().toISOString();
   return {
-    formatVersion: 16,
+    formatVersion: 17,
     metadata: {
       id: makeId("project"),
       name,

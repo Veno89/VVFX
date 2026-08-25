@@ -56,7 +56,7 @@ describe("Vvfx project files", () => {
       result.project?.assets.find((asset) => asset.id === "user-image")
         ?.atlasFrame,
     ).toBe("vfx/spark-strip");
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.groups[0]).toMatchObject({
       name: "Impact core",
       x: 24,
@@ -83,7 +83,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].frameAnimation.framesPerSecond).toBe(12);
     expect(result.project?.layers[0].trail.enabled).toBe(false);
   });
@@ -104,7 +104,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers.every((layer) => !layer.trail.enabled)).toBe(
       true,
     );
@@ -128,7 +128,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].motionPath).toMatchObject({
       enabled: false,
       mode: "curve",
@@ -149,7 +149,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].timing.customEasing).toEqual({
       x1: 0.42,
       y1: 0,
@@ -169,7 +169,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].keyframes).toMatchObject({
       enabled: false,
       initialized: false,
@@ -189,7 +189,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.groups).toEqual([]);
     expect(
       result.project?.layers.every((layer) => layer.groupId === null),
@@ -207,7 +207,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(
       result.project?.assets.every((asset) => asset.atlasFrame === null),
     ).toBe(true);
@@ -231,7 +231,7 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].appearance.colorOverLifetime).toEqual({
       enabled: false,
       stops: [
@@ -264,7 +264,7 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(result.project?.layers[0].appearance.effects).toEqual(
       createDefaultRenderingEffects(),
     );
@@ -286,7 +286,7 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     expect(
       result.project?.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({

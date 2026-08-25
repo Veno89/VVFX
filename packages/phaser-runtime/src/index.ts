@@ -26,3 +26,4 @@ export type {
   VvfxRuntimeDefinition,
   VvfxRuntimeLayer,
 } from "./types";
+export type { BeamEndpoints } from "../../../src/vfx/types";

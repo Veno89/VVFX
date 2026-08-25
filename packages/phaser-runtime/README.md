@@ -9,7 +9,8 @@ and precomputed image silhouettes, seeded randomness, artwork-forward
 alignment, bounded copy-finish spatial events,
 attachments, whole-image color over time, pulse, flicker, legacy repeating
 sway, gravity, behavior strength envelopes, slowdown, tint, blending, and the
-500-sprite safety limit.
+500-sprite safety limit. Endpoint-fitted Beam layers can use authored points or
+world-space endpoints supplied by the game.
 
 The package also applies Vvfx's clearly marked Experimental Phaser WebGL sprite
 effects: blur, outer glow, brightness/exposure, animated shine, two-color
@@ -36,6 +37,26 @@ const effect = await playVvfx(this, impact, {
 effect.setPosition(player.x, player.y);
 ```
 
+For a Beam effect, tightly crop the source artwork and draw it left to right.
+Supply world-space endpoints at startup or update them while targets move:
+
+```ts
+const lightning = await playVvfx(this, chainLink, {
+  beamEndpoints: {
+    startX: caster.x,
+    startY: caster.y,
+    endX: target.x,
+    endY: target.y,
+  },
+});
+
+lightning.setEndpoints(caster.x, caster.y, target.x, target.y);
+```
+
+Without a layer ID, `setEndpoints` updates every Beam layer in the effect so a
+core and glow can stay aligned. Pass a Beam layer ID as the fifth argument for
+one layer, or call `clearEndpoints()` to restore authored endpoints.
+
 Embedded PNG/WebP data and Vvfx built-in shapes load automatically. A game can
 replace embedded sources with its own preloaded Phaser textures:
 
@@ -51,10 +72,10 @@ Embedded sprite sheets are sliced automatically. When mapping a sheet to a
 game texture through `assetKeys`, preload it as a Phaser sprite sheet with
 numeric frames starting at zero and the same frame dimensions used in Vvfx.
 
-Package version 0.13.0 emits runtime format version 14 and accepts versions 1
-through 14. Older exports are migrated with safe defaults for capabilities that
-did not yet exist. Project JSON uses its own version number; the current project
-format is version 16.
+Package version 0.14.0 emits runtime format version 15 and accepts versions 1
+through 15. Older exports are migrated with safe defaults for capabilities
+that did not yet exist. Project JSON uses its own version number; the current
+project format is version 17.
 
 Runtime v12 adds project-v14 `stratified` and `clusters` placement. Natural
 variation preserves broad rectangle/circle interior coverage; clump count and
@@ -80,6 +101,11 @@ shine, then blur/glow. Each masked visible copy adds one bounded GPU pass and
 releases its controller when the sprite is destroyed. `assetKeys` must map a
 custom mask asset just like any other referenced texture. A missing mask or
 Canvas renderer reports a warning and leaves the ordinary unmasked sprite.
+
+Runtime v15 adds project-v17 Beam layers. Authored endpoint B is stored as a
+local offset from the layer position (A). Runtime endpoint overrides are
+world-space and feed the same evaluator used by the editor preview; the
+definition is not mutated when `setEndpoints(...)` is called.
 
 Runtime v14 deliberately has no lighting-aware material setting. The runtime
 does not enable `scene.lights`, change ambient light, create or destroy game

@@ -4,7 +4,7 @@ import type {
 } from "./renderingEffects";
 import type { AssetAlphaMask } from "./alphaMask";
 
-export type LayerType = "static" | "animated" | "burst" | "emitter";
+export type LayerType = "static" | "animated" | "beam" | "burst" | "emitter";
 export type EasingName =
   | "constant"
   | "fast-slow"
@@ -48,6 +48,16 @@ export interface TrailSettings {
   lifetime: number;
   opacity: number;
   scaleFalloff: number;
+}
+
+/**
+ * A beam uses the layer position as its authored start point and this local
+ * offset as its end point. The runtime can override both endpoints in world
+ * space without changing the portable definition.
+ */
+export interface BeamSettings {
+  endX: number;
+  endY: number;
 }
 
 export type MotionPathMode = "curve" | "spiral" | "custom";
@@ -305,29 +315,41 @@ interface BaseLayer {
   trail: TrailSettings;
   motionPath: MotionPathSettings;
   keyframes: KeyframeSettings;
+  beam: BeamSettings | null;
 }
 
 export interface StaticLayer extends BaseLayer {
   type: "static";
   spawn: null;
+  beam: null;
 }
 
 export interface AnimatedLayer extends BaseLayer {
   type: "animated";
   spawn: null;
+  beam: null;
+}
+
+export interface BeamLayer extends BaseLayer {
+  type: "beam";
+  spawn: null;
+  beam: BeamSettings;
 }
 
 export interface BurstLayer extends BaseLayer {
   type: "burst";
   spawn: SpawnSettings;
+  beam: null;
 }
 
 export interface EmitterLayer extends BaseLayer {
   type: "emitter";
   spawn: SpawnSettings;
+  beam: null;
 }
 
-export type VfxLayer = StaticLayer | AnimatedLayer | BurstLayer | EmitterLayer;
+export type VfxLayer =
+  StaticLayer | AnimatedLayer | BeamLayer | BurstLayer | EmitterLayer;
 export type SpawnLayer = BurstLayer | EmitterLayer;
 
 export interface PreviewSettings {
@@ -352,7 +374,7 @@ export interface TimelineAuthoringSettings {
 }
 
 export interface VfxProject {
-  formatVersion: 16;
+  formatVersion: 17;
   metadata: {
     id: string;
     name: string;
@@ -383,6 +405,14 @@ export interface EvaluatedInstance {
   selected: boolean;
   frame: number | null;
   trailIndex: number | null;
+}
+
+/** Endpoint coordinates are local to the effect origin during evaluation. */
+export interface BeamEndpoints {
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
 }
 
 export const isSpawnLayer = (layer: VfxLayer): layer is SpawnLayer =>

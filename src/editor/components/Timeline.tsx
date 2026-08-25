@@ -776,7 +776,12 @@ export function Timeline({
   };
 
   const addPropertyMoment = () => {
-    if (!selectedTimingLayer || selectedTimingLayer.type === "static") return;
+    if (
+      !selectedTimingLayer ||
+      selectedTimingLayer.type === "static" ||
+      selectedTimingLayer.type === "beam"
+    )
+      return;
     const groupDelay = groupDelayForLayer(selectedTimingLayer, groups);
     const relativeTime =
       (time - groupDelay - selectedTimingLayer.timing.delay) /
@@ -834,6 +839,7 @@ export function Timeline({
   const canAddPropertyMoment = Boolean(
     selectedTimingLayer &&
     selectedTimingLayer.type !== "static" &&
+    selectedTimingLayer.type !== "beam" &&
     time > selectedStart + selectedTimingLayer.timing.duration * 0.01 &&
     time < selectedEnd - selectedTimingLayer.timing.duration * 0.01,
   );

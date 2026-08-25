@@ -1,6 +1,6 @@
 "use client";
 
-import { Braces, CheckCircle2, Info, X } from "lucide-react";
+import { Braces, CheckCircle2, Info } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearRecoveryDraft,
@@ -56,6 +56,10 @@ import type {
   TimelineAuthoringSettings,
 } from "../vfx/types";
 import { AssetPanel } from "./components/AssetPanel";
+import {
+  DEFINITION_DRAWER_ID,
+  DefinitionDrawer,
+} from "./components/DefinitionDrawer";
 import { ExportDialog } from "./components/ExportDialog";
 import { GroupInspector } from "./components/GroupInspector";
 import { Inspector } from "./components/Inspector";
@@ -69,6 +73,7 @@ import {
 import { LayerPanel } from "./components/LayerPanel";
 import { PreviewPanel } from "./components/PreviewPanel";
 import {
+  NewProjectDialog,
   RecoveryDialog,
   SaveAsDialog,
 } from "./components/ProjectSafetyDialogs";
@@ -100,6 +105,7 @@ type LayerSettingsClipboard = Pick<
   | "trail"
   | "motionPath"
   | "keyframes"
+  | "beam"
   | "parentId"
 > & { spawn: VfxLayer["spawn"] };
 
@@ -124,6 +130,9 @@ export function VfxEditor() {
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [newProjectRequest, setNewProjectRequest] = useState<
+    "toolbar" | "guide" | null
+  >(null);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
   const [learningOpen, setLearningOpen] = useState(false);
@@ -141,6 +150,7 @@ export function VfxEditor() {
   >("idle");
   const recoveryGeneration = useRef(0);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const guideContinueRef = useRef<HTMLButtonElement>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsClipboard, setSettingsClipboard] =
     useState<LayerSettingsClipboard | null>(null);
@@ -211,10 +221,15 @@ export function VfxEditor() {
     projectsOpen ||
     templatesOpen ||
     saveAsOpen ||
+    newProjectRequest !== null ||
     learningOpen ||
     onboardingStep !== null ||
     guideStep !== null ||
     recoveryDraft !== null;
+  useEffect(() => {
+    if (guideStep === 0 && guideActionStep === 0)
+      guideContinueRef.current?.focus({ preventScroll: true });
+  }, [guideActionStep, guideStep]);
   const latestProjectRef = useRef(project);
   useEffect(() => {
     latestProjectRef.current = project;
@@ -642,16 +657,29 @@ export function VfxEditor() {
     [history],
   );
 
-  const startEmptyProject = useCallback(
-    (askBeforeClearing = true) => {
-      if (askBeforeClearing && !confirmProjectReplacement("Starting over"))
-        return false;
-      const next = createEmptyProject();
-      activateProject(next, false);
-      notify("New empty project ready.");
-      return true;
+  const createNewProject = useCallback(() => {
+    const next = createEmptyProject();
+    activateProject(next, false);
+    notify("New empty project ready.");
+  }, [activateProject, notify]);
+
+  const completeNewProject = useCallback(
+    (source: "toolbar" | "guide") => {
+      createNewProject();
+      if (source === "guide") setGuideActionStep(0);
     },
-    [activateProject, confirmProjectReplacement, notify],
+    [createNewProject],
+  );
+
+  const requestNewProject = useCallback(
+    (source: "toolbar" | "guide") => {
+      if (hasUnsavedChanges) {
+        setNewProjectRequest(source);
+        return;
+      }
+      completeNewProject(source);
+    },
+    [completeNewProject, hasUnsavedChanges],
   );
 
   const save = useCallback(async () => {
@@ -791,9 +819,16 @@ export function VfxEditor() {
     const handleKey = (event: KeyboardEvent) => {
       if (editorModalOpen) return;
       const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select, [contenteditable='true']"))
+      if (target?.closest("input, textarea, select, [contenteditable='true']"))
         return;
       const modifier = event.ctrlKey || event.metaKey;
+      if (
+        !modifier &&
+        target?.closest(
+          "button, a[href], summary, [role='button'], [role='menuitem'], [role='tab']",
+        )
+      )
+        return;
       if (event.code === "Space") {
         event.preventDefault();
         setPlaying((value) => !value);
@@ -877,7 +912,10 @@ export function VfxEditor() {
         : "";
 
   const runGuideAction = (step: number) => {
-    if (step === 0 && !startEmptyProject(true)) return;
+    if (step === 0) {
+      requestNewProject("guide");
+      return;
+    }
     if (step === 1) setSelectedAssetId("builtin-ring");
     if (step === 2) addLayer("animated", "builtin-ring", "asset");
     if (step === 3 && selectedLayer) {
@@ -926,7 +964,7 @@ export function VfxEditor() {
           void openTemplateLibrary();
         }}
         onNewProject={() => {
-          startEmptyProject(true);
+          requestNewProject("toolbar");
         }}
         onLearn={() => setLearningOpen(true)}
         onImport={(file) => {
@@ -1062,6 +1100,18 @@ export function VfxEditor() {
             if (!layer) return;
             const nextX = Math.round(x);
             const nextY = Math.round(y);
+            if (target === "beam-end") {
+              if (
+                layer.type !== "beam" ||
+                (nextX === layer.beam.endX && nextY === layer.beam.endY)
+              )
+                return;
+              updateLayer({
+                ...layer,
+                beam: { ...layer.beam, endX: nextX, endY: nextY },
+              });
+              return;
+            }
             if (target === "end") {
               if (
                 nextX === layer.transform.movementX &&
@@ -1151,6 +1201,7 @@ export function VfxEditor() {
                   trail: selectedLayer.trail,
                   motionPath: selectedLayer.motionPath,
                   keyframes: selectedLayer.keyframes,
+                  beam: selectedLayer.beam,
                   spawn: selectedLayer.spawn,
                   parentId: selectedLayer.parentId,
                 }),
@@ -1167,6 +1218,10 @@ export function VfxEditor() {
                   selectedLayer.spawn && copied.spawn
                     ? copied.spawn
                     : selectedLayer.spawn,
+                beam:
+                  selectedLayer.beam && copied.beam
+                    ? copied.beam
+                    : selectedLayer.beam,
               } as VfxLayer);
               notify("Settings pasted.");
             }}
@@ -1222,34 +1277,30 @@ export function VfxEditor() {
           type="button"
           className={jsonOpen ? "is-active" : ""}
           onClick={() => setJsonOpen((open) => !open)}
+          aria-controls={DEFINITION_DRAWER_ID}
+          aria-expanded={jsonOpen}
+          aria-haspopup="dialog"
         >
           <Braces size={13} /> Definition
         </button>
       </footer>
 
       {jsonOpen && (
-        <aside className="json-drawer">
-          <header>
-            <div>
-              <span className="eyebrow">Advanced view</span>
-              <h2>Live VFX definition</h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => setJsonOpen(false)}
-              aria-label="Close JSON definition"
-            >
-              <X size={16} />
-            </button>
-          </header>
-          <p>
-            This is the complete editor project. It updates as you change
-            settings.
-          </p>
-          <pre>
-            <code>{JSON.stringify(project, null, 2)}</code>
-          </pre>
-        </aside>
+        <DefinitionDrawer
+          project={project}
+          onClose={() => setJsonOpen(false)}
+        />
+      )}
+      {newProjectRequest !== null && (
+        <NewProjectDialog
+          projectName={project.metadata.name}
+          onClose={() => setNewProjectRequest(null)}
+          onConfirm={() => {
+            const source = newProjectRequest;
+            setNewProjectRequest(null);
+            completeNewProject(source);
+          }}
+        />
       )}
       {exportOpen && (
         <ExportDialog
@@ -1430,6 +1481,7 @@ export function VfxEditor() {
         <FirstEffectGuide
           step={guideStep}
           actionComplete={guideActionStep === guideStep}
+          continueRef={guideContinueRef}
           onStepChange={setGuideStep}
           onAction={runGuideAction}
           onClose={() => {

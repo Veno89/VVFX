@@ -78,7 +78,7 @@ describe("alpha-mask spawning integration", () => {
     const { project, mask } = maskedProject();
     const definition = createRuntimeDefinition(project);
     const restored = runtimeDefinitionToProject(definition);
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(
       definition.assets.find((asset) => asset.id === mask.id)?.alphaMask,
     ).toEqual(mask.alphaMask);

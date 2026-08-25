@@ -144,7 +144,7 @@ function layerEstimate(
       ? authoredSpritesPerSecond * (project.preview.duration / 1_000)
       : layer.type === "burst"
         ? originals * cycles
-        : layer.type === "animated"
+        : layer.type === "animated" || layer.type === "beam"
           ? cycles
           : 0;
   const estimatedCopyFinishTriggers = copyFinishEvents.reduce(

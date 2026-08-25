@@ -1,15 +1,32 @@
 "use client";
 
 import { ChevronDown, CircleHelp, RotateCcw } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-export function HelpTip({ text }: { text: string }) {
+export function HelpTip({
+  text,
+  dismissOnLeave = false,
+}: {
+  text: string;
+  dismissOnLeave?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   return (
-    <button type="button" className="help-tip" aria-label={`Help: ${text}`}>
+    <button
+      type="button"
+      className="help-tip"
+      aria-label={`Help: ${text}`}
+      onPointerEnter={dismissOnLeave ? () => setOpen(true) : undefined}
+      onPointerLeave={dismissOnLeave ? () => setOpen(false) : undefined}
+      onFocus={dismissOnLeave ? () => setOpen(true) : undefined}
+      onBlur={dismissOnLeave ? () => setOpen(false) : undefined}
+    >
       <CircleHelp size={13} aria-hidden="true" />
-      <span className="help-tip__bubble" role="tooltip">
-        {text}
-      </span>
+      {(!dismissOnLeave || open) && (
+        <span className="help-tip__bubble" role="tooltip">
+          {text}
+        </span>
+      )}
     </button>
   );
 }

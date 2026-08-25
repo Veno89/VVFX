@@ -12,7 +12,7 @@ import {
   RotateCcw,
   SlidersHorizontal,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { PhaserPreview } from "../../preview/PhaserPreview";
 import type {
   PreviewPerformanceSample,
@@ -25,6 +25,10 @@ import type {
 } from "../../vfx/types";
 import { HelpTip } from "./Controls";
 import { PerformanceInspector } from "./PerformanceInspector";
+import { useFocusRegion } from "../useFocusRegion";
+
+const PERFORMANCE_DIALOG_ID = "preview-performance-dialog";
+const VIEW_DIALOG_ID = "preview-appearance-dialog";
 
 const initialPerformanceSample = (): PreviewPerformanceSample => ({
   liveSprites: 0,
@@ -70,7 +74,7 @@ export function PreviewPanel({
   onMoveLayer: (layerId: string, x: number, y: number) => void;
   onMovePathPoint: (
     layerId: string,
-    target: "control" | "end" | number,
+    target: "control" | "end" | "beam-end" | number,
     x: number,
     y: number,
   ) => void;
@@ -86,6 +90,18 @@ export function PreviewPanel({
   const [performanceSample, setPerformanceSample] =
     useState<PreviewPerformanceSample>(initialPerformanceSample);
   const [peakSprites, setPeakSprites] = useState(0);
+  const backgroundSelectRef = useRef<HTMLSelectElement>(null);
+  const performanceDialogRef = useFocusRegion<HTMLElement>({
+    active: performanceOpen,
+    trapFocus: false,
+    onEscape: () => setPerformanceOpen(false),
+  });
+  const viewDialogRef = useFocusRegion<HTMLDivElement>({
+    active: viewOpen,
+    initialFocusRef: backgroundSelectRef,
+    trapFocus: false,
+    onEscape: () => setViewOpen(false),
+  });
 
   const handlePerformanceSample = useCallback(
     (sample: PreviewPerformanceSample) => {
@@ -113,6 +129,9 @@ export function PreviewPanel({
               }}
               title="Effect performance and stress test"
               aria-label="Effect performance and stress test"
+              aria-controls={PERFORMANCE_DIALOG_ID}
+              aria-expanded={performanceOpen}
+              aria-haspopup="dialog"
             >
               <Gauge size={15} />
             </button>
@@ -127,12 +146,16 @@ export function PreviewPanel({
                 onResetPeak={() =>
                   setPeakSprites(performanceSample.liveSprites)
                 }
+                dialogRef={performanceDialogRef}
+                dialogId={PERFORMANCE_DIALOG_ID}
               />
             )}
           </div>
           <button
             type="button"
             className={project.preview.showGrid ? "is-active" : ""}
+            aria-pressed={project.preview.showGrid}
+            aria-label="Show preview grid"
             onClick={() =>
               onViewChange({ showGrid: !project.preview.showGrid })
             }
@@ -181,11 +204,21 @@ export function PreviewPanel({
                 setPerformanceOpen(false);
               }}
               title="Preview appearance"
+              aria-label="Preview appearance"
+              aria-controls={VIEW_DIALOG_ID}
+              aria-expanded={viewOpen}
+              aria-haspopup="dialog"
             >
               <SlidersHorizontal size={15} />
             </button>
             {viewOpen && (
-              <div className="view-menu">
+              <div
+                ref={viewDialogRef}
+                id={VIEW_DIALOG_ID}
+                className="view-menu"
+                role="dialog"
+                aria-label="Preview appearance"
+              >
                 <span className="menu-label">Canvas only — not exported</span>
                 <p className="view-menu-note">
                   Background, grid, and zoom only help you inspect the effect.
@@ -195,6 +228,7 @@ export function PreviewPanel({
                   Background{" "}
                   <HelpTip text="Bright effects can look completely different on light and dark backgrounds. Check both before you finish." />
                   <select
+                    ref={backgroundSelectRef}
                     value={project.preview.background}
                     onChange={(event) =>
                       onViewChange({
@@ -226,7 +260,10 @@ export function PreviewPanel({
                 <span className="menu-label">Effect variation — exported</span>
                 <label className="seed-field">
                   Random seed{" "}
-                  <HelpTip text="A seed lets you replay the exact same random version while adjusting settings." />
+                  <HelpTip
+                    text="A seed lets you replay the exact same random version while adjusting settings."
+                    dismissOnLeave
+                  />
                   <span>
                     <input
                       type="number"
@@ -280,9 +317,12 @@ export function PreviewPanel({
             : stressCopies > 1
               ? "Stress preview · editing handles are paused"
               : project.layers.find((layer) => layer.id === selectedId)
-                    ?.motionPath.enabled
-                ? "Drag path points to reshape the selected route"
-                : "Drag a visible part to move its layer"}
+                    ?.type === "beam"
+                ? "Drag endpoint B to reshape the selected beam"
+                : project.layers.find((layer) => layer.id === selectedId)
+                      ?.motionPath.enabled
+                  ? "Drag path points to reshape the selected route"
+                  : "Drag a visible part to move its layer"}
         </div>
       </div>
       <div className="transport-bar">
@@ -304,6 +344,7 @@ export function PreviewPanel({
             key={value}
             type="button"
             className={speed === value ? "is-active" : ""}
+            aria-pressed={speed === value}
             onClick={() => onSpeedChange(value)}
           >
             {value}×

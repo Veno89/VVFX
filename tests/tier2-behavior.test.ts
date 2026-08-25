@@ -162,7 +162,7 @@ describe("Tier 2 per-copy behavior envelopes", () => {
     project.layers.push(arc);
     const definition = createRuntimeDefinition(project);
     const restored = runtimeDefinitionToProject(definition);
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(evaluateProject(restored, 300, null)).toEqual(
       evaluateProject(project, 300, null),
     );
@@ -193,7 +193,7 @@ describe("Tier 2 per-copy behavior envelopes", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(16);
+    expect(result.project?.formatVersion).toBe(17);
     const migrated = result.project?.layers[0];
     if (!migrated || migrated.type !== "burst")
       throw new Error("Missing migrated burst");

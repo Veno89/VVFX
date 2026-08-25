@@ -21,7 +21,7 @@ export function createRuntimeDefinition(
   const resolvedProject = resolveProjectGroups(project);
   return {
     format: "vvfx-runtime",
-    formatVersion: 14,
+    formatVersion: 15,
     name: resolvedProject.metadata.name,
     duration: resolvedProject.preview.duration,
     seed: resolvedProject.preview.randomSeed,
@@ -68,6 +68,7 @@ export function createRuntimeDefinition(
       trail: layer.trail,
       motionPath: layer.motionPath,
       keyframes: layer.keyframes,
+      beam: layer.beam,
     })),
   };
 }
@@ -133,6 +134,11 @@ function layerCode(
     layer.appearance.blendMode === "add"
       ? `\n  ${variable}.setBlendMode(Phaser.BlendModes.ADD);`
       : "";
+
+  if (layer.type === "beam")
+    throw new Error(
+      "Beam layers require the supported runtime-backed Phaser export.",
+    );
 
   if (layer.type === "static" || layer.type === "animated") {
     const asset = project.assets.find((item) => item.id === layer.assetId);
@@ -303,6 +309,7 @@ export function generatePhaserCode(project: VfxProject): string {
   return `import Phaser from "phaser";
 import {
   playVvfx,
+  type BeamEndpoints,
   type VvfxEffect,
   type VvfxRuntimeDefinition,
 } from "@vvfx/phaser-runtime";
@@ -321,6 +328,7 @@ export function ${functionName}(
   options: {
     assetKeys?: Record<string, string>;
     assetFrames?: Record<string, string | number>;
+    beamEndpoints?: BeamEndpoints;
     seed?: number;
     baseDepth?: number;
     loop?: boolean;
@@ -337,6 +345,7 @@ export function ${functionName}(
     originY,
     assetKeys: options.assetKeys,
     assetFrames: options.assetFrames,
+    beamEndpoints: options.beamEndpoints,
     baseDepth: options.baseDepth,
     loop: options.loop,
     autoDestroy: options.autoDestroy,
@@ -351,6 +360,10 @@ export function ${functionName}(
  * generatePhaserCode export is the supported parity path.
  */
 export function generateStandalonePhaserCode(project: VfxProject): string {
+  if (project.layers.some((layer) => layer.type === "beam"))
+    throw new Error(
+      "The educational standalone Phaser approximation does not support Beam layers. Use the supported runtime-backed Phaser TypeScript export for endpoint fitting and runtime setEndpoints(...).",
+    );
   if (
     project.layers.some(
       (layer) =>

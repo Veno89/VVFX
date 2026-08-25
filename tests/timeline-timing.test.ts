@@ -83,7 +83,7 @@ describe("timeline precision helpers", () => {
     project.formatVersion = 9;
     delete project.timeline;
     const migrated = validateProject(project);
-    expect(migrated.project?.formatVersion).toBe(16);
+    expect(migrated.project?.formatVersion).toBe(17);
     expect(migrated.project?.timeline).toEqual({ markers: [], notes: "" });
 
     const current = createEmptyProject() as unknown as Record<string, unknown>;

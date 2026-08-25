@@ -1,8 +1,76 @@
 "use client";
 
-import { History, Save, X } from "lucide-react";
+import { AlertTriangle, FilePlus2, History, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { RecoveryDraft } from "../../persistence/projects";
+import { useFocusRegion } from "../useFocusRegion";
+
+export function NewProjectDialog({
+  projectName,
+  onConfirm,
+  onClose,
+}: {
+  projectName: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const keepEditingRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useFocusRegion<HTMLElement>({
+    initialFocusRef: keepEditingRef,
+    onEscape: onClose,
+  });
+
+  return (
+    <div
+      className="dialog-backdrop new-project-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="dialog compact-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="new-project-title"
+        aria-describedby="new-project-description"
+      >
+        <header>
+          <div>
+            <span className="eyebrow">Unsaved work</span>
+            <h2 id="new-project-title">Start a new project?</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Keep editing current project"
+          >
+            <X size={18} />
+          </button>
+        </header>
+        <div className="project-safety-form">
+          <p id="new-project-description" className="destructive-warning">
+            <AlertTriangle size={16} aria-hidden="true" />
+            <span>
+              <strong>{projectName}</strong> has unsaved changes. Starting over
+              replaces the current editor state and its recovery draft. This
+              cannot be undone.
+            </span>
+          </p>
+          <footer>
+            <button ref={keepEditingRef} type="button" onClick={onClose}>
+              Keep editing
+            </button>
+            <button type="button" className="danger-action" onClick={onConfirm}>
+              <FilePlus2 size={14} /> Discard changes and start new
+            </button>
+          </footer>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 export function SaveAsDialog({
   suggestedName,
@@ -15,6 +83,10 @@ export function SaveAsDialog({
 }) {
   const [name, setName] = useState(suggestedName);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useFocusRegion<HTMLElement>({
+    initialFocusRef: inputRef,
+    onEscape: onClose,
+  });
   const trimmedName = name.trim();
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -26,6 +98,7 @@ export function SaveAsDialog({
   return (
     <div className="dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="dialog compact-dialog"
         role="dialog"
         aria-modal="true"
@@ -87,12 +160,14 @@ export function RecoveryDialog({
   onRestore: () => void;
   onDiscard: () => void;
 }) {
+  const dialogRef = useFocusRegion<HTMLElement>();
   const uploadedImages = draft.project.assets.filter(
     (asset) => !asset.builtIn,
   ).length;
   return (
     <div className="dialog-backdrop recovery-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="dialog compact-dialog recovery-dialog"
         role="alertdialog"
         aria-modal="true"

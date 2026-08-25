@@ -5,7 +5,7 @@ import {
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
 } from "../../../src/vfx/renderingEffects";
-import type { VfxProject } from "../../../src/vfx/types";
+import type { BeamEndpoints, VfxProject } from "../../../src/vfx/types";
 import { runtimeDefinitionToProject } from "./definition";
 import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
 
@@ -41,6 +41,7 @@ export class VvfxEffect {
   private readonly assetFrames: Record<string, string | number>;
   private readonly assetsById: Map<string, VfxProject["assets"][number]>;
   private readonly defaultAssetFrames = new Map<string, string>();
+  private readonly beamEndpoints = new Map<string, BeamEndpoints>();
   private readonly onComplete?: () => void;
   private readonly onWarning?: (message: string) => void;
 
@@ -67,6 +68,11 @@ export class VvfxEffect {
       if (asset.atlasFrame)
         this.defaultAssetFrames.set(asset.id, asset.atlasFrame);
     });
+    if (options.beamEndpoints) {
+      for (const layer of this.project.layers)
+        if (layer.type === "beam")
+          this.beamEndpoints.set(layer.id, { ...options.beamEndpoints });
+    }
     this.onComplete = options.onComplete;
     this.onWarning = options.onWarning;
     scene.events.on("update", this.handleSceneUpdate);
@@ -120,6 +126,43 @@ export class VvfxEffect {
     return this;
   }
 
+  /**
+   * Fits one Beam layer, or every Beam layer when layerId is omitted, between
+   * two world-space points. This can be called every frame for moving targets.
+   */
+  setEndpoints(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    layerId?: string,
+  ) {
+    if (![startX, startY, endX, endY].every(Number.isFinite)) return this;
+    const endpoints = { startX, startY, endX, endY };
+    const targetIds = layerId
+      ? [layerId]
+      : this.project.layers
+          .filter((layer) => layer.type === "beam")
+          .map((layer) => layer.id);
+    for (const id of targetIds)
+      if (
+        this.project.layers.some(
+          (layer) => layer.id === id && layer.type === "beam",
+        )
+      )
+        this.beamEndpoints.set(id, { ...endpoints });
+    if (!this.destroyed) this.renderFrame();
+    return this;
+  }
+
+  /** Restores authored endpoints for one Beam layer or all Beam layers. */
+  clearEndpoints(layerId?: string) {
+    if (layerId) this.beamEndpoints.delete(layerId);
+    else this.beamEndpoints.clear();
+    if (!this.destroyed) this.renderFrame();
+    return this;
+  }
+
   update(delta: number) {
     if (!this.playing || this.destroyed) return;
     this.elapsed += Math.max(0, delta);
@@ -165,7 +208,23 @@ export class VvfxEffect {
       );
 
   private renderFrame() {
-    const instances = evaluateProject(this.project, this.elapsed, null);
+    const localBeamEndpoints = Object.fromEntries(
+      [...this.beamEndpoints].map(([layerId, endpoints]) => [
+        layerId,
+        {
+          startX: endpoints.startX - this.originX,
+          startY: endpoints.startY - this.originY,
+          endX: endpoints.endX - this.originX,
+          endY: endpoints.endY - this.originY,
+        },
+      ]),
+    );
+    const instances = evaluateProject(
+      this.project,
+      this.elapsed,
+      null,
+      localBeamEndpoints,
+    );
     const liveKeys = new Set(instances.map((instance) => instance.key));
     for (const [key, sprite] of this.sprites) {
       if (!liveKeys.has(key)) {

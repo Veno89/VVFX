@@ -13,7 +13,12 @@ import { resolveProjectGroups } from "./groups";
 import { randomSigned } from "./random";
 import { evaluateRenderingEffects } from "./renderingEffects";
 import { spriteFrameAtTime } from "./spriteSheet";
-import type { EvaluatedInstance, VfxLayer, VfxProject } from "./types";
+import type {
+  BeamEndpoints,
+  EvaluatedInstance,
+  VfxLayer,
+  VfxProject,
+} from "./types";
 
 export const MAX_EFFECT_INSTANCES = 500;
 
@@ -27,6 +32,7 @@ function evaluateOne(
   copyIndex: number,
   spawnTime: number,
   time: number,
+  beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
 ): EvaluatedInstance | null {
   const spatial = evaluateInstanceSpatialState(
     project,
@@ -56,38 +62,70 @@ function evaluateOne(
     randomSigned(seed, 12, layer.random.endScale),
     progress,
   );
+  let scaleX = keyed
+    ? Math.max(0, keyed.scaleX + randomScale) * behavior.scaleMultiplier
+    : layer.transform.separateScale
+      ? Math.max(
+          0,
+          lerp(
+            layer.transform.startScaleX,
+            layer.transform.endScaleX,
+            progress,
+          ) + randomScale,
+        ) * behavior.scaleMultiplier
+      : lerp(scaleStart, scaleEnd, progress) * behavior.scaleMultiplier;
+  const scaleY = keyed
+    ? Math.max(0, keyed.scaleY + randomScale) * behavior.scaleMultiplier
+    : layer.transform.separateScale
+      ? Math.max(
+          0,
+          lerp(
+            layer.transform.startScaleY,
+            layer.transform.endScaleY,
+            progress,
+          ) + randomScale,
+        ) * behavior.scaleMultiplier
+      : lerp(scaleStart, scaleEnd, progress) * behavior.scaleMultiplier;
+  let x = spatial.x;
+  let y = spatial.y;
+  let rotation = spatial.rotation;
+  if (layer.type === "beam") {
+    const endpoints = beamEndpoints[layer.id] ?? {
+      startX: spatial.x,
+      startY: spatial.y,
+      endX: spatial.x + layer.beam.endX,
+      endY: spatial.y + layer.beam.endY,
+    };
+    const deltaX = endpoints.endX - endpoints.startX;
+    const deltaY = endpoints.endY - endpoints.startY;
+    const asset = project.assets.find(
+      (candidate) => candidate.id === layer.assetId,
+    );
+    const sourceWidth = Math.max(
+      1,
+      asset?.spriteSheet?.frameWidth ?? asset?.width ?? 128,
+    );
+    x = (endpoints.startX + endpoints.endX) / 2;
+    y = (endpoints.startY + endpoints.endY) / 2;
+    rotation = (Math.atan2(deltaY, deltaX) * 180) / Math.PI;
+    scaleX = Math.hypot(deltaX, deltaY) / sourceWidth;
+  }
+  const frame = spriteFrameAtTime(
+    project.assets.find((asset) => asset.id === layer.assetId),
+    layer.frameAnimation,
+    Math.max(0, elapsed),
+    seed,
+  );
   return {
     key: `${layer.id}:${instanceIndex}:${Math.round(spawnTime)}${
       activation.ordinal === 0 ? "" : `:activation:${activation.ordinal}`
     }`,
     layerId: layer.id,
     assetId: layer.assetId,
-    x: spatial.x,
-    y: spatial.y,
-    scaleX: keyed
-      ? Math.max(0, keyed.scaleX + randomScale) * behavior.scaleMultiplier
-      : layer.transform.separateScale
-        ? Math.max(
-            0,
-            lerp(
-              layer.transform.startScaleX,
-              layer.transform.endScaleX,
-              progress,
-            ) + randomScale,
-          ) * behavior.scaleMultiplier
-        : lerp(scaleStart, scaleEnd, progress) * behavior.scaleMultiplier,
-    scaleY: keyed
-      ? Math.max(0, keyed.scaleY + randomScale) * behavior.scaleMultiplier
-      : layer.transform.separateScale
-        ? Math.max(
-            0,
-            lerp(
-              layer.transform.startScaleY,
-              layer.transform.endScaleY,
-              progress,
-            ) + randomScale,
-          ) * behavior.scaleMultiplier
-        : lerp(scaleStart, scaleEnd, progress) * behavior.scaleMultiplier,
+    x,
+    y,
+    scaleX,
+    scaleY,
     opacity: Math.max(
       0,
       Math.min(
@@ -101,7 +139,7 @@ function evaluateOne(
           opacityOffset,
       ),
     ),
-    rotation: spatial.rotation,
+    rotation,
     tint: layer.appearance.colorOverLifetime.enabled
       ? interpolateColorStops(
           layer.appearance.colorOverLifetime.stops,
@@ -116,12 +154,7 @@ function evaluateOne(
       seed,
     }),
     selected: selectedId === layer.id,
-    frame: spriteFrameAtTime(
-      project.assets.find((asset) => asset.id === layer.assetId),
-      layer.frameAnimation,
-      Math.max(0, elapsed),
-      seed,
-    ),
+    frame,
     trailIndex: null,
   };
 }
@@ -180,6 +213,7 @@ export function evaluateProject(
   project: VfxProject,
   time: number,
   selectedId: string | null,
+  beamEndpoints: Readonly<Record<string, BeamEndpoints>> = {},
 ): EvaluatedInstance[] {
   const resolvedProject = resolveProjectGroups(project);
   const schedule = compileLayerActivations(resolvedProject, time);
@@ -205,6 +239,7 @@ export function evaluateProject(
       selectedId,
       schedule,
       time,
+      beamEndpoints,
     );
     originals.push(...current);
 
@@ -234,6 +269,7 @@ export function evaluateProject(
           null,
           schedule,
           time,
+          beamEndpoints,
         )) {
           if (trails.length >= MAX_EFFECT_INSTANCES) break;
           trails.push({
@@ -267,6 +303,7 @@ function evaluateLayer(
   selectedId: string | null,
   schedule: LayerActivationSchedule,
   renderTime: number,
+  beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
 ): EvaluatedInstance[] {
   const instances: EvaluatedInstance[] = [];
   const activations = schedule.byLayer.get(layer.id) ?? [];
@@ -288,13 +325,14 @@ function evaluateLayer(
         0,
         activation.start,
         time,
+        beamEndpoints,
       );
       if (value) instances.push(value);
     }
     return instances;
   }
 
-  if (layer.type === "animated") {
+  if (layer.type === "animated" || layer.type === "beam") {
     for (const activation of activations) {
       if (
         activation.cancelledAt !== null &&
@@ -319,6 +357,7 @@ function evaluateLayer(
           0,
           spawnTime,
           time,
+          beamEndpoints,
         );
         if (value) instances.push(value);
       }
@@ -356,6 +395,7 @@ function evaluateLayer(
             index,
             spawnTime,
             time,
+            beamEndpoints,
           );
           if (value) instances.push(value);
         }
@@ -380,6 +420,7 @@ function evaluateLayer(
           copy,
           event.time,
           time,
+          beamEndpoints,
         );
         if (value) instances.push(value);
       }

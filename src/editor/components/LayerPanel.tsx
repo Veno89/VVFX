@@ -13,8 +13,9 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { LAYER_TYPE_LABELS } from "../guidance";
+import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
 import type { LayerType, VfxGroup, VfxLayer } from "../../vfx/types";
 
@@ -48,10 +49,22 @@ export function LayerPanel({
   onReorder: (from: number, to: number) => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
+  const addMenuRef = useFocusRegion<HTMLDivElement>({
+    active: addOpen,
+    trapFocus: false,
+    onEscape: () => setAddOpen(false),
+  });
+  const actionsMenuRef = useFocusRegion<HTMLSpanElement>({
+    active: actionsOpenId !== null,
+    activationKey: actionsOpenId,
+    trapFocus: false,
+    onEscape: () => setActionsOpenId(null),
+  });
   useEffect(() => {
     if (!editingId) return;
     const frame = window.requestAnimationFrame(() => editRef.current?.focus());
@@ -68,6 +81,24 @@ export function LayerPanel({
       onUpdate(layer.id, { name } as Partial<VfxLayer>);
     setEditingId(null);
   };
+  const moveMenuFocus = (event: KeyboardEvent<HTMLElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"),
+    );
+    if (items.length === 0) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowUp"
+            ? (currentIndex - 1 + items.length) % items.length
+            : (currentIndex + 1) % items.length;
+    items[nextIndex]?.focus();
+  };
   return (
     <section className="panel layer-panel" aria-label="Effect layers">
       <div className="panel-heading">
@@ -79,41 +110,65 @@ export function LayerPanel({
           <button
             className="primary-small"
             type="button"
-            onClick={() => setAddOpen((open) => !open)}
+            onClick={() => {
+              setActionsOpenId(null);
+              setAddOpen((open) => !open);
+            }}
+            aria-controls="layer-add-menu"
+            aria-expanded={addOpen}
+            aria-haspopup="menu"
           >
             <Plus size={14} /> Add
           </button>
           {addOpen && (
-            <div className="add-menu">
+            <div
+              ref={addMenuRef}
+              id="layer-add-menu"
+              className="add-menu"
+              role="menu"
+              tabIndex={-1}
+              aria-label="Add layer"
+              onKeyDown={moveMenuFocus}
+            >
               <span className="menu-label">Start from scratch</span>
-              {(["static", "animated", "burst", "emitter"] as LayerType[]).map(
-                (type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => {
-                      onAdd(type);
-                      setAddOpen(false);
-                    }}
-                  >
-                    <strong>{LAYER_TYPE_LABELS[type]}</strong>
-                    <small>
-                      {type === "static"
-                        ? "Stays in place"
-                        : type === "animated"
-                          ? "One image changes"
+              {(
+                [
+                  "static",
+                  "animated",
+                  "beam",
+                  "burst",
+                  "emitter",
+                ] as LayerType[]
+              ).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onAdd(type);
+                    setAddOpen(false);
+                  }}
+                >
+                  <strong>{LAYER_TYPE_LABELS[type]}</strong>
+                  <small>
+                    {type === "static"
+                      ? "Stays in place"
+                      : type === "animated"
+                        ? "One image changes"
+                        : type === "beam"
+                          ? "Fits between two endpoints"
                           : type === "burst"
                             ? "Many appear at once"
                             : "Copies appear over time"}
-                    </small>
-                  </button>
-                ),
-              )}
+                  </small>
+                </button>
+              ))}
               <span className="menu-label">Guided presets</span>
               {COMPOSITION_PRESETS.map((preset) => (
                 <button
                   key={preset.id}
                   type="button"
+                  role="menuitem"
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
@@ -128,6 +183,7 @@ export function LayerPanel({
                 <button
                   key={preset.id}
                   type="button"
+                  role="menuitem"
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
@@ -283,25 +339,67 @@ export function LayerPanel({
               >
                 <PauseCircle size={14} />
               </button>
-              <span className="layer-more">
+              <span
+                className={`layer-more ${actionsOpenId === layer.id ? "is-open" : ""}`}
+              >
                 <button
                   type="button"
                   title="Layer actions"
                   aria-label={`Actions for ${layer.name}`}
+                  aria-controls={`layer-actions-menu-${index}`}
+                  aria-expanded={actionsOpenId === layer.id}
+                  aria-haspopup="menu"
+                  onClick={() => {
+                    setAddOpen(false);
+                    setActionsOpenId((openId) =>
+                      openId === layer.id ? null : layer.id,
+                    );
+                  }}
                 >
                   <MoreHorizontal size={14} />
                 </button>
-                <span className="layer-more__menu">
-                  <button type="button" onClick={() => startRename(layer)}>
-                    <Pencil size={13} /> Rename
-                  </button>
-                  <button type="button" onClick={() => onDuplicate(layer.id)}>
-                    <Copy size={13} /> Duplicate
-                  </button>
-                  <button type="button" onClick={() => onDelete(layer.id)}>
-                    <Trash2 size={13} /> Delete
-                  </button>
-                </span>
+                {actionsOpenId === layer.id && (
+                  <span
+                    ref={actionsMenuRef}
+                    id={`layer-actions-menu-${index}`}
+                    className="layer-more__menu"
+                    role="menu"
+                    tabIndex={-1}
+                    aria-label={`Actions for ${layer.name}`}
+                    onKeyDown={moveMenuFocus}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsOpenId(null);
+                        startRename(layer);
+                      }}
+                    >
+                      <Pencil size={13} /> Rename
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsOpenId(null);
+                        onDuplicate(layer.id);
+                      }}
+                    >
+                      <Copy size={13} /> Duplicate
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsOpenId(null);
+                        onDelete(layer.id);
+                      }}
+                    >
+                      <Trash2 size={13} /> Delete
+                    </button>
+                  </span>
+                )}
               </span>
             </span>
           </div>

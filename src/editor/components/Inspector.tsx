@@ -318,6 +318,10 @@ export function Inspector({
   };
   const setTrail = (patch: Partial<VfxLayer["trail"]>) =>
     onChange({ ...layer, trail: { ...layer.trail, ...patch } });
+  const setBeam = (patch: { endX?: number; endY?: number }) => {
+    if (layer.type === "beam")
+      onChange({ ...layer, beam: { ...layer.beam, ...patch } });
+  };
   const setMotionPath = (patch: Partial<VfxLayer["motionPath"]>) =>
     onChange({
       ...layer,
@@ -731,25 +735,37 @@ export function Inspector({
             />
             {!layer.transform.separateScale && (
               <RangeField
-                label="Starting size"
+                label={
+                  layer.type === "beam" ? "Starting thickness" : "Starting size"
+                }
                 value={layer.transform.startScale * 100}
                 defaultValue={100}
                 min={0}
                 max={400}
                 unit="%"
-                help="How large each copy is when it first appears."
+                help={
+                  layer.type === "beam"
+                    ? "Scales the bolt's thickness while its length remains pinned to the endpoints."
+                    : "How large each copy is when it first appears."
+                }
                 onChange={(value) => setTransform({ startScale: value / 100 })}
               />
             )}
             {layer.type !== "static" && !layer.transform.separateScale && (
               <RangeField
-                label="Ending size"
+                label={
+                  layer.type === "beam" ? "Ending thickness" : "Ending size"
+                }
                 value={layer.transform.endScale * 100}
                 defaultValue={100}
                 min={0}
                 max={400}
                 unit="%"
-                help="Make it grow, shrink, or stay the same while playing."
+                help={
+                  layer.type === "beam"
+                    ? "Changes only the bolt's thickness while it plays."
+                    : "Make it grow, shrink, or stay the same while playing."
+                }
                 onChange={(value) => setTransform({ endScale: value / 100 })}
               />
             )}
@@ -790,7 +806,49 @@ export function Inspector({
           </FieldGroup>
         </SettingsSection>
 
-        {layer.type !== "static" && (
+        {layer.type === "beam" && (
+          <SettingsSection
+            title="Beam endpoints"
+            icon={<Route size={15} />}
+            defaultOpen
+          >
+            <p className="section-note">
+              The layer position is endpoint A. Endpoint B is this local offset
+              from A. Drag the B handle in the preview, or set it precisely
+              here. Use tightly cropped artwork drawn left to right.
+            </p>
+            <FieldGroup>
+              <RangeField
+                label="Endpoint B horizontal"
+                value={layer.beam.endX}
+                defaultValue={240}
+                min={-1000}
+                max={1000}
+                unit="px"
+                help="Horizontal distance from endpoint A. Negative values point left."
+                onChange={(endX) => setBeam({ endX })}
+              />
+              <RangeField
+                label="Endpoint B vertical"
+                value={layer.beam.endY}
+                defaultValue={0}
+                min={-1000}
+                max={1000}
+                unit="px"
+                help="Vertical distance from endpoint A. Negative values point upward."
+                onChange={(endY) => setBeam({ endY })}
+              />
+            </FieldGroup>
+            <p className="context-tip">
+              Current connection:{" "}
+              {Math.round(Math.hypot(layer.beam.endX, layer.beam.endY))} px.
+              Phaser can replace both endpoints at runtime with{" "}
+              <code>setEndpoints(...)</code>.
+            </p>
+          </SettingsSection>
+        )}
+
+        {layer.type !== "static" && layer.type !== "beam" && (
           <SettingsSection
             title="Movement"
             icon={<Move size={15} />}
@@ -841,7 +899,7 @@ export function Inspector({
           </SettingsSection>
         )}
 
-        {layer.type !== "static" && (
+        {layer.type !== "static" && layer.type !== "beam" && (
           <SettingsSection title="Keyframes" icon={<Diamond size={15} />}>
             <Toggle
               label="Use multiple keyframes"
@@ -1064,7 +1122,7 @@ export function Inspector({
           </SettingsSection>
         )}
 
-        {layer.type !== "static" && (
+        {layer.type !== "static" && layer.type !== "beam" && (
           <SettingsSection title="Motion path" icon={<Route size={15} />}>
             <Toggle
               label="Follow a motion path"
@@ -2719,13 +2777,15 @@ export function Inspector({
                 </option>
               ))}
           </SelectField>
-          <Toggle
-            label="Separate width and height"
-            checked={layer.transform.separateScale}
-            help="Lets you stretch the image wider or taller instead of resizing it evenly."
-            onChange={(separateScale) => setTransform({ separateScale })}
-          />
-          {layer.transform.separateScale && (
+          {layer.type !== "beam" && (
+            <Toggle
+              label="Separate width and height"
+              checked={layer.transform.separateScale}
+              help="Lets you stretch the image wider or taller instead of resizing it evenly."
+              onChange={(separateScale) => setTransform({ separateScale })}
+            />
+          )}
+          {layer.type !== "beam" && layer.transform.separateScale && (
             <FieldGroup>
               <RangeField
                 label="Starting width"

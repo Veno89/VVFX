@@ -38,7 +38,7 @@ interface PhaserPreviewProps {
   onMoveLayer: (layerId: string, x: number, y: number) => void;
   onMovePathPoint: (
     layerId: string,
-    target: "control" | "end" | number,
+    target: "control" | "end" | "beam-end" | number,
     x: number,
     y: number,
   ) => void;
@@ -480,6 +480,15 @@ export function PhaserPreview({
             );
         }
       }
+      if (selected.type === "beam") {
+        const endpointX = anchorX + selected.beam.endX * zoom;
+        const endpointY = anchorY + selected.beam.endY * zoom;
+        overlay
+          .lineStyle(2, 0x71a7ff, 0.82)
+          .lineBetween(anchorX, anchorY, endpointX, endpointY)
+          .lineStyle(2, 0x8df4c5, 0.95)
+          .strokeCircle(endpointX, endpointY, 6);
+      }
       if (isSpawnLayer(selected)) {
         overlay.lineStyle(1.5, 0x8df4c5, 0.72);
         if (selected.spawn.shape === "circle")
@@ -608,56 +617,67 @@ export function PhaserPreview({
       | Array<{
           key: string;
           label: string;
-          target: "control" | "end" | number;
+          target: "control" | "end" | "beam-end" | number;
           x: number;
           y: number;
         }>
       | undefined =
-      selected?.motionPath.enabled && selected.motionPath.mode === "curve"
+      selected?.type === "beam"
         ? [
             {
-              key: `${selected.id}:control`,
+              key: `${selected.id}:beam-end`,
               label: "B",
-              target: "control",
-              x: selected.motionPath.controlX,
-              y: selected.motionPath.controlY,
-            },
-            {
-              key: `${selected.id}:end`,
-              label: "E",
-              target: "end",
-              x: selected.transform.movementX,
-              y: selected.transform.movementY,
+              target: "beam-end" as const,
+              x: selected.beam.endX,
+              y: selected.beam.endY,
             },
           ]
-        : selected?.motionPath.enabled && selected.motionPath.mode === "custom"
+        : selected?.motionPath.enabled && selected.motionPath.mode === "curve"
           ? [
-              ...selected.motionPath.points.map((point, index) => ({
-                key: `${selected.id}:point:${index}`,
-                label: String(index + 1),
-                target: index,
-                x: point.x,
-                y: point.y,
-              })),
+              {
+                key: `${selected.id}:control`,
+                label: "B",
+                target: "control",
+                x: selected.motionPath.controlX,
+                y: selected.motionPath.controlY,
+              },
               {
                 key: `${selected.id}:end`,
                 label: "E",
-                target: "end" as const,
+                target: "end",
                 x: selected.transform.movementX,
                 y: selected.transform.movementY,
               },
             ]
-          : selected?.motionPath.enabled
+          : selected?.motionPath.enabled &&
+              selected.motionPath.mode === "custom"
             ? [
+                ...selected.motionPath.points.map((point, index) => ({
+                  key: `${selected.id}:point:${index}`,
+                  label: String(index + 1),
+                  target: index,
+                  x: point.x,
+                  y: point.y,
+                })),
                 {
                   key: `${selected.id}:end`,
                   label: "E",
-                  target: "end",
+                  target: "end" as const,
                   x: selected.transform.movementX,
                   y: selected.transform.movementY,
                 },
               ]
-            : undefined;
+            : selected?.motionPath.enabled
+              ? [
+                  {
+                    key: `${selected.id}:end`,
+                    label: "E",
+                    target: "end",
+                    x: selected.transform.movementX,
+                    y: selected.transform.movementY,
+                  },
+                ]
+              : undefined;
 
     for (const point of editablePoints ?? []) {
       nextPathHandleKeys.add(point.key);
@@ -699,7 +719,8 @@ export function PhaserPreview({
           circle.setData("vvfxDragging", false);
           movePathPointRef.current(
             String(circle.getData("vvfxLayerId")),
-            circle.getData("vvfxTarget") as "control" | "end" | number,
+            circle.getData("vvfxTarget") as
+              "control" | "end" | "beam-end" | number,
             point.x,
             point.y,
           );

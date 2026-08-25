@@ -32,7 +32,7 @@ describe("reusable effect templates", () => {
       "builtin-spark",
     ]);
     expect(template.formatVersion).toBe(2);
-    expect(template.projectFormatVersion).toBe(16);
+    expect(template.projectFormatVersion).toBe(17);
     expect(template.scope).toBe("effect");
     expect(template.timelineAnchor).toBe(0);
     expect(template.duration).toBe(900);
@@ -134,7 +134,7 @@ describe("reusable effect templates", () => {
     const result = deserializeTemplatePack(JSON.stringify(legacy));
     expect(result.ok).toBe(true);
     expect(result.pack?.templates[0].formatVersion).toBe(2);
-    expect(result.pack?.templates[0].projectFormatVersion).toBe(16);
+    expect(result.pack?.templates[0].projectFormatVersion).toBe(17);
     expect(result.pack?.templates[0].groups).toEqual([]);
     expect(result.pack?.templates[0].layers[0].groupId).toBeNull();
   });

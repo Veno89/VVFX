@@ -1,5 +1,7 @@
 import type {
   AppearanceSettings,
+  BeamEndpoints,
+  BeamSettings,
   BehaviorSettings,
   FrameAnimationSettings,
   LayerType,
@@ -47,11 +49,12 @@ export interface VvfxRuntimeLayer {
   trail: TrailSettings;
   motionPath: MotionPathSettings;
   keyframes: KeyframeSettings;
+  beam: BeamSettings | null;
 }
 
 export interface VvfxRuntimeDefinition {
   format: "vvfx-runtime";
-  formatVersion: 14;
+  formatVersion: 15;
   name: string;
   duration: number;
   seed: number;
@@ -74,6 +77,8 @@ export interface VvfxEffectOptions {
   autoDestroy?: boolean;
   assetKeys?: Record<string, string>;
   assetFrames?: Record<string, string | number>;
+  /** World-space endpoints applied to every Beam layer at startup. */
+  beamEndpoints?: BeamEndpoints;
   onComplete?: () => void;
   /** Receives one-time compatibility warnings, such as Canvas FX fallback. */
   onWarning?: (message: string) => void;

@@ -190,7 +190,7 @@ describe("richer placement migration and runtime parity", () => {
     legacy.layers = [legacyLayer];
 
     const migrated = validateProject(legacy);
-    expect(migrated.project?.formatVersion).toBe(16);
+    expect(migrated.project?.formatVersion).toBe(17);
     const migratedLayer = migrated.project?.layers[0];
     expect(migratedLayer?.spawn).toMatchObject({
       stratifiedJitter: 0.65,
@@ -253,7 +253,7 @@ describe("richer placement migration and runtime parity", () => {
     project.layers = [layer];
 
     const definition = createRuntimeDefinition(project);
-    expect(definition.formatVersion).toBe(14);
+    expect(definition.formatVersion).toBe(15);
     expect(definition.layers[0].spawn).toMatchObject({
       distribution: "clusters",
       clusterCount: 5,

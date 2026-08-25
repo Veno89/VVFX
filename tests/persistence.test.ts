@@ -51,7 +51,7 @@ describe("browser project saves", () => {
       (await listProjects()).find(
         (project) => project.metadata.id === existing.metadata.id,
       )?.formatVersion,
-    ).toBe(16);
+    ).toBe(17);
     expect(await listTemplates()).toEqual([]);
     await deleteProject(existing.metadata.id);
   });

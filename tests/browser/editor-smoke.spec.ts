@@ -124,6 +124,64 @@ test("the template library footer remains reachable at 720px height", async ({
   await expect(dialog).toBeHidden();
 });
 
+test("professional workspace settings persist and export preflight follows its target", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openEditor(page);
+
+  const leftResize = page.getByRole("separator", {
+    name: "Resize left workspace rail",
+  });
+  await leftResize.focus();
+  await page.keyboard.press("End");
+  await expect(leftResize).toHaveAttribute("aria-valuenow", "420");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const stored = window.localStorage.getItem("vvfx-workspace-v1");
+        return stored ? JSON.parse(stored).leftWidth : null;
+      }),
+    )
+    .toBe(420);
+
+  await page.reload();
+  await expect(page.locator(".vvfx-app")).toBeVisible();
+  await expect(
+    page.getByRole("separator", { name: "Resize left workspace rail" }),
+  ).toHaveAttribute("aria-valuenow", "420");
+
+  await addPreset(page, "Magic projectile");
+  const search = page.getByRole("searchbox", { name: "Search layers" });
+  await search.fill("missing layer query");
+  await expect(
+    page.getByText("No matching layers", { exact: true }),
+  ).toBeVisible();
+  await search.fill("");
+  await page.getByRole("button", { name: "Folder", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: /^Rename folder/ }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("combobox", { name: "Timeline property track" })
+    .selectOption("opacity");
+  await expect(
+    page.getByRole("combobox", { name: "Timeline property track" }),
+  ).toHaveValue("opacity");
+
+  await page.getByRole("button", { name: /^Export/ }).click();
+  const preflight = page.getByRole("region", { name: "Export preflight" });
+  await expect(preflight).toBeVisible();
+  await preflight
+    .getByRole("combobox", { name: "Profile" })
+    .selectOption("mobile");
+  await expect(preflight).toContainText(
+    "Conservative budget for several effects on modest devices.",
+  );
+  await expect(preflight).toContainText("Visible content");
+});
+
 test("trail and 50× stress toggles return live objects to baseline without heap growth", async ({
   page,
 }) => {

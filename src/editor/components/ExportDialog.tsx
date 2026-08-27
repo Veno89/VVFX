@@ -2,11 +2,15 @@
 
 import {
   Check,
+  CircleCheck,
+  CircleX,
   Clipboard,
   Download,
   FileCode2,
   FileJson,
   Film,
+  ShieldCheck,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import {
@@ -28,6 +32,11 @@ import {
 } from "../../vfx/exporters";
 import { serializeProject } from "../../vfx/serialization";
 import { hasEnabledRenderingEffects } from "../../vfx/renderingEffects";
+import {
+  analyzeExportPreflight,
+  EXPORT_PREFLIGHT_PROFILES,
+  type ExportPreflightProfileId,
+} from "../../vfx/exportPreflight";
 import type { VfxProject } from "../../vfx/types";
 import { useFocusRegion } from "../useFocusRegion";
 
@@ -80,6 +89,8 @@ export function ExportDialog({
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [previewFormat, setPreviewFormat] = useState<PreviewFormat>("webm");
   const [previewSizeId, setPreviewSizeId] = useState("game");
+  const [preflightProfileId, setPreflightProfileId] =
+    useState<ExportPreflightProfileId>("balanced");
   const [lastRecording, setLastRecording] = useState<PreviewRecording | null>(
     null,
   );
@@ -141,6 +152,12 @@ export function ExportDialog({
     (layer) =>
       layer.enabled && hasEnabledRenderingEffects(layer.appearance.effects),
   );
+  const preflight = useMemo(
+    () => analyzeExportPreflight(project, preflightProfileId),
+    [preflightProfileId, project],
+  );
+  const preflightBlocksExport =
+    preflight.status === "error" && tab !== "project";
 
   const selectTab = (nextTab: ExportTab) => {
     copyRequestRef.current += 1;
@@ -332,6 +349,53 @@ export function ExportDialog({
           </button>
         </div>
         <p className="export-explainer">{info}</p>
+        <section
+          className={`export-preflight export-preflight--${preflight.status}`}
+          aria-label="Export preflight"
+        >
+          <header>
+            <span>
+              <ShieldCheck size={15} />
+              <strong>Target preflight</strong>
+            </span>
+            <label>
+              Profile
+              <select
+                value={preflightProfileId}
+                disabled={recording}
+                onChange={(event) =>
+                  setPreflightProfileId(
+                    event.target.value as ExportPreflightProfileId,
+                  )
+                }
+              >
+                {EXPORT_PREFLIGHT_PROFILES.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </header>
+          <p>{preflight.profile.description}</p>
+          <ul>
+            {preflight.checks.map((check) => (
+              <li key={check.id} className={`is-${check.severity}`}>
+                {check.severity === "error" ? (
+                  <CircleX size={13} />
+                ) : check.severity === "warning" ? (
+                  <TriangleAlert size={13} />
+                ) : (
+                  <CircleCheck size={13} />
+                )}
+                <span>
+                  <strong>{check.label}</strong>
+                  <small>{check.detail}</small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
         {integrityError && (
           <p className="preview-export-error" role="alert">
             {integrityError}
@@ -486,6 +550,7 @@ export function ExportDialog({
                   recording ||
                   (previewFormat === "webm" && webmSupported !== true) ||
                   !hasExportableLayer ||
+                  preflightBlocksExport ||
                   Boolean(integrityError)
                 }
                 onClick={() => void recordPreview()}
@@ -504,7 +569,7 @@ export function ExportDialog({
               </span>
               <button
                 type="button"
-                disabled={Boolean(integrityError)}
+                disabled={Boolean(integrityError) || preflightBlocksExport}
                 onClick={() => void copyCurrentExport()}
               >
                 {copiedTab === tab ? (
@@ -517,7 +582,7 @@ export function ExportDialog({
               <button
                 className="primary-action"
                 type="button"
-                disabled={Boolean(integrityError)}
+                disabled={Boolean(integrityError) || preflightBlocksExport}
                 onClick={() =>
                   downloadText(
                     `${base}${extension}`,

@@ -49,6 +49,7 @@ interface PhaserPreviewProps {
   stressCopies?: number;
   onPerformanceSample?: (sample: PreviewPerformanceSample) => void;
   onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
+  lockedLayerIds?: string[];
 }
 
 interface PathHandle {
@@ -374,6 +375,7 @@ export function PhaserPreview({
   stressCopies = 1,
   onPerformanceSample,
   onCanvasReady,
+  lockedLayerIds = [],
 }: PhaserPreviewProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
@@ -388,6 +390,7 @@ export function PhaserPreview({
   const idlePerformanceTimerRef = useRef<number | null>(null);
   const [textureRevision, setTextureRevision] = useState(0);
   const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
+  const lockedIds = useMemo(() => new Set(lockedLayerIds), [lockedLayerIds]);
   const latestAssetsRef = useRef(project.assets);
   latestAssetsRef.current = project.assets;
 
@@ -569,7 +572,11 @@ export function PhaserPreview({
           instance.frame ?? "__BASE",
         );
         draggableSprite.setData("layerId", instance.layerId);
-        if (editingEnabled && instance.trailIndex === null) {
+        if (
+          editingEnabled &&
+          instance.trailIndex === null &&
+          !lockedIds.has(instance.layerId)
+        ) {
           draggableSprite.setInteractive({ useHandCursor: true });
           scene.input.setDraggable(draggableSprite);
           draggableSprite.on("dragstart", () => {
@@ -650,9 +657,10 @@ export function PhaserPreview({
     });
 
     overlay.clear();
-    const selectedSource = display.selectedId
-      ? project.layers.find((layer) => layer.id === display.selectedId)
-      : null;
+    const selectedSource =
+      display.selectedId && !lockedIds.has(display.selectedId)
+        ? project.layers.find((layer) => layer.id === display.selectedId)
+        : null;
     const selected = selectedSource
       ? resolveLayerGroup(project, selectedSource)
       : null;
@@ -1012,6 +1020,7 @@ export function PhaserPreview({
   }, [
     captureMode,
     evaluator,
+    lockedIds,
     project,
     selectedId,
     stressCopies,

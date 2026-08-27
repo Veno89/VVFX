@@ -2,23 +2,37 @@
 
 import {
   Boxes,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
+  Folder,
+  FolderPlus,
   GripVertical,
   Layers3,
+  Lock,
+  LockOpen,
   MoreHorizontal,
   PauseCircle,
   Pencil,
   Plus,
+  Search,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { LAYER_TYPE_LABELS } from "../guidance";
 import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
 import type { LayerType, VfxGroup, VfxLayer } from "../../vfx/types";
+import type { LayerWorkspaceFolder } from "../workspace";
 
 const SCRATCH_LAYER_TYPES: LayerType[] = [
   "static",
@@ -42,6 +56,15 @@ export function LayerPanel({
   onDuplicate,
   onDelete,
   onReorder,
+  search = "",
+  onSearchChange,
+  lockedLayerIds = [],
+  folders = [],
+  onCreateFolder,
+  onUpdateFolder,
+  onDeleteFolder,
+  onMoveToFolder,
+  onToggleLock,
 }: {
   layers: VfxLayer[];
   groups: VfxGroup[];
@@ -56,6 +79,18 @@ export function LayerPanel({
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onReorder: (from: number, to: number) => void;
+  search?: string;
+  onSearchChange?: (search: string) => void;
+  lockedLayerIds?: string[];
+  folders?: LayerWorkspaceFolder[];
+  onCreateFolder?: () => void;
+  onUpdateFolder?: (
+    id: string,
+    patch: Partial<Pick<LayerWorkspaceFolder, "name" | "collapsed">>,
+  ) => void;
+  onDeleteFolder?: (id: string) => void;
+  onMoveToFolder?: (layerId: string, folderId: string | null) => void;
+  onToggleLock?: (layerId: string) => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
@@ -69,6 +104,26 @@ export function LayerPanel({
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const layerNameRefs = useRef(new Map<string, HTMLButtonElement>());
   const deleteFocusFrameRef = useRef<number | null>(null);
+  const lockedIds = new Set(lockedLayerIds);
+  const folderByLayerId = new Map<string, LayerWorkspaceFolder>();
+  for (const folder of folders)
+    for (const layerId of folder.layerIds)
+      if (!folderByLayerId.has(layerId)) folderByLayerId.set(layerId, folder);
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const matchesSearch = (layer: VfxLayer) => {
+    if (!normalizedSearch) return true;
+    const folderName = folderByLayerId.get(layer.id)?.name ?? "";
+    return `${layer.name} ${layer.type} ${folderName}`
+      .toLocaleLowerCase()
+      .includes(normalizedSearch);
+  };
+  const displayedLayers = layers.filter(matchesSearch);
+  const firstDisplayedLayerByFolder = new Map<string, string>();
+  for (const layer of displayedLayers) {
+    const folder = folderByLayerId.get(layer.id);
+    if (folder && !firstDisplayedLayerByFolder.has(folder.id))
+      firstDisplayedLayerByFolder.set(folder.id, layer.id);
+  }
   const addMenuRef = useFocusRegion<HTMLDivElement>({
     active: addOpen,
     trapFocus: false,
@@ -99,6 +154,7 @@ export function LayerPanel({
     [],
   );
   const startRename = (layer: VfxLayer) => {
+    if (lockedIds.has(layer.id)) return;
     setEditingId(layer.id);
     setEditValue(layer.name);
     onSelect(layer.id);
@@ -280,6 +336,27 @@ export function LayerPanel({
           )}
         </div>
       </div>
+      <div className="layer-organizer-toolbar">
+        <label>
+          <Search size={12} aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            maxLength={MAX_VFX_NAME_LENGTH}
+            placeholder="Find layers"
+            aria-label="Search layers"
+            onChange={(event) => onSearchChange?.(event.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!onCreateFolder}
+          onClick={onCreateFolder}
+          title="Create an organization folder"
+        >
+          <FolderPlus size={13} /> Folder
+        </button>
+      </div>
       <div className="group-list-block">
         <div className="group-list-heading">
           <span>
@@ -326,183 +403,306 @@ export function LayerPanel({
             <p>Add a preset or use an image from the library.</p>
           </div>
         )}
-        {layers.map((layer, index) => (
-          <div
-            key={layer.id}
-            className={`layer-row ${selectedId === layer.id ? "is-selected" : ""} ${!layer.enabled ? "is-disabled" : ""}`}
-            draggable={editingId !== layer.id}
-            onDragStart={() => setDragIndex(index)}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={() => {
-              if (dragIndex !== null && dragIndex !== index)
-                onReorder(dragIndex, index);
-              setDragIndex(null);
-            }}
-          >
-            <span className="drag-handle" aria-hidden="true">
-              <GripVertical size={14} />
-            </span>
-            <div
-              className="layer-main"
-              onDoubleClick={() => startRename(layer)}
-            >
-              <span
-                className={`layer-type-dot layer-type-dot--${layer.type}`}
+        {layers.length > 0 && displayedLayers.length === 0 && (
+          <div className="empty-state empty-state--compact">
+            <Search size={20} />
+            <strong>No matching layers</strong>
+            <p>Try a name, type, or folder.</p>
+          </div>
+        )}
+        {folders
+          .filter((folder) => folder.layerIds.length === 0)
+          .map((folder) => (
+            <div className="layer-folder-heading" key={folder.id}>
+              <Folder size={12} />
+              <input
+                aria-label={`Rename folder ${folder.name}`}
+                value={folder.name}
+                maxLength={MAX_VFX_NAME_LENGTH}
+                onChange={(event) =>
+                  onUpdateFolder?.(folder.id, { name: event.target.value })
+                }
               />
-              {editingId === layer.id ? (
-                <input
-                  ref={editRef}
-                  className="layer-name-edit"
-                  value={editValue}
-                  aria-label={`Rename ${layer.name}`}
-                  maxLength={MAX_VFX_NAME_LENGTH}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => setEditValue(event.target.value)}
-                  onBlur={() => finishRename(layer)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") finishRename(layer);
-                    if (event.key === "Escape") setEditingId(null);
-                  }}
-                />
-              ) : (
-                <button
-                  ref={(element) => {
-                    if (element) layerNameRefs.current.set(layer.id, element);
-                    else layerNameRefs.current.delete(layer.id);
-                  }}
-                  className="layer-name-button"
-                  type="button"
-                  onClick={() => onSelect(layer.id)}
-                  title="Select layer · double-click to rename"
-                >
-                  <strong>{layer.name}</strong>
-                  <small>
-                    {LAYER_TYPE_LABELS[layer.type]}
-                    {layer.groupId
-                      ? ` · ${groups.find((group) => group.id === layer.groupId)?.name ?? "Group"}`
-                      : ""}
-                  </small>
-                </button>
-              )}
+              <small>Empty</small>
+              <button
+                type="button"
+                aria-label={`Delete folder ${folder.name}`}
+                onClick={() => onDeleteFolder?.(folder.id)}
+              >
+                <Trash2 size={12} />
+              </button>
             </div>
-            <span className="layer-actions">
-              <button
-                type="button"
-                className={layer.solo ? "is-active" : ""}
-                onClick={() =>
-                  onUpdate(layer.id, { solo: !layer.solo } as Partial<VfxLayer>)
-                }
-                title="Solo this layer"
-                aria-label={`Solo ${layer.name}`}
-              >
-                <span className="solo-letter">S</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdate(layer.id, {
-                    visible: !layer.visible,
-                  } as Partial<VfxLayer>)
-                }
-                title={layer.visible ? "Hide layer" : "Show layer"}
-                aria-label={`${layer.visible ? "Hide" : "Show"} ${layer.name}`}
-              >
-                {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdate(layer.id, {
-                    enabled: !layer.enabled,
-                  } as Partial<VfxLayer>)
-                }
-                title={layer.enabled ? "Disable layer" : "Enable layer"}
-                aria-label={`${layer.enabled ? "Disable" : "Enable"} ${layer.name}`}
-              >
-                <PauseCircle size={14} />
-              </button>
-              <span
-                className={`layer-more ${actionsOpenId === layer.id ? "is-open" : ""}`}
-              >
-                <button
-                  ref={
-                    actionsOpenId === layer.id ? actionsTriggerRef : undefined
-                  }
-                  type="button"
-                  title="Layer actions"
-                  aria-label={`Actions for ${layer.name}`}
-                  aria-controls={`layer-actions-menu-${index}`}
-                  aria-expanded={actionsOpenId === layer.id}
-                  aria-haspopup="menu"
-                  onClick={() => {
-                    setAddOpen(false);
-                    if (actionsOpenId === layer.id) setActionsOpenId(null);
-                    else {
-                      setActionsMenuIndex(0);
-                      setActionsOpenId(layer.id);
-                    }
-                  }}
-                >
-                  <MoreHorizontal size={14} />
-                </button>
-                {actionsOpenId === layer.id && (
-                  <span
-                    ref={actionsMenuRef}
-                    id={`layer-actions-menu-${index}`}
-                    className="layer-more__menu"
-                    role="menu"
-                    tabIndex={-1}
-                    aria-label={`Actions for ${layer.name}`}
-                    onKeyDown={(event) =>
-                      moveMenuFocus(event, setActionsMenuIndex)
+          ))}
+        {layers.map((layer, index) => {
+          if (!matchesSearch(layer)) return null;
+          const folder = folderByLayerId.get(layer.id);
+          const firstInFolder =
+            folder && firstDisplayedLayerByFolder.get(folder.id) === layer.id;
+          const hiddenByFolder =
+            folder?.collapsed === true && normalizedSearch.length === 0;
+          const locked = lockedIds.has(layer.id);
+          return (
+            <Fragment key={layer.id}>
+              {firstInFolder && folder && (
+                <div className="layer-folder-heading">
+                  <button
+                    type="button"
+                    aria-label={`${folder.collapsed ? "Expand" : "Collapse"} ${folder.name}`}
+                    onClick={() =>
+                      onUpdateFolder?.(folder.id, {
+                        collapsed: !folder.collapsed,
+                      })
                     }
                   >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      tabIndex={actionsMenuIndex === 0 ? 0 : -1}
-                      onFocus={() => setActionsMenuIndex(0)}
-                      onClick={() => {
-                        setActionsOpenId(null);
-                        startRename(layer);
-                      }}
-                    >
-                      <Pencil size={13} /> Rename
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      tabIndex={actionsMenuIndex === 1 ? 0 : -1}
-                      onFocus={() => setActionsMenuIndex(1)}
-                      onClick={() => {
-                        setActionsOpenId(null);
-                        onDuplicate(layer.id);
-                      }}
-                    >
-                      <Copy size={13} /> Duplicate
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      tabIndex={actionsMenuIndex === 2 ? 0 : -1}
-                      onFocus={() => setActionsMenuIndex(2)}
-                      onClick={() => {
-                        setActionsOpenId(null);
-                        onDelete(layer.id);
-                        restoreFocusAfterDelete(index);
-                      }}
-                    >
-                      <Trash2 size={13} /> Delete
-                    </button>
+                    {folder.collapsed ? (
+                      <ChevronRight size={12} />
+                    ) : (
+                      <ChevronDown size={12} />
+                    )}
+                  </button>
+                  <Folder size={12} />
+                  <input
+                    aria-label={`Rename folder ${folder.name}`}
+                    value={folder.name}
+                    maxLength={MAX_VFX_NAME_LENGTH}
+                    onChange={(event) =>
+                      onUpdateFolder?.(folder.id, {
+                        name: event.target.value,
+                      })
+                    }
+                  />
+                  <small>
+                    {folder.layerIds.length} layer
+                    {folder.layerIds.length === 1 ? "" : "s"}
+                  </small>
+                  <button
+                    type="button"
+                    aria-label={`Delete folder ${folder.name}`}
+                    onClick={() => onDeleteFolder?.(folder.id)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )}
+              {!hiddenByFolder && (
+                <div
+                  className={`layer-row ${selectedId === layer.id ? "is-selected" : ""} ${!layer.enabled ? "is-disabled" : ""} ${locked ? "is-locked" : ""}`}
+                  draggable={!locked && editingId !== layer.id}
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => {
+                    if (dragIndex !== null && dragIndex !== index)
+                      onReorder(dragIndex, index);
+                    setDragIndex(null);
+                  }}
+                >
+                  <span className="drag-handle" aria-hidden="true">
+                    {locked ? <Lock size={12} /> : <GripVertical size={14} />}
                   </span>
-                )}
-              </span>
-            </span>
-          </div>
-        ))}
+                  <div
+                    className="layer-main"
+                    onDoubleClick={() => startRename(layer)}
+                  >
+                    <span
+                      className={`layer-type-dot layer-type-dot--${layer.type}`}
+                    />
+                    {editingId === layer.id ? (
+                      <input
+                        ref={editRef}
+                        className="layer-name-edit"
+                        value={editValue}
+                        aria-label={`Rename ${layer.name}`}
+                        maxLength={MAX_VFX_NAME_LENGTH}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => setEditValue(event.target.value)}
+                        onBlur={() => finishRename(layer)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") finishRename(layer);
+                          if (event.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                    ) : (
+                      <button
+                        ref={(element) => {
+                          if (element)
+                            layerNameRefs.current.set(layer.id, element);
+                          else layerNameRefs.current.delete(layer.id);
+                        }}
+                        className="layer-name-button"
+                        type="button"
+                        onClick={() => onSelect(layer.id)}
+                        title="Select layer · double-click to rename"
+                      >
+                        <strong>{layer.name}</strong>
+                        <small>
+                          {LAYER_TYPE_LABELS[layer.type]}
+                          {layer.groupId
+                            ? ` · ${groups.find((group) => group.id === layer.groupId)?.name ?? "Group"}`
+                            : ""}
+                        </small>
+                      </button>
+                    )}
+                  </div>
+                  <span className="layer-actions">
+                    <button
+                      type="button"
+                      className={locked ? "is-active" : ""}
+                      onClick={() => onToggleLock?.(layer.id)}
+                      title={
+                        locked ? "Unlock layer editing" : "Lock layer editing"
+                      }
+                      aria-label={`${locked ? "Unlock" : "Lock"} ${layer.name}`}
+                      aria-pressed={locked}
+                    >
+                      {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                    </button>
+                    <button
+                      type="button"
+                      className={layer.solo ? "is-active" : ""}
+                      onClick={() =>
+                        onUpdate(layer.id, {
+                          solo: !layer.solo,
+                        } as Partial<VfxLayer>)
+                      }
+                      title="Solo this layer"
+                      aria-label={`Solo ${layer.name}`}
+                    >
+                      <span className="solo-letter">S</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdate(layer.id, {
+                          visible: !layer.visible,
+                        } as Partial<VfxLayer>)
+                      }
+                      title={layer.visible ? "Hide layer" : "Show layer"}
+                      aria-label={`${layer.visible ? "Hide" : "Show"} ${layer.name}`}
+                    >
+                      {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdate(layer.id, {
+                          enabled: !layer.enabled,
+                        } as Partial<VfxLayer>)
+                      }
+                      title={layer.enabled ? "Disable layer" : "Enable layer"}
+                      aria-label={`${layer.enabled ? "Disable" : "Enable"} ${layer.name}`}
+                    >
+                      <PauseCircle size={14} />
+                    </button>
+                    <span
+                      className={`layer-more ${actionsOpenId === layer.id ? "is-open" : ""}`}
+                    >
+                      <button
+                        ref={
+                          actionsOpenId === layer.id
+                            ? actionsTriggerRef
+                            : undefined
+                        }
+                        type="button"
+                        title="Layer actions"
+                        aria-label={`Actions for ${layer.name}`}
+                        aria-controls={`layer-actions-menu-${index}`}
+                        aria-expanded={actionsOpenId === layer.id}
+                        aria-haspopup="menu"
+                        onClick={() => {
+                          setAddOpen(false);
+                          if (actionsOpenId === layer.id)
+                            setActionsOpenId(null);
+                          else {
+                            setActionsMenuIndex(0);
+                            setActionsOpenId(layer.id);
+                          }
+                        }}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                      {actionsOpenId === layer.id && (
+                        <span
+                          ref={actionsMenuRef}
+                          id={`layer-actions-menu-${index}`}
+                          className="layer-more__menu"
+                          role="menu"
+                          tabIndex={-1}
+                          aria-label={`Actions for ${layer.name}`}
+                          onKeyDown={(event) =>
+                            moveMenuFocus(event, setActionsMenuIndex)
+                          }
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            tabIndex={actionsMenuIndex === 0 ? 0 : -1}
+                            onFocus={() => setActionsMenuIndex(0)}
+                            onClick={() => {
+                              setActionsOpenId(null);
+                              startRename(layer);
+                            }}
+                            disabled={locked}
+                          >
+                            <Pencil size={13} /> Rename
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            tabIndex={actionsMenuIndex === 1 ? 0 : -1}
+                            onFocus={() => setActionsMenuIndex(1)}
+                            onClick={() => {
+                              setActionsOpenId(null);
+                              onDuplicate(layer.id);
+                            }}
+                          >
+                            <Copy size={13} /> Duplicate
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            tabIndex={actionsMenuIndex === 2 ? 0 : -1}
+                            onFocus={() => setActionsMenuIndex(2)}
+                            onClick={() => {
+                              setActionsOpenId(null);
+                              onDelete(layer.id);
+                              restoreFocusAfterDelete(index);
+                            }}
+                            disabled={locked}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                          <span className="layer-folder-picker" role="none">
+                            <Folder size={12} />
+                            <select
+                              aria-label={`Move ${layer.name} to folder`}
+                              value={folder?.id ?? ""}
+                              onChange={(event) =>
+                                onMoveToFolder?.(
+                                  layer.id,
+                                  event.target.value || null,
+                                )
+                              }
+                            >
+                              <option value="">No folder</option>
+                              {folders.map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.name}
+                                </option>
+                              ))}
+                            </select>
+                          </span>
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
       </div>
       <p className="panel-footnote">
-        Drag to reorder · double-click a layer name to rename it.
+        Drag to reorder · folders and locks stay in this browser workspace.
       </p>
     </section>
   );

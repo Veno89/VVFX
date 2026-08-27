@@ -300,6 +300,70 @@ export function projectAfterAssetChanged(
   };
 }
 
+export interface AssetRelinkResult {
+  project: VfxProject;
+  affectedLayers: number;
+  repairs: LayerAssetReferenceRepair[];
+}
+
+/** Moves every authored role to another image while keeping both assets. */
+export function projectAfterAssetRelinked(
+  project: VfxProject,
+  sourceAssetId: string,
+  targetAssetId: string,
+): AssetRelinkResult {
+  if (sourceAssetId === targetAssetId)
+    throw new Error("Choose a different image to relink these references.");
+  if (!project.assets.some((asset) => asset.id === sourceAssetId))
+    throw new Error("The source image is no longer in this project.");
+  if (!project.assets.some((asset) => asset.id === targetAssetId))
+    throw new Error("The replacement image is no longer in this project.");
+  const usage = analyzeAssetUsage(project, sourceAssetId);
+  const repairs = new Set<LayerAssetReferenceRepair>();
+  const layers = project.layers.map((layer) => {
+    const visualMask = layer.appearance.effects.visualMask;
+    const mapped = {
+      ...layer,
+      assetId: layer.assetId === sourceAssetId ? targetAssetId : layer.assetId,
+      appearance: {
+        ...layer.appearance,
+        effects: {
+          ...layer.appearance.effects,
+          visualMask: {
+            ...visualMask,
+            maskAssetId:
+              visualMask.maskAssetId === sourceAssetId
+                ? targetAssetId
+                : visualMask.maskAssetId,
+          },
+        },
+      },
+      ...(isSpawnLayer(layer)
+        ? {
+            spawn: {
+              ...layer.spawn,
+              maskAssetId:
+                layer.spawn.maskAssetId === sourceAssetId
+                  ? targetAssetId
+                  : layer.spawn.maskAssetId,
+            },
+          }
+        : {}),
+    } as VfxLayer;
+    const sanitized = sanitizeLayerAssetReferencesWithReport(
+      mapped,
+      project.assets,
+    );
+    for (const repair of sanitized.repairs) repairs.add(repair);
+    return sanitized.layer;
+  });
+  return {
+    project: { ...project, layers },
+    affectedLayers: usage.counts.affectedLayers,
+    repairs: [...repairs],
+  };
+}
+
 /** Removes every layer-level reference to an asset in one undoable mutation. */
 export function layersAfterAssetRemoved(
   layers: readonly VfxLayer[],

@@ -13,6 +13,7 @@ import {
   layersAfterAssetChanged,
   layersAfterAssetRemoved,
   projectAfterAssetChanged,
+  projectAfterAssetRelinked,
   projectAfterAssetRemoved,
 } from "../src/vfx/assetReferences";
 import {
@@ -38,6 +39,29 @@ const uploadedAsset = (id = "uploaded-mask"): VfxAsset => ({
 });
 
 describe("asset dependency analysis and removal", () => {
+  it("relinks artwork and stored mask roles without removing the source", () => {
+    const project = createEmptyProject("Asset relink");
+    const source = uploadedAsset("source-art");
+    const target = uploadedAsset("target-art");
+    project.assets.push(source, target);
+    const layer = createLayer("burst", "Shared roles", source.id);
+    layer.spawn.maskAssetId = source.id;
+    layer.appearance.effects.visualMask.maskAssetId = source.id;
+    project.layers.push(layer);
+
+    const result = projectAfterAssetRelinked(project, source.id, target.id);
+
+    expect(result.affectedLayers).toBe(1);
+    expect(result.project.layers[0]).toMatchObject({
+      assetId: target.id,
+      spawn: { maskAssetId: target.id },
+      appearance: {
+        effects: { visualMask: { maskAssetId: target.id } },
+      },
+    });
+    expect(result.project.assets).toEqual(project.assets);
+  });
+
   it("reports each affected layer once with active and stored role counts", () => {
     const project = createEmptyProject("Asset usage");
     const asset = uploadedAsset();

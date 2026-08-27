@@ -10,6 +10,7 @@ import {
   Diamond,
   Film,
   Link2,
+  Lock,
   Move,
   Palette,
   Plus,
@@ -264,6 +265,7 @@ export function Inspector({
   onCopy,
   onPaste,
   canPaste,
+  locked = false,
 }: {
   layer: VfxLayer | null;
   assets: VfxAsset[];
@@ -274,6 +276,7 @@ export function Inspector({
   onCopy: () => void;
   onPaste: () => void;
   canPaste: boolean;
+  locked?: boolean;
 }) {
   const fieldIdPrefix = useId();
   if (!layer) {
@@ -458,7 +461,7 @@ export function Inspector({
 
   return (
     <aside
-      className="panel inspector"
+      className={`panel inspector ${locked ? "is-locked" : ""}`}
       aria-label={`Settings for ${layer.name}`}
     >
       <div className="inspector-header">
@@ -469,6 +472,7 @@ export function Inspector({
             value={layer.name}
             aria-label="Layer name"
             maxLength={MAX_VFX_NAME_LENGTH}
+            disabled={locked}
             onChange={(event) =>
               onChange({ ...layer, name: event.target.value })
             }
@@ -486,7 +490,7 @@ export function Inspector({
           <button
             type="button"
             onClick={onPaste}
-            disabled={!canPaste}
+            disabled={!canPaste || locked}
             title="Paste copied settings"
             aria-label="Paste copied settings"
           >
@@ -494,7 +498,13 @@ export function Inspector({
           </button>
         </div>
       </div>
-      <div className="inspector-scroll">
+      {locked && (
+        <p className="inspector-lock-notice" role="status">
+          <Lock size={13} /> Layer editing is locked. Unlock it in the Layers
+          panel to make changes.
+        </p>
+      )}
+      <div className="inspector-scroll" inert={locked}>
         {!layer.assetId && (
           <div className="friendly-error">
             This layer has no image yet. Choose one below to make it visible.
@@ -695,7 +705,7 @@ export function Inspector({
                   }
                 />
                 <p className="section-note">
-                  Each frame is {spriteSheet.frameWidth} Ã—{" "}
+                  Each frame is {spriteSheet.frameWidth} ×{" "}
                   {spriteSheet.frameHeight} px. The main Timeline remains the
                   source of truth for when this layer starts and stops.
                 </p>

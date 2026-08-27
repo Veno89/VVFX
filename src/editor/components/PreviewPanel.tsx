@@ -57,6 +57,7 @@ export function PreviewPanel({
   onSpeedChange,
   captureMode = false,
   onCanvasReady,
+  lockedLayerIds = [],
 }: {
   project: VfxProject;
   time: number;
@@ -86,6 +87,7 @@ export function PreviewPanel({
   onSpeedChange: (speed: number) => void;
   captureMode?: boolean;
   onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
+  lockedLayerIds?: string[];
 }) {
   const backgroundFieldId = useId();
   const seedFieldId = useId();
@@ -336,19 +338,22 @@ export function PreviewPanel({
           stressCopies={stressCopies}
           onPerformanceSample={handlePerformanceSample}
           onCanvasReady={onCanvasReady}
+          lockedLayerIds={lockedLayerIds}
         />
         <div className="canvas-hint">
           {captureMode
             ? "Recording one clean effect copy"
             : stressCopies > 1
               ? "Stress preview · editing handles are paused"
-              : project.layers.find((layer) => layer.id === selectedId)
-                    ?.type === "beam"
-                ? "Drag endpoint B to reshape the selected beam"
+              : selectedId && lockedLayerIds.includes(selectedId)
+                ? "Layer locked · unlock it in the Layers panel to edit"
                 : project.layers.find((layer) => layer.id === selectedId)
-                      ?.motionPath.enabled
-                  ? "Drag path points to reshape the selected route"
-                  : "Drag a visible part to move its layer"}
+                      ?.type === "beam"
+                  ? "Drag endpoint B to reshape the selected beam"
+                  : project.layers.find((layer) => layer.id === selectedId)
+                        ?.motionPath.enabled
+                    ? "Drag path points to reshape the selected route"
+                    : "Drag a visible part to move its layer"}
         </div>
       </div>
       <div className="transport-bar">

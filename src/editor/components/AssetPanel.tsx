@@ -4,8 +4,10 @@ import {
   CircleCheck,
   Film,
   ImagePlus,
+  Link2,
   LoaderCircle,
   Plus,
+  RefreshCw,
   Trash2,
   Upload,
   WandSparkles,
@@ -405,6 +407,61 @@ function AssetVisualMaskStatus({ asset }: { asset: VfxAsset }) {
   );
 }
 
+function AssetRelinkControl({
+  asset,
+  assets,
+  usageCount,
+  onRelink,
+}: {
+  asset: VfxAsset;
+  assets: VfxAsset[];
+  usageCount: number;
+  onRelink: (sourceAssetId: string, targetAssetId: string) => void;
+}) {
+  const targets = assets.filter((candidate) => candidate.id !== asset.id);
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
+  const effectiveTargetId = targets.some(
+    (candidate) => candidate.id === targetId,
+  )
+    ? targetId
+    : (targets[0]?.id ?? "");
+  if (usageCount === 0 || targets.length === 0) return null;
+  return (
+    <section className="asset-relink-control" aria-label="Relink asset usage">
+      <span>
+        <Link2 size={13} />
+        <strong>
+          Relink {usageCount} affected layer{usageCount === 1 ? "" : "s"}
+        </strong>
+      </span>
+      <p>
+        Move every artwork and mask reference to another image without deleting
+        this source.
+      </p>
+      <div>
+        <select
+          aria-label={`Replacement image for ${asset.name}`}
+          value={effectiveTargetId}
+          onChange={(event) => setTargetId(event.target.value)}
+        >
+          {targets.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={!effectiveTargetId}
+          onClick={() => onRelink(asset.id, effectiveTargetId)}
+        >
+          Relink all
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function AssetPanel({
   assets,
   projectGeneration = 0,
@@ -416,6 +473,8 @@ export function AssetPanel({
   onPrepareAsset,
   onRemove,
   onCreateLayer,
+  usageCounts = {},
+  onRelink,
   onError,
 }: {
   assets: VfxAsset[];
@@ -432,15 +491,21 @@ export function AssetPanel({
   ) => boolean | void;
   onRemove: (id: string) => void;
   onCreateLayer: (assetId: string) => void;
+  usageCounts?: Record<string, number>;
+  onRelink?: (sourceAssetId: string, targetAssetId: string) => void;
   onError: (message: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const replacementInputRef = useRef<HTMLInputElement>(null);
   const activeUploadRef = useRef<AbortController | null>(null);
   const activeLegacyPreparationRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [preparingUploads, setPreparingUploads] = useState(false);
   const [preparingAssetId, setPreparingAssetId] = useState<string | null>(null);
+  const [replacementAssetId, setReplacementAssetId] = useState<string | null>(
+    null,
+  );
   const [preparationNotice, setPreparationNotice] = useState<{
     kind: "status" | "error";
     message: string;
@@ -475,6 +540,7 @@ export function AssetPanel({
       }
       setPreparingUploads(false);
       setPreparingAssetId(null);
+      setReplacementAssetId(null);
       setPreparationNotice(null);
       setDraggingFiles(false);
     });
@@ -613,6 +679,86 @@ export function AssetPanel({
       if (activeUploadRef.current === controller) {
         activeUploadRef.current = null;
         if (mountedRef.current) setPreparingUploads(false);
+      }
+    }
+  };
+
+  const replaceAssetSource = async (file: File | undefined) => {
+    const target = assets.find(
+      (asset) => asset.id === replacementAssetId && !asset.builtIn,
+    );
+    setReplacementAssetId(null);
+    if (!file || !target || activeUploadRef.current) return;
+    if (file.type !== "image/png" && file.type !== "image/webp") {
+      const message = "Replacement images must be PNG or WebP files.";
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+      return;
+    }
+    if (file.size > MAX_IMAGE_FILE_BYTES) {
+      const message = `${file.name} is larger than the supported ${MAX_IMAGE_FILE_BYTES / 1024 / 1024} MB image limit.`;
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+      return;
+    }
+    const controller = new AbortController();
+    activeUploadRef.current = controller;
+    setPreparingAssetId(target.id);
+    setPreparationNotice({
+      kind: "status",
+      message: `Replacing the source for ${target.name}…`,
+    });
+    try {
+      let retainedBytes = 0;
+      let retainedPixels = 0;
+      for (const asset of assets) {
+        if (asset.builtIn || asset.id === target.id) continue;
+        const inspection = inspectPortableImageDataUrl(
+          asset.dataUrl,
+          asset.mimeType === "image/webp" ? "image/webp" : "image/png",
+        );
+        if (!inspection.ok)
+          throw new Error(
+            `The existing image "${asset.name}" is damaged. Repair it before replacing another image.`,
+          );
+        retainedBytes += inspection.byteLength;
+        retainedPixels += inspection.width * inspection.height;
+      }
+      const header = await inspectImageFile(file, controller.signal);
+      if (retainedBytes + header.byteLength > MAX_PROJECT_EMBEDDED_IMAGE_BYTES)
+        throw new Error(
+          `Embedded project images are limited to ${MAX_PROJECT_EMBEDDED_IMAGE_BYTES / 1024 / 1024} MB in total.`,
+        );
+      if (
+        retainedPixels + header.width * header.height >
+        MAX_PROJECT_IMAGE_PIXELS
+      )
+        throw new Error(
+          "This replacement would exceed the project's decoded texture budget.",
+        );
+      const prepared = await readImage(file, header, controller.signal);
+      ensureActive(controller.signal);
+      onChangeAsset({
+        ...prepared,
+        id: target.id,
+        name: target.name,
+      });
+      setPreparationNotice({
+        kind: "status",
+        message: `${target.name} now uses the new source. Dependent layers were reconciled automatically.`,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message =
+        error instanceof Error
+          ? error.message
+          : "This image source could not be replaced.";
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+    } finally {
+      if (activeUploadRef.current === controller) {
+        activeUploadRef.current = null;
+        if (mountedRef.current) setPreparingAssetId(null);
       }
     }
   };
@@ -761,6 +907,17 @@ export function AssetPanel({
           event.currentTarget.value = "";
         }}
       />
+      <input
+        ref={replacementInputRef}
+        hidden
+        type="file"
+        accept="image/png,image/webp,.png,.webp"
+        aria-label="Choose replacement image source"
+        onChange={(event) => {
+          void replaceAssetSource(event.target.files?.[0]);
+          event.currentTarget.value = "";
+        }}
+      />
 
       {preparationNotice && (
         <p
@@ -808,6 +965,7 @@ export function AssetPanel({
                     : asset.atlasFrame
                       ? `Atlas frame · ${asset.atlasFrame}`
                       : asset.mimeType.replace("image/", "").toUpperCase()}
+                {` · ${usageCounts[asset.id] ?? 0} layer${(usageCounts[asset.id] ?? 0) === 1 ? "" : "s"}`}
               </small>
             </span>
             <span className="asset-card__actions">
@@ -820,15 +978,29 @@ export function AssetPanel({
                 <Plus size={14} />
               </button>
               {!asset.builtIn && (
-                <button
-                  type="button"
-                  disabled={preparingAssetId === asset.id}
-                  onClick={() => onRemove(asset.id)}
-                  title="Remove asset"
-                  aria-label={`Remove ${asset.name}`}
-                >
-                  <Trash2 size={14} />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={preparingAssetId === asset.id}
+                    onClick={() => {
+                      setReplacementAssetId(asset.id);
+                      replacementInputRef.current?.click();
+                    }}
+                    title="Replace source while keeping layer links"
+                    aria-label={`Replace source for ${asset.name}`}
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={preparingAssetId === asset.id}
+                    onClick={() => onRemove(asset.id)}
+                    title="Remove asset"
+                    aria-label={`Remove ${asset.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </>
               )}
             </span>
             {asset.transparency === "no" && (
@@ -852,6 +1024,14 @@ export function AssetPanel({
                       onChange={onChangeAsset}
                     />
                   </>
+                )}
+                {onRelink && (
+                  <AssetRelinkControl
+                    asset={asset}
+                    assets={assets}
+                    usageCount={usageCounts[asset.id] ?? 0}
+                    onRelink={onRelink}
+                  />
                 )}
               </div>
             )}

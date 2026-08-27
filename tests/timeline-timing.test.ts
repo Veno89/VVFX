@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { layerAfterTimelinePropertyChange } from "../src/editor/components/Timeline";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 import { insertKeyframeAt } from "../src/vfx/keyframes";
 import { validateProject } from "../src/vfx/serialization";
@@ -76,6 +77,31 @@ describe("timeline precision helpers", () => {
     expect(result.enabled).toBe(true);
     expect(result.initialized).toBe(true);
     expect(result.frames.map((frame) => frame.time)).toEqual([0, 0.4, 1]);
+  });
+
+  it("edits curated property tracks and keeps endpoint transforms aligned", () => {
+    const source = createLayer("animated", "Splatter");
+    const withMiddle = {
+      ...source,
+      keyframes: insertKeyframeAt(source.keyframes, source.transform, 0.4),
+    };
+    const middle = layerAfterTimelinePropertyChange(
+      withMiddle,
+      1,
+      "opacity",
+      35,
+    );
+    expect(middle.keyframes.frames[1].opacity).toBe(0.35);
+    expect(middle.transform.startOpacity).toBe(source.transform.startOpacity);
+
+    const end = layerAfterTimelinePropertyChange(
+      middle,
+      middle.keyframes.frames.length - 1,
+      "rotation",
+      225,
+    );
+    expect(end.keyframes.frames.at(-1)?.rotation).toBe(225);
+    expect(end.transform.rotationDuring).toBe(225);
   });
 
   it("migrates v9 projects and safely normalizes saved timing notes", () => {

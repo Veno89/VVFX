@@ -205,7 +205,6 @@ void effect;
     JSON.stringify(
       {
         compilerOptions: {
-          baseUrl: ".",
           module: "NodeNext",
           moduleResolution: "NodeNext",
           noEmit: true,

@@ -7,7 +7,15 @@ import {
   Info,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   clearRecoveryDraft,
   deleteInvalidProjectRecord,
@@ -39,6 +47,7 @@ import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../vfx/presets";
 import {
   analyzeAssetUsage,
   projectAfterAssetChanged,
+  projectAfterAssetRelinked,
   projectAfterAssetRemoved,
   sanitizeLayerAssetReferencesWithReport,
 } from "../vfx/assetReferences";
@@ -107,6 +116,7 @@ import {
   type TourFocus,
 } from "./components/LearningCenter";
 import { LayerPanel } from "./components/LayerPanel";
+import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { PreviewPanel } from "./components/PreviewPanel";
 import {
   AssetRemovalDialog,
@@ -130,6 +140,14 @@ import {
   type PreviewRecordingRequest,
 } from "./previewRecording";
 import { useHistoryState } from "./useHistoryState";
+import {
+  DEFAULT_WORKSPACE_PREFERENCES,
+  loadWorkspacePreferences,
+  saveWorkspacePreferences,
+  updateWorkspaceProjectView,
+  workspaceProjectView,
+  type ProjectWorkspaceView,
+} from "./workspace";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -272,6 +290,8 @@ export function VfxEditor() {
   const toastTimerRef = useRef<number | null>(null);
   const [settingsClipboard, setSettingsClipboard] =
     useState<CopyableLayerSettings | null>(null);
+  const [workspace, setWorkspace] = useState(DEFAULT_WORKSPACE_PREFERENCES);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   useEffect(
     () => () => {
       projectImageValidation.current?.abort();
@@ -281,6 +301,17 @@ export function VfxEditor() {
     },
     [],
   );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setWorkspace(loadWorkspacePreferences(window.localStorage));
+      setWorkspaceLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    if (workspaceLoaded)
+      saveWorkspacePreferences(window.localStorage, workspace);
+  }, [workspace, workspaceLoaded]);
   const selectedGroup =
     project.groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedLayer = selectedGroup
@@ -303,6 +334,16 @@ export function VfxEditor() {
         ? analyzeAssetUsage(project, pendingRemovalAsset.id)
         : null,
     [pendingRemovalAsset, project],
+  );
+  const assetUsageCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        project.assets.map((asset) => [
+          asset.id,
+          analyzeAssetUsage(project, asset.id).counts.affectedLayers,
+        ]),
+      ),
+    [project],
   );
   const templateSaveSummaries = useMemo(
     () => ({
@@ -332,6 +373,58 @@ export function VfxEditor() {
   );
   const effectiveSelectedId = selectedLayer?.id ?? null;
   const effectiveSelectedGroupId = selectedGroup?.id ?? null;
+  const projectWorkspace = useMemo(
+    () =>
+      workspaceProjectView(
+        workspace,
+        project.metadata.id,
+        project.layers.map((layer) => layer.id),
+        project.preview.duration,
+      ),
+    [workspace, project.metadata.id, project.layers, project.preview.duration],
+  );
+  const updateProjectWorkspace = useCallback(
+    (
+      update:
+        | Partial<ProjectWorkspaceView>
+        | ((current: ProjectWorkspaceView) => ProjectWorkspaceView),
+    ) => {
+      setWorkspace((current) => {
+        const view = workspaceProjectView(
+          current,
+          project.metadata.id,
+          project.layers.map((layer) => layer.id),
+          project.preview.duration,
+        );
+        const next =
+          typeof update === "function" ? update(view) : { ...view, ...update };
+        return updateWorkspaceProjectView(current, project.metadata.id, next);
+      });
+    },
+    [project.metadata.id, project.layers, project.preview.duration],
+  );
+  const beginResize = useCallback(
+    (
+      event: ReactPointerEvent<HTMLElement>,
+      resize: (clientX: number, clientY: number) => void,
+    ) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const move = (moveEvent: PointerEvent) =>
+        resize(moveEvent.clientX, moveEvent.clientY);
+      const finish = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+        document.body.classList.remove("is-resizing-workspace");
+      };
+      document.body.classList.add("is-resizing-workspace");
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish, { once: true });
+      window.addEventListener("pointercancel", finish, { once: true });
+    },
+    [],
+  );
   const currentFingerprint = useMemo(
     () => projectFingerprint(project),
     [project],
@@ -343,6 +436,18 @@ export function VfxEditor() {
   const activePlaybackEnd = useMemo(
     () => activeTimelineEnd(project),
     [project],
+  );
+  const playbackStart = Math.max(
+    0,
+    Math.min(project.preview.duration - 50, projectWorkspace.workStart),
+  );
+  const playbackEnd = Math.max(
+    playbackStart + 50,
+    Math.min(
+      project.preview.duration,
+      projectWorkspace.workEnd ??
+        (project.preview.loop ? activePlaybackEnd : project.preview.duration),
+    ),
   );
   const hasUnsavedChanges =
     hasMeaningfulWork &&
@@ -372,9 +477,9 @@ export function VfxEditor() {
     recoveryDraft !== null;
   const restartPreview = useCallback(() => {
     setPreviewRestartRevision((revision) => revision + 1);
-    setTime(0);
+    setTime(playbackStart);
     setPlaying(true);
-  }, []);
+  }, [playbackStart]);
 
   useEffect(() => {
     if (guideStep === 0 && guideActionStep === 0)
@@ -542,12 +647,13 @@ export function VfxEditor() {
       const delta = Math.min(80, now - previous) * speed;
       previous = now;
       setTime((current) => {
-        const next = current + delta;
-        const playbackEnd = project.preview.loop
-          ? activePlaybackEnd
-          : project.preview.duration;
+        const next = Math.max(current, playbackStart) + delta;
         if (next < playbackEnd) return next;
-        if (project.preview.loop) return next % playbackEnd;
+        if (project.preview.loop)
+          return (
+            playbackStart +
+            ((next - playbackStart) % (playbackEnd - playbackStart))
+          );
         window.setTimeout(() => setPlaying(false), 0);
         return playbackEnd;
       });
@@ -555,13 +661,7 @@ export function VfxEditor() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [
-    activePlaybackEnd,
-    playing,
-    project.preview.duration,
-    project.preview.loop,
-    speed,
-  ]);
+  }, [playbackEnd, playbackStart, playing, project.preview.loop, speed]);
 
   const recordPreview = useCallback(
     async (
@@ -577,16 +677,16 @@ export function VfxEditor() {
       const previousTime = time;
       const wasPlaying = playing;
       setPlaying(false);
-      setTime(0);
+      setTime(playbackStart);
       setExportingPreview(true);
       try {
         await waitForAnimationFrames(2);
         const recordingOptions = {
           source: canvas,
-          duration: activePlaybackEnd,
+          duration: playbackEnd - playbackStart,
           size: request.size,
           renderFrame: async (frameTime: number) => {
-            setTime(frameTime);
+            setTime(playbackStart + frameTime);
             await waitForAnimationFrames(2);
           },
           onProgress,
@@ -600,7 +700,7 @@ export function VfxEditor() {
         setPlaying(wasPlaying);
       }
     },
-    [activePlaybackEnd, playing, project, time],
+    [playbackEnd, playbackStart, playing, project, time],
   );
 
   const updateProject = useCallback(
@@ -995,13 +1095,27 @@ export function VfxEditor() {
       const layers = [...project.layers];
       layers.splice(index + 1, 0, copy);
       history.set({ ...project, layers });
+      updateProjectWorkspace((current) => ({
+        ...current,
+        folders: current.folders.map((folder) => {
+          const sourceIndex = folder.layerIds.indexOf(id);
+          if (sourceIndex < 0) return folder;
+          const layerIds = [...folder.layerIds];
+          layerIds.splice(sourceIndex + 1, 0, copy.id);
+          return { ...folder, layerIds };
+        }),
+      }));
       setSelectedId(copy.id);
       setSelectedGroupId(null);
     },
-    [history, project],
+    [history, project, updateProjectWorkspace],
   );
   const deleteLayerById = useCallback(
     (id: string) => {
+      if (projectWorkspace.lockedLayerIds.includes(id)) {
+        notify("Unlock this layer before deleting it.", "warning");
+        return;
+      }
       const index = project.layers.findIndex((layer) => layer.id === id);
       if (index < 0) return;
       const removedLinks = project.layers.reduce(
@@ -1023,6 +1137,16 @@ export function VfxEditor() {
             }) as VfxLayer,
         ) as VfxLayer[];
       history.set({ ...project, layers });
+      updateProjectWorkspace((current) => ({
+        ...current,
+        lockedLayerIds: current.lockedLayerIds.filter(
+          (layerId) => layerId !== id,
+        ),
+        folders: current.folders.map((folder) => ({
+          ...folder,
+          layerIds: folder.layerIds.filter((layerId) => layerId !== id),
+        })),
+      }));
       setSelectedId(layers[Math.min(index, layers.length - 1)]?.id ?? null);
       if (removedLinks > 0)
         notify(
@@ -1030,7 +1154,13 @@ export function VfxEditor() {
           "warning",
         );
     },
-    [history, notify, project],
+    [
+      history,
+      notify,
+      project,
+      projectWorkspace.lockedLayerIds,
+      updateProjectWorkspace,
+    ],
   );
 
   const confirmProjectReplacement = useCallback(
@@ -1524,6 +1654,14 @@ export function VfxEditor() {
   return (
     <div
       className={`vvfx-app ${learningClass}`}
+      style={
+        {
+          "--vvfx-left-width": `${workspace.leftWidth}px`,
+          "--vvfx-inspector-width": `${workspace.inspectorWidth}px`,
+          "--vvfx-timeline-height": `${workspace.timelineHeight}px`,
+          "--vvfx-asset-split": `${workspace.assetSplit}%`,
+        } as CSSProperties
+      }
       onFocusCapture={(event) => {
         if (isCoalescedHistoryInput(event.target)) history.beginInteraction();
         else history.endInteraction();
@@ -1678,10 +1816,65 @@ export function VfxEditor() {
               setAssetRemovalId(id);
             }}
             onCreateLayer={(assetId) => addLayer("animated", assetId, "asset")}
+            usageCounts={assetUsageCounts}
+            onRelink={(sourceAssetId, targetAssetId) => {
+              try {
+                const result = projectAfterAssetRelinked(
+                  project,
+                  sourceAssetId,
+                  targetAssetId,
+                );
+                history.set({
+                  ...result.project,
+                  metadata: {
+                    ...result.project.metadata,
+                    updatedAt: new Date().toISOString(),
+                  },
+                });
+                notify(
+                  result.repairs.length === 0
+                    ? `Relinked ${result.affectedLayers} affected layer${result.affectedLayers === 1 ? "" : "s"}.`
+                    : `Relinked ${result.affectedLayers} affected layer${result.affectedLayers === 1 ? "" : "s"}; repaired ${result.repairs.join(", ")}.`,
+                  result.repairs.length === 0 ? "success" : "warning",
+                );
+              } catch (error) {
+                notify(
+                  error instanceof Error
+                    ? error.message
+                    : "Those image references could not be relinked.",
+                  "error",
+                );
+              }
+            }}
             onError={() => {
               // AssetPanel already exposes its local failure as the single
               // assertive live alert, avoiding duplicate screen-reader output.
             }}
+          />
+          <PanelResizeHandle
+            className="asset-split-resizer"
+            orientation="horizontal"
+            label="Resize image library and layer list"
+            value={workspace.assetSplit}
+            valueText={`${Math.round(workspace.assetSplit)} percent for the image library`}
+            minimum={25}
+            maximum={70}
+            onChange={(assetSplit) =>
+              setWorkspace((current) => ({ ...current, assetSplit }))
+            }
+            onPointerStart={(event) =>
+              beginResize(event, (_clientX, clientY) => {
+                const rect = document
+                  .querySelector(".left-rail")
+                  ?.getBoundingClientRect();
+                if (!rect || rect.height <= 0) return;
+                const assetSplit = Math.max(
+                  25,
+                  Math.min(70, ((clientY - rect.top) / rect.height) * 100),
+                );
+                setWorkspace((current) => ({ ...current, assetSplit }));
+              })
+            }
           />
           <LayerPanel
             layers={project.layers}
@@ -1705,6 +1898,69 @@ export function VfxEditor() {
               layers.splice(to, 0, moved);
               history.set({ ...project, layers });
             }}
+            search={projectWorkspace.layerSearch}
+            onSearchChange={(layerSearch) =>
+              updateProjectWorkspace({ layerSearch })
+            }
+            lockedLayerIds={projectWorkspace.lockedLayerIds}
+            folders={projectWorkspace.folders}
+            onCreateFolder={() =>
+              updateProjectWorkspace((current) => ({
+                ...current,
+                folders: [
+                  ...current.folders,
+                  {
+                    id: makeId("folder"),
+                    name: `Folder ${current.folders.length + 1}`,
+                    layerIds: effectiveSelectedId ? [effectiveSelectedId] : [],
+                    collapsed: false,
+                  },
+                ].map((folder, index, folders) =>
+                  index === folders.length - 1
+                    ? folder
+                    : {
+                        ...folder,
+                        layerIds: folder.layerIds.filter(
+                          (id) => id !== effectiveSelectedId,
+                        ),
+                      },
+                ),
+              }))
+            }
+            onUpdateFolder={(id, patch) =>
+              updateProjectWorkspace((current) => ({
+                ...current,
+                folders: current.folders.map((folder) =>
+                  folder.id === id ? { ...folder, ...patch } : folder,
+                ),
+              }))
+            }
+            onDeleteFolder={(id) =>
+              updateProjectWorkspace((current) => ({
+                ...current,
+                folders: current.folders.filter((folder) => folder.id !== id),
+              }))
+            }
+            onMoveToFolder={(layerId, folderId) =>
+              updateProjectWorkspace((current) => ({
+                ...current,
+                folders: current.folders.map((folder) => ({
+                  ...folder,
+                  layerIds: [
+                    ...folder.layerIds.filter((id) => id !== layerId),
+                    ...(folder.id === folderId ? [layerId] : []),
+                  ],
+                })),
+              }))
+            }
+            onToggleLock={(layerId) =>
+              updateProjectWorkspace((current) => ({
+                ...current,
+                lockedLayerIds: current.lockedLayerIds.includes(layerId)
+                  ? current.lockedLayerIds.filter((id) => id !== layerId)
+                  : [...current.lockedLayerIds, layerId],
+              }))
+            }
           />
         </div>
 
@@ -1810,10 +2066,17 @@ export function VfxEditor() {
               },
             });
           }}
-          onPlayToggle={() => setPlaying((value) => !value)}
+          onPlayToggle={() =>
+            setPlaying((value) => {
+              if (!value && (time < playbackStart || time >= playbackEnd))
+                setTime(playbackStart);
+              return !value;
+            })
+          }
           onRestart={restartPreview}
           restartRevision={previewRestartRevision}
           onSpeedChange={setSpeed}
+          lockedLayerIds={projectWorkspace.lockedLayerIds}
         />
 
         {selectedGroup ? (
@@ -1883,10 +2146,78 @@ export function VfxEditor() {
               );
             }}
             canPaste={settingsClipboard !== null}
+            locked={
+              selectedLayer
+                ? projectWorkspace.lockedLayerIds.includes(selectedLayer.id)
+                : false
+            }
           />
         )}
+        <PanelResizeHandle
+          className="workspace-left-resizer"
+          orientation="vertical"
+          label="Resize left workspace rail"
+          value={workspace.leftWidth}
+          minimum={210}
+          maximum={420}
+          onChange={(leftWidth) =>
+            setWorkspace((current) => ({ ...current, leftWidth }))
+          }
+          onPointerStart={(event) =>
+            beginResize(event, (clientX) =>
+              setWorkspace((current) => ({
+                ...current,
+                leftWidth: Math.max(210, Math.min(420, clientX)),
+              })),
+            )
+          }
+        />
+        <PanelResizeHandle
+          className="workspace-right-resizer"
+          orientation="vertical"
+          label="Resize inspector"
+          value={workspace.inspectorWidth}
+          minimum={300}
+          maximum={540}
+          onChange={(inspectorWidth) =>
+            setWorkspace((current) => ({ ...current, inspectorWidth }))
+          }
+          onPointerStart={(event) =>
+            beginResize(event, (clientX) =>
+              setWorkspace((current) => ({
+                ...current,
+                inspectorWidth: Math.max(
+                  300,
+                  Math.min(540, window.innerWidth - clientX),
+                ),
+              })),
+            )
+          }
+        />
       </div>
 
+      <PanelResizeHandle
+        className="timeline-resizer"
+        orientation="horizontal"
+        label="Resize timeline"
+        value={workspace.timelineHeight}
+        minimum={180}
+        maximum={480}
+        onChange={(timelineHeight) =>
+          setWorkspace((current) => ({ ...current, timelineHeight }))
+        }
+        onPointerStart={(event) =>
+          beginResize(event, (_clientX, clientY) =>
+            setWorkspace((current) => ({
+              ...current,
+              timelineHeight: Math.max(
+                180,
+                Math.min(480, window.innerHeight - 29 - clientY),
+              ),
+            })),
+          )
+        }
+      />
       <Timeline
         layers={project.layers}
         groups={project.groups}
@@ -1908,6 +2239,20 @@ export function VfxEditor() {
         onGroupChange={updateGroup}
         timeline={project.timeline}
         onTimelineChange={updateTimeline}
+        zoom={projectWorkspace.timelineZoom}
+        workStart={projectWorkspace.workStart}
+        workEnd={projectWorkspace.workEnd}
+        onViewChange={(patch) =>
+          updateProjectWorkspace((current) => ({
+            ...current,
+            ...(patch.zoom === undefined ? {} : { timelineZoom: patch.zoom }),
+            ...(patch.workStart === undefined
+              ? {}
+              : { workStart: patch.workStart }),
+            ...(patch.workEnd === undefined ? {} : { workEnd: patch.workEnd }),
+          }))
+        }
+        lockedLayerIds={projectWorkspace.lockedLayerIds}
         onDurationChange={(duration) =>
           updateProject({
             ...project,
@@ -2031,7 +2376,7 @@ export function VfxEditor() {
       {exportOpen && (
         <ExportDialog
           project={project}
-          activeDuration={activePlaybackEnd}
+          activeDuration={playbackEnd - playbackStart}
           onRecordPreview={recordPreview}
           onClose={() => setExportOpen(false)}
         />

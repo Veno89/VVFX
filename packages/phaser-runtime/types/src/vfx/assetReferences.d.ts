@@ -73,6 +73,17 @@ export declare function projectAfterAssetChanged(
   project: VfxProject,
   asset: VfxAsset,
 ): VfxProject;
+export interface AssetRelinkResult {
+  project: VfxProject;
+  affectedLayers: number;
+  repairs: LayerAssetReferenceRepair[];
+}
+/** Moves every authored role to another image while keeping both assets. */
+export declare function projectAfterAssetRelinked(
+  project: VfxProject,
+  sourceAssetId: string,
+  targetAssetId: string,
+): AssetRelinkResult;
 /** Removes every layer-level reference to an asset in one undoable mutation. */
 export declare function layersAfterAssetRemoved(
   layers: readonly VfxLayer[],

@@ -10,11 +10,14 @@ export declare function resolveRuntimeRenderingAssetFrame(
 export declare class VvfxEffect {
   private readonly scene;
   private readonly project;
+  private readonly evaluator;
   private readonly sprites;
   private readonly layerDepths;
   private elapsed;
   private playing;
   private destroyed;
+  private renderQueued;
+  private renderRequest;
   private originX;
   private originY;
   private readonly baseDepth;
@@ -33,6 +36,7 @@ export declare class VvfxEffect {
     definition: VvfxRuntimeDefinition,
     options?: VvfxEffectOptions,
     releaseAssets?: () => void,
+    runtimeAssetKeys?: Record<string, string>,
   );
   get isPlaying(): boolean;
   get isDestroyed(): boolean;
@@ -60,6 +64,9 @@ export declare class VvfxEffect {
   private readonly handleSceneUpdate;
   private readonly handleSceneShutdown;
   private readonly resolveRenderingAssetFrame;
+  private scheduleRender;
+  private cancelScheduledRender;
+  private renderImmediately;
   private renderFrame;
   private clearSprites;
 }

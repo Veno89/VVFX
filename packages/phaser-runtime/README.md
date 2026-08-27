@@ -44,6 +44,10 @@ const effect = await playVvfx(this, impact, {
 effect.setPosition(player.x, player.y);
 ```
 
+Calls to `setPosition`, `setEndpoints`, and `clearEndpoints` made in the same
+JavaScript turn are coalesced into one render. A Scene `update` flushes the
+latest values immediately, so following a moving target does not double-render.
+
 For a Beam effect, tightly crop the source artwork and draw it left to right.
 Supply world-space endpoints at startup or update them while targets move:
 
@@ -74,6 +78,11 @@ await playVvfx(this, impact, {
   },
 });
 ```
+
+Automatically loaded images use a private, content-derived Phaser texture
+namespace. They never reuse a host texture merely because its key matches a
+Vvfx asset ID, and leased images are removed only after the last Vvfx effect
+releases them. Explicit `assetKeys` remain host-owned and are never removed.
 
 Embedded sprite sheets are sliced automatically. When mapping a sheet to a
 game texture through `assetKeys`, preload it as a Phaser sprite sheet with
@@ -182,3 +191,5 @@ The editor's generated Phaser TypeScript is a small, exact wrapper around this
 package: it embeds the Runtime JSON definition and calls `playVvfx`. Pass
 `assetKeys` for preloaded game textures. Preview background, grid, zoom,
 selection, and editor-only visibility never enter the runtime definition.
+The export includes only images referenced by a layer, including stored choices
+for disabled visual-mask and spawn-mask features.

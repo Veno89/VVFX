@@ -7,6 +7,7 @@ import {
   VvfxEffect,
 } from "../packages/phaser-runtime/src";
 import { resolveRuntimeRenderingAssetFrame } from "../packages/phaser-runtime/src/VvfxEffect";
+import { runtimeAssetTextureKey } from "../packages/phaser-runtime/src/textures";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 import { evaluateProject } from "../src/vfx/engine";
 import {
@@ -14,6 +15,7 @@ import {
   MAX_PROJECT_ASSETS,
   MAX_PROJECT_LAYERS,
   VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+  VVFX_INTERNAL_TEXTURE_PREFIX,
 } from "../src/vfx/inputLimits";
 import { createRuntimeDefinition } from "../src/vfx/exporters";
 import { applySpriteSheetFrames } from "../src/vfx/phaserFrames";
@@ -225,6 +227,15 @@ function createFakeScene(initialTextureKeys: string[] = []) {
   };
 }
 
+function managedTextureKey(
+  definition: ReturnType<typeof createRuntimeDefinition>,
+  assetId: string,
+) {
+  const asset = definition.assets.find((candidate) => candidate.id === assetId);
+  if (!asset) throw new Error(`Missing runtime test asset: ${assetId}`);
+  return runtimeAssetTextureKey(asset);
+}
+
 async function withDecodedImage(
   width: number,
   height: number,
@@ -287,7 +298,7 @@ describe("Phaser runtime package", () => {
     expect(Object.keys(frames)).toEqual(["__BASE"]);
   });
 
-  it("updates Beam layers from world-space endpoints", () => {
+  it("updates Beam layers from world-space endpoints", async () => {
     const project = createEmptyProject("Runtime beam");
     project.preview.duration = 500;
     const beam = createLayer("beam", "Lightning", "builtin-spark");
@@ -307,6 +318,7 @@ describe("Phaser runtime package", () => {
     });
 
     effect.setEndpoints(100, 200, 400, 600);
+    await Promise.resolve();
 
     expect(fake.sprites[0]?.x).toBeCloseTo(250);
     expect(fake.sprites[0]?.y).toBeCloseTo(400);
@@ -315,8 +327,43 @@ describe("Phaser runtime package", () => {
     expect(fake.sprites[0]?.angle).toBeCloseTo(53.1301, 3);
 
     effect.clearEndpoints();
+    await Promise.resolve();
     expect(fake.sprites[0]?.x).toBeCloseTo(130);
     expect(fake.sprites[0]?.y).toBeCloseTo(20);
+  });
+
+  it("coalesces same-turn host setters and cancels stale queued renders", async () => {
+    const project = createEmptyProject("Coalesced runtime setters");
+    project.preview.duration = 1_000;
+    project.layers.push(
+      createLayer("animated", "Moving flash", "builtin-flash"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      autoDestroy: false,
+    });
+    const sprite = fake.sprites[0];
+    const positionUpdates = vi.spyOn(sprite, "setPosition");
+
+    effect.setPosition(10, 20);
+    effect.setPosition(30, 40);
+    effect.setPosition(50, 60);
+    expect(positionUpdates).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(positionUpdates).toHaveBeenCalledTimes(1);
+    expect(sprite).toMatchObject({ x: 50, y: 60 });
+
+    effect.setPosition(70, 80);
+    effect.update(16);
+    expect(positionUpdates).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    expect(positionUpdates).toHaveBeenCalledTimes(2);
+    effect.destroy();
   });
 
   it("resolves mapped and unchanged-key atlas mask frames without CPU mask data", () => {
@@ -622,9 +669,11 @@ describe("Phaser runtime package", () => {
   });
 
   it("accepts renamed canonical built-ins but rejects identity spoofing", () => {
-    const definition = createRuntimeDefinition(
-      createEmptyProject("Canonical built-ins"),
+    const project = createEmptyProject("Canonical built-ins");
+    project.layers.push(
+      createLayer("animated", "Canonical flash", "builtin-flash"),
     );
+    const definition = createRuntimeDefinition(project);
     const renamed = JSON.parse(JSON.stringify(definition)) as typeof definition;
     renamed.assets[0].name = "My flash";
     const renamedResult = validateRuntimeDefinition(renamed);
@@ -713,12 +762,16 @@ describe("Phaser runtime package", () => {
     });
 
     expect(
-      fake.sprites.find((sprite) => sprite.texture.key === "builtin-ring")
-        ?.depth,
+      fake.sprites.find(
+        (sprite) =>
+          sprite.texture.key === managedTextureKey(definition, "builtin-ring"),
+      )?.depth,
     ).toBe(0);
     expect(
-      fake.sprites.find((sprite) => sprite.texture.key === "builtin-flash")
-        ?.depth,
+      fake.sprites.find(
+        (sprite) =>
+          sprite.texture.key === managedTextureKey(definition, "builtin-flash"),
+      )?.depth,
     ).toBe(1);
     effect.destroy();
   });
@@ -1010,14 +1063,22 @@ describe("Phaser runtime package", () => {
       height: 1,
       transparency: "yes",
     });
+    project.layers.push(
+      createLayer("animated", "Built-in ring", "builtin-ring"),
+      createLayer("animated", "Uploaded spark", "uploaded-spark"),
+    );
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene();
 
     await withDecodedImage(1, 1, async () => {
       await loadVvfxAssets(fake.scene, definition);
 
-      expect(fake.textureKeys.has("builtin-ring")).toBe(true);
-      expect(fake.textureKeys.has("uploaded-spark")).toBe(true);
+      expect(
+        fake.textureKeys.has(managedTextureKey(definition, "builtin-ring")),
+      ).toBe(true);
+      expect(
+        fake.textureKeys.has(managedTextureKey(definition, "uploaded-spark")),
+      ).toBe(true);
       expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
         true,
       );
@@ -1039,32 +1100,68 @@ describe("Phaser runtime package", () => {
     project.assets.push(asset);
     project.layers.push(createLayer("animated", "Legacy image", asset.id));
     const fake = createFakeScene();
+    const definition = createRuntimeDefinition(project);
+    const textureKey = managedTextureKey(definition, asset.id);
 
     await withDecodedImage(1, 1, async () => {
-      const effect = await playVvfx(
-        fake.scene,
-        createRuntimeDefinition(project),
-        { autoDestroy: false },
-      );
+      const effect = await playVvfx(fake.scene, definition, {
+        autoDestroy: false,
+      });
 
       expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
         true,
       );
-      expect(fake.textureKeys.has(asset.id)).toBe(true);
-      expect(fake.sprites[0]?.texture.key).toBe(asset.id);
+      expect(fake.textureKeys.has(textureKey)).toBe(true);
+      expect(fake.sprites[0]?.texture.key).toBe(textureKey);
 
       effect.destroy();
-      expect(fake.textureKeys.has(asset.id)).toBe(false);
+      expect(fake.textureKeys.has(textureKey)).toBe(false);
       expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
         true,
       );
     });
   });
 
+  it("does not reuse or remove a host texture that matches an asset id", async () => {
+    const project = createEmptyProject("Host texture collision");
+    const asset: VfxAsset = {
+      id: "host-owned-image",
+      name: "Portable replacement",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    project.assets.push(asset);
+    project.layers.push(createLayer("animated", "Portable", asset.id));
+    const definition = createRuntimeDefinition(project);
+    const textureKey = managedTextureKey(definition, asset.id);
+    const fake = createFakeScene([asset.id]);
+
+    await withDecodedImage(1, 1, async () => {
+      const effect = await playVvfx(fake.scene, definition, {
+        autoDestroy: false,
+      });
+
+      expect(textureKey).toMatch(
+        new RegExp(`^${VVFX_INTERNAL_TEXTURE_PREFIX}`),
+      );
+      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      expect(fake.textureKeys.has(textureKey)).toBe(true);
+      expect(fake.sprites[0]?.texture.key).toBe(textureKey);
+
+      effect.destroy();
+      expect(fake.textureKeys.has(textureKey)).toBe(false);
+      expect(fake.textureKeys.has(asset.id)).toBe(true);
+    });
+  });
+
   it("rejects explicit mappings to the internal missing-texture key", async () => {
-    const definition = createRuntimeDefinition(
-      createEmptyProject("Reserved runtime texture mapping"),
-    );
+    const project = createEmptyProject("Reserved runtime texture mapping");
+    project.layers.push(createLayer("animated", "Mapped ring", "builtin-ring"));
+    const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([VVFX_INTERNAL_MISSING_TEXTURE_KEY]);
     const assetKeys = {
       "builtin-ring": VVFX_INTERNAL_MISSING_TEXTURE_KEY,
@@ -1085,6 +1182,12 @@ describe("Phaser runtime package", () => {
     ).rejects.toThrow(/mapped Phaser texture key.*invalid/i);
     expect(fake.sprites).toHaveLength(0);
     expect([...fake.textureKeys]).toEqual([VVFX_INTERNAL_MISSING_TEXTURE_KEY]);
+
+    await expect(
+      loadVvfxAssets(fake.scene, definition, {
+        "builtin-ring": `${VVFX_INTERNAL_TEXTURE_PREFIX}spoofed`,
+      }),
+    ).rejects.toThrow(/mapped Phaser texture key.*invalid/i);
   });
 
   it("does not install an embedded image after its decode times out", async () => {
@@ -1098,7 +1201,11 @@ describe("Phaser runtime package", () => {
       height: 1,
       transparency: "yes",
     });
+    project.layers.push(
+      createLayer("animated", "Late texture", "late-texture"),
+    );
     const definition = createRuntimeDefinition(project);
+    const textureKey = managedTextureKey(definition, "late-texture");
     const fake = createFakeScene();
     const OriginalImage = globalThis.Image;
     let lateOnload: (() => void) | null = null;
@@ -1132,7 +1239,7 @@ describe("Phaser runtime package", () => {
 
       (lateOnload as (() => void) | null)?.();
       await Promise.resolve();
-      expect(fake.textureKeys.has("late-texture")).toBe(false);
+      expect(fake.textureKeys.has(textureKey)).toBe(false);
     } finally {
       vi.useRealTimers();
       vi.stubGlobal("Image", OriginalImage);
@@ -1260,7 +1367,17 @@ describe("Phaser runtime package", () => {
         height: 1,
         transparency: "yes",
       });
+    project.layers.push(
+      ...Array.from({ length: 5 }, (_, index) =>
+        createLayer(
+          "animated",
+          `Pending texture ${index}`,
+          `pending-texture-${index}`,
+        ),
+      ),
+    );
     const definition = createRuntimeDefinition(project);
+    const firstTextureKey = managedTextureKey(definition, "pending-texture-0");
     const fake = createFakeScene();
     const OriginalImage = globalThis.Image;
     const images: Array<{ src: string }> = [];
@@ -1299,7 +1416,7 @@ describe("Phaser runtime package", () => {
 
       expect(images).toHaveLength(4);
       expect(images.every((image) => image.src === "")).toBe(true);
-      expect(fake.textureKeys.has("pending-texture-0")).toBe(false);
+      expect(fake.textureKeys.has(firstTextureKey)).toBe(false);
     } finally {
       vi.useRealTimers();
       vi.stubGlobal("Image", OriginalImage);
@@ -1466,6 +1583,7 @@ describe("Phaser runtime package", () => {
     project.assets.push(asset);
     project.layers.push(createLayer("animated", "Leased", asset.id));
     const definition = createRuntimeDefinition(project);
+    const textureKey = managedTextureKey(definition, asset.id);
     const fake = createFakeScene();
 
     await withDecodedImage(1, 1, async () => {
@@ -1476,11 +1594,11 @@ describe("Phaser runtime package", () => {
         autoDestroy: false,
       });
 
-      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      expect(fake.textureKeys.has(textureKey)).toBe(true);
       first.destroy();
-      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      expect(fake.textureKeys.has(textureKey)).toBe(true);
       second.destroy();
-      expect(fake.textureKeys.has(asset.id)).toBe(false);
+      expect(fake.textureKeys.has(textureKey)).toBe(false);
     });
   });
 
@@ -1501,6 +1619,7 @@ describe("Phaser runtime package", () => {
       createLayer("animated", "Shared scene image", asset.id),
     );
     const definition = createRuntimeDefinition(project);
+    const textureKey = managedTextureKey(definition, asset.id);
     const firstScene = createFakeScene();
     const secondScene = createFakeScene();
     secondScene.scene.textures = firstScene.scene.textures;
@@ -1513,15 +1632,15 @@ describe("Phaser runtime package", () => {
         autoDestroy: false,
       });
 
-      expect(firstScene.textureKeys.has(asset.id)).toBe(true);
+      expect(firstScene.textureKeys.has(textureKey)).toBe(true);
       creator.destroy();
-      expect(firstScene.textureKeys.has(asset.id)).toBe(true);
+      expect(firstScene.textureKeys.has(textureKey)).toBe(true);
       expect(secondScene.sprites.some((sprite) => !sprite.destroyed)).toBe(
         true,
       );
 
       borrower.destroy();
-      expect(firstScene.textureKeys.has(asset.id)).toBe(false);
+      expect(firstScene.textureKeys.has(textureKey)).toBe(false);
     });
   });
 
@@ -1558,7 +1677,19 @@ describe("Phaser runtime package", () => {
       name: "Delayed persistent image",
     };
     persistentProject.assets.push(sharedAsset, delayedAsset);
+    persistentProject.layers.push(
+      createLayer("animated", "Persistent shared image", sharedAsset.id),
+      createLayer("animated", "Persistent delayed image", delayedAsset.id),
+    );
     const persistentDefinition = createRuntimeDefinition(persistentProject);
+    const sharedTextureKey = managedTextureKey(
+      persistentDefinition,
+      sharedAsset.id,
+    );
+    const delayedTextureKey = managedTextureKey(
+      persistentDefinition,
+      delayedAsset.id,
+    );
     const OriginalImage = globalThis.Image;
     const pendingImages: Array<{
       onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
@@ -1591,15 +1722,15 @@ describe("Phaser runtime package", () => {
       expect(pendingImages).toHaveLength(1);
 
       acquiredEffect.destroy();
-      expect(fake.textureKeys.has(sharedAsset.id)).toBe(true);
+      expect(fake.textureKeys.has(sharedTextureKey)).toBe(true);
 
       pendingImages[0].onload?.call(
         pendingImages[0] as never,
         new Event("load"),
       );
       await preload;
-      expect(fake.textureKeys.has(sharedAsset.id)).toBe(true);
-      expect(fake.textureKeys.has(delayedAsset.id)).toBe(true);
+      expect(fake.textureKeys.has(sharedTextureKey)).toBe(true);
+      expect(fake.textureKeys.has(delayedTextureKey)).toBe(true);
     } finally {
       vi.stubGlobal("Image", OriginalImage);
     }

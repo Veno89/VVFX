@@ -2,6 +2,7 @@ import type Phaser from "phaser";
 import {
   IMAGE_DECODE_TIMEOUT_MS,
   VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+  VVFX_INTERNAL_TEXTURE_PREFIX,
 } from "../../../src/vfx/inputLimits";
 import { applySpriteSheetFrames } from "../../../src/vfx/phaserFrames";
 import { validateRuntimeDefinition } from "./definition";
@@ -58,6 +59,7 @@ interface RuntimeTextureTransaction {
 
 export interface RuntimeAssetLease {
   release: () => void;
+  assetKeys: Record<string, string>;
 }
 
 // Phaser owns textures at the Game level, so every Scene in a Game shares the
@@ -129,7 +131,25 @@ const isSafeTextureKey = (value: unknown): value is string =>
   value.length <= 256 &&
   value.trim().length > 0 &&
   value !== VVFX_INTERNAL_MISSING_TEXTURE_KEY &&
+  !value.startsWith(VVFX_INTERNAL_TEXTURE_PREFIX) &&
   !hasControlCharacters(value);
+
+function seededStringHash(value: string, seed: number): number {
+  let hash = seed;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/** Stable private key shared by preload, playback, and direct effect setup. */
+export function runtimeAssetTextureKey(asset: VvfxRuntimeAsset): string {
+  const identity = `${asset.id}\u0000${asset.builtIn ?? "embedded"}\u0000${asset.source}\u0000${spriteSheetSignature(asset)}`;
+  const first = seededStringHash(identity, 2166136261).toString(36);
+  const second = seededStringHash(identity, 3339675911).toString(36);
+  return `${VVFX_INTERNAL_TEXTURE_PREFIX}${first}_${second}`;
+}
 
 const spriteSheetSignature = (asset: VvfxRuntimeAsset) =>
   asset.spriteSheet
@@ -246,6 +266,7 @@ function commitRuntimeTextureTransaction(
   scene: Phaser.Scene,
   mode: "acquire" | "persistent",
   transaction: RuntimeTextureTransaction,
+  assetKeys: Record<string, string>,
 ): RuntimeAssetLease | null {
   if (mode === "persistent") {
     for (const record of transaction.persistOnSuccess) record.persistent = true;
@@ -258,6 +279,7 @@ function commitRuntimeTextureTransaction(
   const textures = scene.textures;
   let released = false;
   return {
+    assetKeys,
     release: () => {
       if (released) return;
       released = true;
@@ -470,7 +492,7 @@ async function loadVvfxAssetsWithMode(
         throw new Error(
           `The mapped Phaser texture key for "${asset.name}" is invalid.`,
         );
-      const textureKey = mappedTextureKey ?? asset.id;
+      const textureKey = mappedTextureKey ?? runtimeAssetTextureKey(asset);
       if (mappedTextureKey !== undefined && !scene.textures.exists(textureKey))
         throw new Error(
           `The mapped Phaser texture "${textureKey}" for "${asset.name}" is not loaded.`,
@@ -481,6 +503,9 @@ async function loadVvfxAssetsWithMode(
         managed: mappedTextureKey === undefined && !asset.builtIn,
       };
     });
+    const resolvedAssetKeys = Object.fromEntries(
+      planned.map((entry) => [entry.asset.id, entry.textureKey]),
+    );
 
     assertActive(scope.signal, "Vvfx asset loading was cancelled.");
     createMissingTexture(scene);
@@ -557,7 +582,12 @@ async function loadVvfxAssetsWithMode(
       throw failure;
     }
     assertActive(scope.signal, "Vvfx asset loading was cancelled.");
-    return commitRuntimeTextureTransaction(scene, mode, transaction);
+    return commitRuntimeTextureTransaction(
+      scene,
+      mode,
+      transaction,
+      resolvedAssetKeys,
+    );
   } catch (error) {
     rollbackRuntimeTextureTransaction(scene, transaction);
     throw error;
@@ -599,5 +629,5 @@ export async function acquireVvfxAssets(
     signal,
     "acquire",
   );
-  return lease ?? { release: () => undefined };
+  return lease ?? { assetKeys: {}, release: () => undefined };
 }

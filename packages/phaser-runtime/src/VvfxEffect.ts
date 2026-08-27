@@ -1,9 +1,13 @@
 import type Phaser from "phaser";
 import { tintNumber } from "../../../src/vfx/color";
-import { evaluateProject } from "../../../src/vfx/engine";
+import {
+  createProjectEvaluator,
+  type ProjectEvaluator,
+} from "../../../src/vfx/engine";
 import {
   isSupportedVfxNumber,
   VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+  VVFX_INTERNAL_TEXTURE_PREFIX,
 } from "../../../src/vfx/inputLimits";
 import {
   syncPhaserRenderingEffects,
@@ -11,6 +15,7 @@ import {
 } from "../../../src/vfx/renderingEffects";
 import type { BeamEndpoints, VfxProject } from "../../../src/vfx/types";
 import { runtimeDefinitionToProject } from "./definition";
+import { runtimeAssetTextureKey } from "./textures";
 import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
 
 const ownValue = <T>(
@@ -36,12 +41,16 @@ const hasControlCharacters = (value: string) =>
     return code <= 31 || code === 127;
   });
 
-const isSafeTextureKey = (value: unknown): value is string =>
+const isSafeRenderableTextureKey = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length <= 256 &&
   value.trim().length > 0 &&
   value !== VVFX_INTERNAL_MISSING_TEXTURE_KEY &&
   !hasControlCharacters(value);
+
+const isSafeExternalTextureKey = (value: unknown): value is string =>
+  isSafeRenderableTextureKey(value) &&
+  !value.startsWith(VVFX_INTERNAL_TEXTURE_PREFIX);
 
 const isSafeFrame = (value: unknown): value is string | number =>
   (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
@@ -59,11 +68,24 @@ function sanitizeAssetKeys(
   for (const assetId of assetIds) {
     const candidate = ownValue(value, assetId);
     if (candidate === undefined) continue;
-    if (!isSafeTextureKey(candidate))
+    if (!isSafeExternalTextureKey(candidate))
       throw new Error(
         `The mapped Phaser texture key for "${assetId}" is invalid.`,
       );
     result[assetId] = candidate;
+  }
+  return result;
+}
+
+function sanitizeRuntimeAssetKeys(
+  value: unknown,
+  assetIds: readonly string[],
+): Record<string, string> {
+  const result = Object.create(null) as Record<string, string>;
+  if (!isRecord(value)) return result;
+  for (const assetId of assetIds) {
+    const candidate = ownValue(value, assetId);
+    if (isSafeRenderableTextureKey(candidate)) result[assetId] = candidate;
   }
   return result;
 }
@@ -112,7 +134,7 @@ export function resolveRuntimeRenderingAssetFrame(
 ): Phaser.Textures.Frame | null {
   if (!asset || asset.spriteSheet) return null;
   const mappedTextureKey = ownValue(assetKeys, asset.id);
-  const textureKey = isSafeTextureKey(mappedTextureKey)
+  const textureKey = isSafeRenderableTextureKey(mappedTextureKey)
     ? mappedTextureKey
     : asset.id;
   if (!scene.textures.exists(textureKey)) return null;
@@ -129,11 +151,14 @@ export function resolveRuntimeRenderingAssetFrame(
 
 export class VvfxEffect {
   private readonly project: VfxProject;
+  private readonly evaluator: ProjectEvaluator;
   private readonly sprites = new Map<string, Phaser.GameObjects.Image>();
   private readonly layerDepths = new Map<string, number>();
   private elapsed = 0;
   private playing = false;
   private destroyed = false;
+  private renderQueued = false;
+  private renderRequest = 0;
   private originX: number;
   private originY: number;
   private readonly baseDepth: number;
@@ -153,9 +178,11 @@ export class VvfxEffect {
     definition: VvfxRuntimeDefinition,
     options: VvfxEffectOptions = {},
     releaseAssets?: () => void,
+    runtimeAssetKeys: Record<string, string> = {},
   ) {
     this.releaseAssets = releaseAssets ?? null;
     this.project = runtimeDefinitionToProject(definition);
+    this.evaluator = createProjectEvaluator(this.project);
     const safeOptions = isRecord(options) ? options : {};
     this.project.layers.forEach((layer, depth) =>
       this.layerDepths.set(layer.id, depth),
@@ -166,9 +193,16 @@ export class VvfxEffect {
     this.loop = ownValue(safeOptions, "loop") === true;
     this.autoDestroy = ownValue(safeOptions, "autoDestroy") !== false;
     const assetIds = this.project.assets.map((asset) => asset.id);
-    this.assetKeys = sanitizeAssetKeys(
-      ownValue(safeOptions, "assetKeys"),
-      assetIds,
+    const detectedRuntimeAssetKeys = Object.fromEntries(
+      definition.assets
+        .map((asset) => [asset.id, runtimeAssetTextureKey(asset)] as const)
+        .filter(([, key]) => scene.textures.exists(key)),
+    );
+    this.assetKeys = Object.assign(
+      Object.create(null) as Record<string, string>,
+      detectedRuntimeAssetKeys,
+      sanitizeRuntimeAssetKeys(runtimeAssetKeys, assetIds),
+      sanitizeAssetKeys(ownValue(safeOptions, "assetKeys"), assetIds),
     );
     this.assetFrames = sanitizeAssetFrames(
       ownValue(safeOptions, "assetFrames"),
@@ -222,7 +256,7 @@ export class VvfxEffect {
   play() {
     if (this.destroyed) return this;
     this.playing = true;
-    this.renderFrame();
+    this.renderImmediately();
     return this;
   }
 
@@ -239,11 +273,12 @@ export class VvfxEffect {
     // object from canonical evaluator output so no controller, input state, or
     // other transient attached to a reused sprite can survive the restart.
     this.clearSprites();
-    this.renderFrame();
+    this.renderImmediately();
     return this;
   }
 
   stop() {
+    this.cancelScheduledRender();
     this.playing = false;
     this.elapsed = 0;
     this.clearSprites();
@@ -254,7 +289,7 @@ export class VvfxEffect {
     if (!isSupportedVfxNumber(x) || !isSupportedVfxNumber(y)) return this;
     this.originX = x;
     this.originY = y;
-    if (!this.destroyed) this.renderFrame();
+    if (!this.destroyed) this.scheduleRender();
     return this;
   }
 
@@ -283,7 +318,7 @@ export class VvfxEffect {
         )
       )
         this.beamEndpoints.set(id, { ...endpoints });
-    if (!this.destroyed) this.renderFrame();
+    if (!this.destroyed) this.scheduleRender();
     return this;
   }
 
@@ -291,13 +326,14 @@ export class VvfxEffect {
   clearEndpoints(layerId?: string) {
     if (layerId) this.beamEndpoints.delete(layerId);
     else this.beamEndpoints.clear();
-    if (!this.destroyed) this.renderFrame();
+    if (!this.destroyed) this.scheduleRender();
     return this;
   }
 
   update(delta: number) {
     if (!this.playing || this.destroyed) return;
     if (!isSupportedVfxNumber(delta)) return;
+    this.cancelScheduledRender();
     this.elapsed += Math.max(0, delta);
     const duration = Math.max(1, this.project.preview.duration);
     if (this.elapsed >= duration) {
@@ -323,6 +359,7 @@ export class VvfxEffect {
     if (this.destroyed) return;
     this.destroyed = true;
     this.playing = false;
+    this.cancelScheduledRender();
     this.scene.events.off("update", this.handleSceneUpdate);
     this.scene.events.off("shutdown", this.handleSceneShutdown);
     let cleanupError: unknown;
@@ -362,6 +399,32 @@ export class VvfxEffect {
         this.assetFrames,
       );
 
+  private scheduleRender() {
+    if (this.renderQueued || this.destroyed) return;
+    this.renderQueued = true;
+    const request = ++this.renderRequest;
+    queueMicrotask(() => {
+      if (
+        this.destroyed ||
+        !this.renderQueued ||
+        request !== this.renderRequest
+      )
+        return;
+      this.renderQueued = false;
+      this.renderFrame();
+    });
+  }
+
+  private cancelScheduledRender() {
+    this.renderQueued = false;
+    this.renderRequest += 1;
+  }
+
+  private renderImmediately() {
+    this.cancelScheduledRender();
+    this.renderFrame();
+  }
+
   private renderFrame() {
     const localBeamEndpoints = Object.fromEntries(
       [...this.beamEndpoints].map(([layerId, endpoints]) => [
@@ -374,8 +437,7 @@ export class VvfxEffect {
         },
       ]),
     );
-    const instances = evaluateProject(
-      this.project,
+    const instances = this.evaluator.evaluate(
       this.elapsed,
       null,
       localBeamEndpoints,

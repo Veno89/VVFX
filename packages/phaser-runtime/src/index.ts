@@ -62,6 +62,7 @@ export async function playVvfx(
       result.definition,
       options,
       releaseAssets,
+      lease.assetKeys,
     );
     releaseAssets = null;
     return effect;

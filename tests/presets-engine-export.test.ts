@@ -290,6 +290,46 @@ describe("game exports", () => {
     expect(runtime.layers[0]).not.toHaveProperty("solo");
   });
 
+  it("exports only assets referenced by exact runtime layer state", () => {
+    const project = createEmptyProject("Focused asset export");
+    const visualMask = {
+      id: "stored-visual-mask",
+      name: "Stored visual mask",
+      mimeType: "image/png" as const,
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+    };
+    const spawnMask = {
+      ...visualMask,
+      id: "stored-spawn-mask",
+      name: "Stored spawn mask",
+      alphaMask: {
+        columns: 1,
+        rows: 1,
+        alpha: [255],
+      },
+    };
+    const unused = {
+      ...visualMask,
+      id: "unused-image",
+      name: "Unused image",
+    };
+    project.assets.push(visualMask, spawnMask, unused);
+    const layer = createLayer("emitter", "Referenced roles", "builtin-ring");
+    layer.appearance.effects.visualMask.maskAssetId = visualMask.id;
+    layer.appearance.effects.visualMask.enabled = false;
+    layer.spawn.maskAssetId = spawnMask.id;
+    layer.spawn.shape = "point";
+    project.layers.push(layer);
+
+    const runtime = createRuntimeDefinition(project);
+    const exportedIds = runtime.assets.map((asset) => asset.id);
+
+    expect(exportedIds).toEqual(["builtin-ring", visualMask.id, spawnMask.id]);
+    expect(generatePhaserCode(project)).not.toContain(unused.id);
+  });
+
   it("flattens effect-group offsets into runtime and Phaser exports", () => {
     const project = createEmptyProject("Grouped export");
     const group = createGroup("Delayed core");

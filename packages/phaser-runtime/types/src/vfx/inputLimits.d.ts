@@ -23,6 +23,8 @@ export declare const EMBEDDED_IMAGE_VALIDATION_TIMEOUT_MS = 30000;
  */
 export declare const VVFX_INTERNAL_MISSING_TEXTURE_KEY =
   "__vvfx_internal_missing__";
+/** Namespace reserved for textures created and owned by the Phaser runtime. */
+export declare const VVFX_INTERNAL_TEXTURE_PREFIX = "__vvfx_runtime_asset__";
 export declare const MAX_VFX_ID_LENGTH = 128;
 export declare const MAX_VFX_NAME_LENGTH = 120;
 /**

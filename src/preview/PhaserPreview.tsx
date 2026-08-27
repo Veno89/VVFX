@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type Phaser from "phaser";
 import { tintNumber } from "../vfx/color";
-import { evaluateProject } from "../vfx/engine";
+import { createProjectEvaluator } from "../vfx/engine";
 import { resolveLayerGroup } from "../vfx/groups";
 import {
   evaluateSpawnOffset,
@@ -387,6 +387,7 @@ export function PhaserPreview({
   const lastPerformanceSignatureRef = useRef("");
   const idlePerformanceTimerRef = useRef<number | null>(null);
   const [textureRevision, setTextureRevision] = useState(0);
+  const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
   const latestAssetsRef = useRef(project.assets);
   latestAssetsRef.current = project.assets;
 
@@ -529,7 +530,7 @@ export function PhaserPreview({
         .lineBetween(0, height / 2, width, height / 2);
     }
 
-    const baseInstances = evaluateProject(project, time, display.selectedId);
+    const baseInstances = evaluator.evaluate(time, display.selectedId);
     const replication = replicateInstancesForStress(
       baseInstances,
       stressCopies,
@@ -1008,7 +1009,15 @@ export function PhaserPreview({
         stressLimited: replication.limited,
       });
     }, 1_050);
-  }, [captureMode, project, selectedId, stressCopies, textureRevision, time]);
+  }, [
+    captureMode,
+    evaluator,
+    project,
+    selectedId,
+    stressCopies,
+    textureRevision,
+    time,
+  ]);
 
   return (
     <div

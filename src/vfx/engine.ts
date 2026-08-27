@@ -1,6 +1,7 @@
 import { interpolateColorStops } from "./color";
 import {
   compileLayerActivations,
+  createLayerActivationIndex,
   type LayerActivation,
   type LayerActivationSchedule,
 } from "./events";
@@ -28,6 +29,18 @@ export const MAX_EFFECT_INSTANCES = 500;
 export interface EvaluationDiagnostics {
   instanceEvaluations: number;
   budgetExhausted: boolean;
+  /** Set only when supplied by the caller; 0 means the schedule cache hit. */
+  scheduleCompilations?: number;
+}
+
+export interface ProjectEvaluator {
+  readonly project: VfxProject;
+  evaluate(
+    time: number,
+    selectedId: string | null,
+    beamEndpoints?: Readonly<Record<string, BeamEndpoints>>,
+    diagnostics?: EvaluationDiagnostics,
+  ): EvaluatedInstance[];
 }
 
 function containsOnlySupportedNumbers(
@@ -262,30 +275,24 @@ function emitterSpawnTimes(
   );
 }
 
-export function evaluateProject(
-  project: VfxProject,
-  time: number,
-  selectedId: string | null,
-  beamEndpoints: Readonly<Record<string, BeamEndpoints>> = {},
-  diagnostics?: EvaluationDiagnostics,
-): EvaluatedInstance[] {
+const MAX_CACHED_ACTIVATION_SCHEDULES = 8;
+
+/**
+ * Prepares immutable project lookups once and retains a small LRU of exact
+ * playhead schedules. Long-running playback stays bounded while repeated
+ * scrubs and multi-consumer renders reuse the expensive event compilation.
+ */
+export function createProjectEvaluator(project: VfxProject): ProjectEvaluator {
   const resolvedProject = canonicalizeProjectLayerCapabilities(
     resolveProjectGroups(project),
   );
-  const schedule = compileLayerActivations(resolvedProject, time);
-  const originals: EvaluatedInstance[] = [];
-  const trails: EvaluatedInstance[] = [];
-  const evaluationBudget = { remaining: MAX_EFFECT_INSTANCES };
-  if (diagnostics) {
-    diagnostics.instanceEvaluations = 0;
-    diagnostics.budgetExhausted = false;
-  }
+  const activationIndex = createLayerActivationIndex(resolvedProject);
+  const scheduleCache = new Map<number, LayerActivationSchedule>();
   const soloIds = new Set(
     resolvedProject.layers
       .filter((layer) => layer.solo)
       .map((layer) => layer.id),
   );
-
   const visibleLayers = resolvedProject.layers.filter(
     (layer) =>
       layer.enabled &&
@@ -293,6 +300,77 @@ export function evaluateProject(
       (soloIds.size === 0 || soloIds.has(layer.id)),
   );
 
+  return {
+    project: resolvedProject,
+    evaluate(
+      time,
+      selectedId,
+      beamEndpoints = {},
+      diagnostics,
+    ): EvaluatedInstance[] {
+      let schedule = scheduleCache.get(time);
+      const compiled = !schedule;
+      if (schedule) {
+        scheduleCache.delete(time);
+        scheduleCache.set(time, schedule);
+      } else {
+        schedule = compileLayerActivations(
+          resolvedProject,
+          time,
+          activationIndex,
+        );
+        scheduleCache.set(time, schedule);
+        if (scheduleCache.size > MAX_CACHED_ACTIVATION_SCHEDULES) {
+          const oldest = scheduleCache.keys().next().value;
+          if (oldest !== undefined) scheduleCache.delete(oldest);
+        }
+      }
+      if (diagnostics && "scheduleCompilations" in diagnostics)
+        diagnostics.scheduleCompilations = compiled ? 1 : 0;
+      return evaluateResolvedProject(
+        resolvedProject,
+        visibleLayers,
+        schedule,
+        time,
+        selectedId,
+        beamEndpoints,
+        diagnostics,
+      );
+    },
+  };
+}
+
+export function evaluateProject(
+  project: VfxProject,
+  time: number,
+  selectedId: string | null,
+  beamEndpoints: Readonly<Record<string, BeamEndpoints>> = {},
+  diagnostics?: EvaluationDiagnostics,
+): EvaluatedInstance[] {
+  return createProjectEvaluator(project).evaluate(
+    time,
+    selectedId,
+    beamEndpoints,
+    diagnostics,
+  );
+}
+
+function evaluateResolvedProject(
+  resolvedProject: VfxProject,
+  visibleLayers: readonly VfxLayer[],
+  schedule: LayerActivationSchedule,
+  time: number,
+  selectedId: string | null,
+  beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
+  diagnostics?: EvaluationDiagnostics,
+): EvaluatedInstance[] {
+  const originals: EvaluatedInstance[] = [];
+  const trails: EvaluatedInstance[] = [];
+  const evaluationBudget = { remaining: MAX_EFFECT_INSTANCES };
+  if (diagnostics) {
+    diagnostics.instanceEvaluations = 0;
+    diagnostics.budgetExhausted = false;
+  }
   // Authored instances always get first claim on the shared work budget.
   for (const layer of visibleLayers) {
     const capacity = MAX_EFFECT_INSTANCES - originals.length;

@@ -26,6 +26,15 @@ export interface LayerActivationSchedule {
   byLayer: Map<string, LayerActivation[]>;
   truncated: boolean;
 }
+export interface LayerActivationIndex {
+  layerIndex: ReadonlyMap<string, number>;
+  layersById: ReadonlyMap<string, VfxLayer>;
+  timelineLayers: readonly VfxLayer[];
+}
+/** Builds the project-only lookup tables shared by every playhead evaluation. */
+export declare function createLayerActivationIndex(
+  project: Pick<VfxProject, "layers">,
+): LayerActivationIndex;
 export declare function activationEffectiveEnd(
   activation: LayerActivation,
 ): number;
@@ -41,6 +50,7 @@ export declare function activationIsPendingOrActiveAt(
 export declare function compileLayerActivations(
   project: VfxProject,
   evaluationTime: number,
+  index?: LayerActivationIndex,
 ): LayerActivationSchedule;
 export declare function findLayerEventCycle(
   layers: VfxLayer[],

@@ -38,6 +38,25 @@ export interface AssetUsageReport {
 }
 
 /**
+ * Returns every image needed to preserve the authored layer definitions.
+ * Disabled mask features still retain their selected image, so those stored
+ * references must travel with an exact runtime export as well.
+ */
+export function referencedAssetIds(
+  layers: readonly VfxLayer[],
+): ReadonlySet<string> {
+  const assetIds = new Set<string>();
+  for (const layer of layers) {
+    if (layer.assetId) assetIds.add(layer.assetId);
+    const visualMaskAssetId = layer.appearance.effects.visualMask.maskAssetId;
+    if (visualMaskAssetId) assetIds.add(visualMaskAssetId);
+    if (isSpawnLayer(layer) && layer.spawn.maskAssetId)
+      assetIds.add(layer.spawn.maskAssetId);
+  }
+  return assetIds;
+}
+
+/**
  * Reports every authoring reference to one asset. Each affected layer appears
  * once even when it uses the image in several roles. "Stored" mask choices are
  * retained preferences that are not currently enabled by that layer.

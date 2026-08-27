@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
-import { evaluateProject } from "../src/vfx/engine";
+import {
+  createProjectEvaluator,
+  evaluateProject,
+  type EvaluationDiagnostics,
+} from "../src/vfx/engine";
 import {
   MAX_STRESS_INSTANCES,
   analyzeLayerLifecycle,
@@ -171,6 +175,28 @@ describe("beginner performance estimates", () => {
 });
 
 describe("guarded stress preview", () => {
+  it("reuses prepared event indexes and exact playhead schedules", () => {
+    const project = createEmptyProject();
+    project.layers = [
+      createLayer("animated", "Cached evaluation", "builtin-flash"),
+    ];
+    const evaluator = createProjectEvaluator(project);
+    const diagnostics: EvaluationDiagnostics = {
+      instanceEvaluations: 0,
+      budgetExhausted: false,
+      scheduleCompilations: 0,
+    };
+
+    const first = evaluator.evaluate(100, null, {}, diagnostics);
+    expect(diagnostics.scheduleCompilations).toBe(1);
+    const second = evaluator.evaluate(100, null, {}, diagnostics);
+
+    expect(second).toEqual(first);
+    expect(diagnostics.scheduleCompilations).toBe(0);
+    evaluator.evaluate(101, null, {}, diagnostics);
+    expect(diagnostics.scheduleCompilations).toBe(1);
+  });
+
   it("duplicates one evaluator result with unique keys and tiled positions", () => {
     const project = createEmptyProject();
     project.layers = [

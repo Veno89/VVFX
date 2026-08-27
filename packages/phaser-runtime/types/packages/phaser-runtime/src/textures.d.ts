@@ -3,7 +3,10 @@ import type { VvfxRuntimeAsset, VvfxRuntimeDefinition } from "./types";
 type BuiltInKind = NonNullable<VvfxRuntimeAsset["builtIn"]>;
 export interface RuntimeAssetLease {
   release: () => void;
+  assetKeys: Record<string, string>;
 }
+/** Stable private key shared by preload, playback, and direct effect setup. */
+export declare function runtimeAssetTextureKey(asset: VvfxRuntimeAsset): string;
 export declare function createBuiltInTexture(
   scene: Phaser.Scene,
   key: string,

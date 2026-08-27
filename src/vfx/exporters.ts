@@ -1,4 +1,5 @@
 import type { VvfxRuntimeDefinition } from "../../packages/phaser-runtime/src/types";
+import { referencedAssetIds } from "./assetReferences";
 import { tintNumber } from "./color";
 import { resolveProjectGroups } from "./groups";
 import { hasEnabledRenderingEffects } from "./renderingEffects";
@@ -22,35 +23,38 @@ export function createRuntimeDefinition(
   const resolvedProject = resolveProjectGroups(
     requireCurrentProject(project, "runtime-export"),
   );
+  const requiredAssetIds = referencedAssetIds(resolvedProject.layers);
   return {
     format: "vvfx-runtime",
     formatVersion: 15,
     name: resolvedProject.metadata.name,
     duration: resolvedProject.preview.duration,
     seed: resolvedProject.preview.randomSeed,
-    assets: resolvedProject.assets.map(
-      ({
-        id,
-        name,
-        dataUrl,
-        builtIn,
-        width,
-        height,
-        spriteSheet,
-        atlasFrame,
-        alphaMask,
-      }) => ({
-        id,
-        name,
-        source: dataUrl,
-        builtIn,
-        width,
-        height,
-        spriteSheet,
-        atlasFrame,
-        alphaMask,
-      }),
-    ),
+    assets: resolvedProject.assets
+      .filter((asset) => requiredAssetIds.has(asset.id))
+      .map(
+        ({
+          id,
+          name,
+          dataUrl,
+          builtIn,
+          width,
+          height,
+          spriteSheet,
+          atlasFrame,
+          alphaMask,
+        }) => ({
+          id,
+          name,
+          source: dataUrl,
+          builtIn,
+          width,
+          height,
+          spriteSheet,
+          atlasFrame,
+          alphaMask,
+        }),
+      ),
     layers: resolvedProject.layers.map((layer, depth) => ({
       id: layer.id,
       name: layer.name,

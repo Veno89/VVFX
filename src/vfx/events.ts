@@ -41,6 +41,27 @@ export interface LayerActivationSchedule {
   truncated: boolean;
 }
 
+export interface LayerActivationIndex {
+  layerIndex: ReadonlyMap<string, number>;
+  layersById: ReadonlyMap<string, VfxLayer>;
+  timelineLayers: readonly VfxLayer[];
+}
+
+/** Builds the project-only lookup tables shared by every playhead evaluation. */
+export function createLayerActivationIndex(
+  project: Pick<VfxProject, "layers">,
+): LayerActivationIndex {
+  return {
+    layerIndex: new Map(
+      project.layers.map((layer, index) => [layer.id, index]),
+    ),
+    layersById: new Map(project.layers.map((layer) => [layer.id, layer])),
+    timelineLayers: project.layers.filter(
+      (layer) => layer.startMode === "timeline",
+    ),
+  };
+}
+
 interface PendingLayerEvent {
   time: number;
   depth: number;
@@ -114,15 +135,13 @@ function pendingEventOrder(left: PendingLayerEvent, right: PendingLayerEvent) {
 export function compileLayerActivations(
   project: VfxProject,
   evaluationTime: number,
+  index: LayerActivationIndex = createLayerActivationIndex(project),
 ): LayerActivationSchedule {
   const until = Math.max(0, evaluationTime);
   const byLayer = new Map<string, LayerActivation[]>();
   const activations: LayerActivation[] = [];
   const activationCounts = new Map<string, number>();
-  const layerIndex = new Map(
-    project.layers.map((layer, index) => [layer.id, index]),
-  );
-  const layersById = new Map(project.layers.map((layer) => [layer.id, layer]));
+  const { layerIndex, layersById } = index;
   const queue: PendingLayerEvent[] = [];
   let queuedTriggerCount = 0;
   let inspectedCopyFinishCandidates = 0;
@@ -300,8 +319,7 @@ export function compileLayerActivations(
     return activation;
   };
 
-  for (const layer of project.layers)
-    if (layer.startMode === "timeline") addActivation(layer, 0, 0);
+  for (const layer of index.timelineLayers) addActivation(layer, 0, 0);
 
   while (queue.length > 0) {
     queue.sort(pendingEventOrder);

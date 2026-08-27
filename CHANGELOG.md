@@ -20,6 +20,9 @@ uses semantic versions for release artifacts.
 
 ### Changed
 
+- Migrated the editor preview and `@vvfx/phaser-runtime` from Phaser 3.90 PreFX
+  pipelines to Phaser 4.2 filter lists and render nodes. Runtime package 0.15.0
+  now requires Phaser 4.2.1 or newer and below 5; Runtime JSON remains v15.
 - Updated compatible React, Vite, vinext, lint, type, icon, and browser-test
   dependencies and patched all transitive npm advisories available without a
   major migration.

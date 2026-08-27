@@ -43,7 +43,7 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 
 ## What is included
 
-- Live Phaser 3 preview with play, pause, restart, content-aware loop, four
+- Live Phaser 4 preview with play, pause, restart, content-aware loop, four
   playback speeds, zoom, grid, and several test backgrounds.
 - Still image, animated image, endpoint-fitted Beam, burst, and
   repeating-copy/emitter layers.
@@ -228,7 +228,7 @@ src/editor/              React editor shell and focused UI components
 src/preview/             Phaser preview bridge
 src/vfx/                 Framework-independent data model and runtime math
 src/persistence/         IndexedDB project, recovery, and template storage
-packages/phaser-runtime/ Reusable Phaser 3 runtime for exported effects
+packages/phaser-runtime/ Reusable Phaser 4 runtime for exported effects
 tests/                   Model, export, history, runtime, and control tests
 docs/                    Architecture, format, capability, guide, and roadmap
 ```

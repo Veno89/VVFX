@@ -203,7 +203,17 @@ test("experimental effects run in WebGL and repeated restart keeps one canvas", 
   page,
 }) => {
   const pageErrors: string[] = [];
+  const consoleProblems: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" ||
+      message
+        .text()
+        .includes("Vvfx could not start its Phaser 4 rendering filters")
+    )
+      consoleProblems.push(message.text());
+  });
   await openEditor(page);
   await addPreset(page, "Heat shimmer ring");
 
@@ -228,8 +238,26 @@ test("experimental effects run in WebGL and repeated restart keeps one canvas", 
   ).toContainText("Sprite warp");
   await page.keyboard.press("Escape");
 
+  await addPreset(page, "Masked energy ring");
+  const maskedPerformanceDialog = await openPerformanceInspector(page);
+  await expect(
+    maskedPerformanceDialog.getByTestId("performance-active-modifiers"),
+  ).toContainText("Visual mask");
+  await expect(
+    maskedPerformanceDialog.getByTestId("performance-active-modifiers"),
+  ).toContainText("Spatial gradient");
+  await page.keyboard.press("Escape");
+
+  await addPreset(page, "Dissolving spirit");
+  const erosionPerformanceDialog = await openPerformanceInspector(page);
+  await expect(
+    erosionPerformanceDialog.getByTestId("performance-active-modifiers"),
+  ).toContainText("Dissolve / erosion");
+  await page.keyboard.press("Escape");
+
   for (let restart = 0; restart < 10; restart += 1)
     await page.getByRole("button", { name: "Restart", exact: true }).click();
   await expect(page.locator("canvas")).toHaveCount(1);
   expect(pageErrors).toEqual([]);
+  expect(consoleProblems).toEqual([]);
 });

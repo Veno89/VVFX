@@ -40,10 +40,10 @@ This directory has no React dependency.
   dimensions while preserving aspect ratio, and supplies capped editor-guide
   samples. Its maximum is 64 x 64 / 4,096 alpha bytes.
 - `renderingEffects.ts` owns safe defaults, deterministic lifetime values,
-  WebGL capability checks, Phaser PreFX synchronization, managed visual-mask
-  and noisy-erosion passes, bounded padding/pass estimates, shared deterministic
-  noise resources, effect ordering, cleanup, and Canvas fallback warnings for
-  the Experimental rendering set.
+  WebGL capability checks, Phaser 4 FilterList synchronization, custom render
+  nodes for masks/gradient/shine/noisy erosion, bounded padding/pass estimates,
+  shared deterministic noise resources, effect ordering, cleanup, and Canvas
+  fallback warnings for the Experimental rendering set.
 - `behaviors.ts` evaluates pulse, seeded flicker, legacy repeating sway, seeded
   organic X/Y/rotation movement, constant vertical gravity, normalized
   destination-preserving slowdown, and optional per-copy strength envelopes.
@@ -283,7 +283,8 @@ Transient cleanup belongs to the system that created the transient state.
 timers, listeners, controllers, masks, and cached references whenever authored
 state changes, playback restarts, a layer/project is removed, or the owning
 scene/component is destroyed. The rendering adapter clears or rebuilds managed
-PreFX controllers when its enabled signature changes. Event schedules and
+Phaser FilterList controllers when its enabled signature changes. It removes
+only Vvfx-owned filters, leaving host filters intact. Event schedules and
 deterministic procedural samples are rebuilt from current project data rather
 than retained as a second authored state. Repeated enable/disable cycles must
 therefore return live object and registration counts to their baseline.
@@ -465,14 +466,11 @@ alpha grid remains CPU spawn-position data and is not fed into the visual-mask
 or erosion shaders. The [capability matrix](capability-matrix.md) records this
 boundary.
 
-No lighting-aware material setting is serialized in project v16/runtime v14.
-Phaser 3.90's native Light2D pipeline reads scene-owned LightsManager state,
-camera-culled lights, a game-configured maximum light count, and normal maps
-paired with diffuse textures. Vvfx's managed Experimental PreFX implementation
-also owns the sprite pipeline for masking, erosion, and the other curated
-effects, so switching to Light2D would replace rather than safely compose the
-current path. Vvfx therefore neither enables the scene LightsManager nor
-creates, edits, or destroys game lights. Canvas and ordinary WebGL sprites stay
-unchanged. A future self-contained fixed local normal-map pass could be
-evaluated under a separate name, but it would not be Phaser scene-light
-integration.
+No lighting-aware material setting is serialized in project v17/runtime v15.
+Phaser 4 lighting reads scene-owned LightsManager state, camera-culled lights,
+a game-configured maximum light count, and normal maps paired with diffuse
+textures. Those host resources cannot be inferred safely from a portable
+effect, so Vvfx neither enables the scene LightsManager nor creates, edits, or
+destroys game lights. Canvas and ordinary WebGL sprites stay unchanged. A
+future self-contained fixed local normal-map pass could be evaluated under a
+separate name, but it would not be Phaser scene-light integration.

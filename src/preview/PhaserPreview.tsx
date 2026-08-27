@@ -590,7 +590,7 @@ export function PhaserPreview({
               layerY: Number(draggableSprite.getData("vvfxLayerY")),
               startPreviewX: Number(draggableSprite.getData("vvfxDragStartX")),
               startPreviewY: Number(draggableSprite.getData("vvfxDragStartY")),
-              // Phaser 3.90 replaces dragX/dragY with the local grab offset
+              // Phaser replaces dragX/dragY with the local grab offset
               // before emitting dragend. The sprite retains the real drop point.
               endPreviewX: draggableSprite.x,
               endPreviewY: draggableSprite.y,

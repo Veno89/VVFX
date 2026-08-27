@@ -1,6 +1,6 @@
 # @vvfx/phaser-runtime
 
-This local package plays Vvfx runtime JSON inside a Phaser 3 scene. It uses the
+This local package plays Vvfx runtime JSON inside a Phaser 4.2+ scene. It uses the
 same deterministic evaluator as the editor, including sprite-sheet frames,
 transform keyframes/property curves, motion paths, trails, layer events,
 flipbooks, seeded organic movement, bursts, repeating emitters, spawn placement
@@ -113,10 +113,15 @@ candidate source where possible, and rejects late callbacks; any decode that
 still finishes is not installed as a Phaser texture and cannot create an
 effect.
 
-Package version 0.14.0 emits runtime format version 15 and accepts versions 1
+Package version 0.15.0 emits runtime format version 15 and accepts versions 1
 through 15. Older exports are migrated with safe defaults for capabilities
 that did not yet exist. Project JSON uses its own version number; the current
 project format is version 17.
+
+Package 0.15 migrates rendering integration from Phaser 3 PreFX pipelines to
+Phaser 4 filter lists and render nodes. The Runtime JSON schema remains version
+15, so existing valid exports continue to load; host games must upgrade their
+Phaser peer dependency to 4.2.1 or newer before adopting this package version.
 
 Runtime v12 adds project-v14 `stratified` and `clusters` placement. Natural
 variation preserves broad rectangle/circle interior coverage; clump count and
@@ -148,12 +153,12 @@ local offset from the layer position (A). Runtime endpoint overrides are
 world-space and feed the same evaluator used by the editor preview; the
 definition is not mutated when `setEndpoints(...)` is called.
 
-Runtime v14 deliberately has no lighting-aware material setting. The runtime
+The current runtime deliberately has no lighting-aware material setting. It
 does not enable `scene.lights`, change ambient light, create or destroy game
-lights, or switch Vvfx sprites to Phaser's competing Light2D pipeline. Those
-resources and their camera-specific behavior belong to the host game. A future
-fixed local normal-map effect could be evaluated separately, but would not be
-Phaser scene-light integration.
+lights, or enable Phaser lighting on Vvfx sprites. Those resources and their
+camera-specific behavior belong to the host game. A future fixed local
+normal-map effect could be evaluated separately, but would not be Phaser
+scene-light integration.
 
 Image-silhouette spawning uses the bounded alpha sample stored with an uploaded
 PNG/WebP asset. The runtime does not read pixels from mapped Phaser textures or

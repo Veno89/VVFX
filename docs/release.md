@@ -6,6 +6,7 @@ This checklist validates both artifacts without publishing or deploying them.
 ## Supported environment
 
 - Node.js 22.13.0 or newer
+- Phaser 4.2.1 or newer and below 5 for runtime consumers
 - The committed `package-lock.json`
 - Chromium installed once with `npx playwright install chromium`
 - A clean Git worktree when checking generated declaration drift
@@ -42,6 +43,8 @@ Before creating a release commit:
   artifact.
 - Keep the project format, runtime format, runtime package version, README, and
   changelog descriptions consistent.
+- Treat a Phaser peer-major change as a breaking host-integration migration even
+  when the Vvfx Runtime JSON schema itself does not change.
 - Move the relevant `CHANGELOG.md` entries from **Unreleased** into a dated
   version section.
 - Confirm the runtime tarball includes `LICENSE`, `README.md`, JavaScript,

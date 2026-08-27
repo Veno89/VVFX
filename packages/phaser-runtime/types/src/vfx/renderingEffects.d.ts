@@ -61,7 +61,7 @@ export interface SpatialGradientEffectSettings {
 }
 /**
  * Both patterns share one lifetime envelope. The directional pattern uses
- * Phaser's built-in Wipe FX; noise uses Vvfx's deterministic PreFX shader.
+ * Phaser's built-in Wipe filter; noise uses a deterministic Vvfx render node.
  */
 export interface DirectionalDissolveEffectSettings {
   enabled: boolean;
@@ -165,7 +165,9 @@ export declare function evaluateRenderingEffects(
 export declare function renderingEffectPadding(
   settings: RenderingEffectsSettings,
 ): number;
-export declare function sceneSupportsPhaserPreFx(scene: Phaser.Scene): boolean;
+export declare function sceneSupportsPhaserFilters(
+  scene: Phaser.Scene,
+): boolean;
 /** Creates one fixed scene-scoped map. Phaser releases it with the game. */
 export declare function ensureRenderingNoiseTexture(
   scene: Phaser.Scene,
@@ -182,7 +184,7 @@ export declare function clearPhaserRenderingEffects(
   sprite: Phaser.GameObjects.Image,
 ): void;
 /**
- * Synchronizes Phaser Pre FX without stacking duplicate controllers. Call it
+ * Synchronizes Phaser 4 Filters without stacking duplicate controllers. Call it
  * after setting the sprite's frame, tint, transform, and alpha.
  */
 export declare function syncPhaserRenderingEffects({

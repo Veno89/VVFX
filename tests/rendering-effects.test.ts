@@ -35,7 +35,49 @@ function evaluatedSettings() {
   });
 }
 
-function fakeScene(webgl: boolean) {
+class FakeRectangle {
+  constructor(
+    public x = 0,
+    public y = 0,
+    public width = 0,
+    public height = 0,
+  ) {}
+
+  setTo(x: number, y: number, width: number, height: number) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    return this;
+  }
+}
+
+interface FakeFilterController {
+  active: boolean;
+  renderNode: string;
+  destroy: ReturnType<typeof vi.fn>;
+  [key: string]: unknown;
+}
+
+function disposableFilter(
+  renderNode: string,
+  values: Record<string, unknown> = {},
+): FakeFilterController {
+  const filter: FakeFilterController = {
+    active: true,
+    renderNode,
+    ...values,
+    destroy: vi.fn(() => {
+      filter.active = false;
+    }),
+  };
+  return filter;
+}
+
+function fakeScene(
+  webgl: boolean,
+  options: { failRegistration?: boolean; failConstruction?: boolean } = {},
+) {
   let stored = false;
   let pixels: Uint8ClampedArray | null = null;
   const texture = {
@@ -49,8 +91,61 @@ function fakeScene(webgl: boolean) {
     },
     refresh: vi.fn(),
   };
-  const scene = {
-    sys: { game: {}, renderer: webgl ? { pipelines: {} } : {} },
+  const uniforms = new Map<string, unknown>();
+  const setUniform = vi.fn((name: string, value: unknown) => {
+    uniforms.set(name, value);
+  });
+
+  class FakeBaseFilterShader {
+    programManager = { setUniform };
+
+    constructor(
+      public name: string,
+      public manager: unknown,
+      public fragmentShaderKey?: string,
+      public fragmentShaderSource?: string,
+    ) {}
+  }
+
+  class FakeWipeNode extends FakeBaseFilterShader {
+    constructor(manager: unknown) {
+      super("FilterWipe", manager);
+    }
+  }
+
+  const constructors = new Map<string, new (owner: unknown) => unknown>();
+  const nodes = new Map<string, unknown>();
+  const managerValue = {
+    hasNode: vi.fn((name: string) => nodes.has(name) || constructors.has(name)),
+    addNodeConstructor: vi.fn(
+      (name: string, constructor: new (owner: unknown) => unknown) => {
+        if (options.failRegistration)
+          throw new Error("render node registration failed");
+        constructors.set(name, constructor);
+      },
+    ),
+    getNode: vi.fn((name: string) => {
+      const existing = nodes.get(name);
+      if (existing) return existing;
+      if (name === "FilterWipe") {
+        const wipe = new FakeWipeNode(managerValue);
+        nodes.set(name, wipe);
+        return wipe;
+      }
+      const constructor = constructors.get(name);
+      if (!constructor) return null;
+      if (options.failConstruction)
+        throw new Error("render node construction failed");
+      const node = new constructor(managerValue);
+      nodes.set(name, node);
+      return node;
+    }),
+  };
+  const sceneValue = {
+    sys: {
+      game: { loop: { time: 1_250 } },
+      renderer: webgl ? { renderNodes: managerValue } : {},
+    },
     textures: {
       exists: vi.fn(() => stored),
       createCanvas: vi.fn(() => {
@@ -58,8 +153,22 @@ function fakeScene(webgl: boolean) {
         return texture;
       }),
     },
-  } as unknown as Phaser.Scene;
-  return { scene, texture, getPixels: () => pixels };
+  };
+  const camera = {
+    scene: sceneValue,
+    worldView: new FakeRectangle(),
+  } as unknown as Phaser.Cameras.Scene2D.Camera;
+  return {
+    scene: sceneValue as unknown as Phaser.Scene,
+    camera,
+    manager: managerValue,
+    nodes,
+    constructors,
+    setUniform,
+    uniforms,
+    texture,
+    getPixels: () => pixels,
+  };
 }
 
 function fakeTextureFrame({
@@ -113,164 +222,57 @@ function fakeTextureFrame({
   } as unknown as Phaser.Textures.Frame;
 }
 
-function fakeSprite(frame = fakeTextureFrame()) {
-  const disposable = (type: number) => ({
-    type,
-    active: true,
-    destroy: vi.fn(),
-  });
+function fakeSprite(
+  camera: Phaser.Cameras.Scene2D.Camera,
+  frame = fakeTextureFrame(),
+  initialFilters: FakeFilterController[] = [],
+) {
+  const colorMatrix = { reset: vi.fn(), brightness: vi.fn() };
   const controllers = {
-    colorMatrix: {
-      ...disposable(14),
-      reset: vi.fn(),
-      brightness: vi.fn(),
-    },
-    shine: { ...disposable(8), speed: 0, lineWidth: 0, gradient: 0 },
-    barrel: { ...disposable(16), amount: 0 },
-    displacement: { ...disposable(17), x: 0, y: 0 },
-    wipe: { ...disposable(18), progress: 0 },
-    gradient: disposable(12),
-    blur: disposable(9),
-    glow: disposable(4),
+    colorMatrix: disposableFilter("FilterColorMatrix", { colorMatrix }),
+    barrel: disposableFilter("FilterBarrel", { amount: 0 }),
+    displacement: disposableFilter("FilterDisplacement", { x: 0, y: 0 }),
+    wipe: disposableFilter("FilterWipe", { progress: 0 }),
+    blur: disposableFilter("FilterBlur"),
+    glow: disposableFilter("FilterGlow"),
   };
-  const list: Array<{ type: number; destroy?: () => void }> = [];
-  const addController = <T extends { type: number }>(controller: T) => {
+  const list = [...initialFilters];
+  const addController = <T extends FakeFilterController>(controller: T): T => {
     list.push(controller);
     return controller;
   };
-  const preFX = {
+  const filterList = {
+    camera,
     list,
-    disable: vi.fn((clear?: boolean) => {
-      if (!clear) return;
-      list.forEach((controller) => controller.destroy?.());
-      list.length = 0;
+    add: vi.fn((filter: FakeFilterController) => addController(filter)),
+    remove: vi.fn((filter: FakeFilterController, forceDestroy?: boolean) => {
+      const index = list.indexOf(filter);
+      if (index >= 0) list.splice(index, 1);
+      if (forceDestroy) (filter.destroy as () => void)();
+      return filterList;
     }),
-    setPadding: vi.fn(),
-    add: vi.fn((controller: { type: number }) => addController(controller)),
-    addGradient: vi.fn(() => addController(controllers.gradient)),
     addColorMatrix: vi.fn(() => addController(controllers.colorMatrix)),
-    addShine: vi.fn(() => addController(controllers.shine)),
     addBarrel: vi.fn(() => addController(controllers.barrel)),
     addDisplacement: vi.fn(() => addController(controllers.displacement)),
     addWipe: vi.fn(() => addController(controllers.wipe)),
     addBlur: vi.fn(() => addController(controllers.blur)),
     addGlow: vi.fn(() => addController(controllers.glow)),
   };
-  const spriteValue: {
-    preFX: typeof preFX;
-    frame: Phaser.Textures.Frame;
-    pipeline: unknown;
-    setPipeline: ReturnType<typeof vi.fn>;
-  } = {
-    preFX,
+  const spriteValue = {
     frame,
-    pipeline: null,
-    setPipeline: vi.fn(),
+    filters: null as { internal: typeof filterList } | null,
+    enableFilters: vi.fn(() => {
+      spriteValue.filters = { internal: filterList };
+      return spriteValue;
+    }),
   };
-  spriteValue.setPipeline.mockImplementation((pipeline: unknown) => {
-    spriteValue.pipeline = pipeline;
-    return spriteValue;
-  });
   return {
     sprite: spriteValue as unknown as Phaser.GameObjects.Image,
-    preFX,
+    filterList,
     controllers,
+    colorMatrix,
     list,
-    setPipeline: spriteValue.setPipeline,
-  };
-}
-
-function fakeNoisePipelineScene(
-  failRegistration = false,
-  failShaderInstall = false,
-) {
-  const game = {} as Phaser.Game;
-  const createdPipelines: FakeFxPipeline[] = [];
-  const baseShaderConfigs = Array.from({ length: 20 }, (_, index) => ({
-    name: `Base${index}`,
-    fragShader: "void main () {}",
-  }));
-
-  class FakeFxPipeline {
-    config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig;
-    shaders: Array<Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig> = [];
-    fxHandlers: Array<
-      ((controller: unknown, width: number, height: number) => void) | undefined
-    > = [];
-    spriteBounds = { width: 64, height: 32 };
-    renderer = { projectionWidth: 820, projectionHeight: 470 };
-    projectionMatrix = { val: [1, 0, 0, 1] };
-    drawSpriteShader?: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig;
-    copyShader?: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig;
-    gameShader?: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig;
-    colorMatrixShader?: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig;
-    currentShader?: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig;
-    setShader = vi.fn(
-      (shader: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig) => {
-        this.currentShader = shader;
-        return this;
-      },
-    );
-    set4f = vi.fn(() => this);
-    set2f = vi.fn(() => this);
-    set1i = vi.fn(() => this);
-    setMatrix4fv = vi.fn(() => this);
-    bindTexture = vi.fn(() => this);
-    runDraw = vi.fn();
-    destroy = vi.fn();
-    setProjectionMatrix = vi.fn(() => this);
-    private shaderBuildCount = 0;
-
-    constructor(config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig) {
-      this.config = {
-        ...config,
-        shaders: baseShaderConfigs.map((shader) => ({ ...shader })),
-      };
-      createdPipelines.push(this);
-      this.setShadersFromConfig(this.config);
-    }
-
-    setShadersFromConfig = vi.fn(
-      (config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig) => {
-        this.shaderBuildCount += 1;
-        if (failShaderInstall && this.shaderBuildCount > 1)
-          throw new Error("shader compilation failed");
-        this.shaders = (config.shaders ?? []).map((shader) => ({ ...shader }));
-        this.currentShader = this.shaders[0];
-        return this;
-      },
-    );
-  }
-
-  const stored = new Map<string, unknown>();
-  const basePipeline = new FakeFxPipeline({ game });
-  const managerValue = {
-    FX_PIPELINE: basePipeline,
-    get: vi.fn((key: unknown) =>
-      typeof key === "string" ? stored.get(key) : undefined,
-    ),
-    add: vi.fn((key: string, pipeline: unknown) => {
-      if (failRegistration) throw new Error("shader registration failed");
-      stored.set(key, pipeline);
-      return pipeline;
-    }),
-    remove: vi.fn((key: string) => stored.delete(key)),
-  };
-  const manager =
-    managerValue as unknown as Phaser.Renderer.WebGL.PipelineManager;
-  const scene = {
-    sys: { game, renderer: { pipelines: manager } },
-    textures: {
-      exists: vi.fn(() => false),
-      createCanvas: vi.fn(() => null),
-    },
-  } as unknown as Phaser.Scene;
-
-  return {
-    scene,
-    manager: managerValue,
-    createdPipelines,
-    getRegisteredPipeline: () => [...stored.values()][0],
+    enableFilters: spriteValue.enableFilters,
   };
 }
 
@@ -480,10 +482,10 @@ describe("experimental rendering values", () => {
   });
 });
 
-describe("shared Phaser Pre FX adapter", () => {
+describe("shared Phaser 4 filter adapter", () => {
   it("warns once and becomes a safe no-op on Canvas", () => {
-    const { scene } = fakeScene(false);
-    const { sprite, preFX } = fakeSprite();
+    const { scene, camera } = fakeScene(false);
+    const { sprite, filterList, enableFilters } = fakeSprite(camera);
     const warnings: string[] = [];
     const effects = evaluatedSettings();
 
@@ -503,12 +505,14 @@ describe("shared Phaser Pre FX adapter", () => {
     expect(first).toMatchObject({ supported: false, applied: false });
     expect(second).toMatchObject({ supported: false, applied: false });
     expect(warnings).toHaveLength(1);
-    expect(preFX.addBlur).not.toHaveBeenCalled();
+    expect(enableFilters).not.toHaveBeenCalled();
+    expect(filterList.addBlur).not.toHaveBeenCalled();
   });
 
   it("caches its controller signature and updates values without stacking", () => {
-    const { scene } = fakeScene(true);
-    const { sprite, preFX, controllers } = fakeSprite();
+    const { scene, camera, manager } = fakeScene(true);
+    const { sprite, filterList, controllers, colorMatrix, list } =
+      fakeSprite(camera);
     const first = evaluatedSettings();
     syncPhaserRenderingEffects({ scene, sprite, effects: first });
 
@@ -519,17 +523,21 @@ describe("shared Phaser Pre FX adapter", () => {
     });
     syncPhaserRenderingEffects({ scene, sprite, effects: replay });
 
-    expect(preFX.addGradient).toHaveBeenCalledTimes(1);
-    expect(preFX.addColorMatrix).toHaveBeenCalledTimes(1);
-    expect(preFX.addShine).toHaveBeenCalledTimes(1);
-    expect(preFX.addBarrel).toHaveBeenCalledTimes(1);
-    expect(preFX.addWipe).toHaveBeenCalledTimes(1);
-    expect(preFX.addBlur).toHaveBeenCalledTimes(1);
-    expect(preFX.addGlow).toHaveBeenCalledTimes(1);
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(4);
+    expect(filterList.add).toHaveBeenCalledTimes(2);
+    expect(filterList.addColorMatrix).toHaveBeenCalledTimes(1);
+    expect(filterList.addBarrel).toHaveBeenCalledTimes(1);
+    expect(filterList.addWipe).toHaveBeenCalledTimes(1);
+    expect(filterList.addBlur).toHaveBeenCalledTimes(1);
+    expect(filterList.addGlow).toHaveBeenCalledTimes(1);
+    expect(list).toHaveLength(7);
     expect(controllers.wipe.progress).toBeCloseTo(0.75);
-    expect(controllers.colorMatrix.brightness).toHaveBeenLastCalledWith(1);
-    expect(controllers.shine.speed).toBe(0.5);
-    expect(preFX.disable).not.toHaveBeenCalled();
+    expect(colorMatrix.brightness).toHaveBeenLastCalledWith(1);
+    const shine = list.find(
+      (filter) => filter.renderNode === "VvfxAnimatedShineFilter",
+    );
+    expect(shine).toMatchObject({ speed: 0.5 });
+    expect(filterList.remove).not.toHaveBeenCalled();
 
     const changed = createDefaultRenderingEffects();
     Object.assign(changed, first.settings);
@@ -543,15 +551,17 @@ describe("shared Phaser Pre FX adapter", () => {
         seed: 8421,
       }),
     });
-    expect(preFX.disable).toHaveBeenCalledWith(true);
-    expect(preFX.addBlur).toHaveBeenCalledTimes(2);
+    expect(filterList.remove).toHaveBeenCalledTimes(7);
+    expect(filterList.addBlur).toHaveBeenCalledTimes(2);
+    expect(list).toHaveLength(7);
 
     clearPhaserRenderingEffects(sprite);
-    expect(preFX.disable).toHaveBeenCalledTimes(2);
+    expect(filterList.remove).toHaveBeenCalledTimes(14);
+    expect(list).toHaveLength(0);
   });
 
-  it("samples a resolved full-texture mask before every authored FX pass", () => {
-    const { scene, manager, getRegisteredPipeline } = fakeNoisePipelineScene();
+  it("registers and configures a resolved visual mask before authored filters", () => {
+    const { scene, camera, manager, nodes, setUniform } = fakeScene(true);
     const targetFrame = fakeTextureFrame();
     const maskFrame = fakeTextureFrame({
       key: "soft-mask",
@@ -569,7 +579,7 @@ describe("shared Phaser Pre FX adapter", () => {
       u1: 0.45,
       v1: 0.3,
     });
-    const maskedSprite = fakeSprite(targetFrame);
+    const maskedSprite = fakeSprite(camera, targetFrame);
     const settings = createDefaultRenderingEffects();
     settings.visualMask = {
       enabled: true,
@@ -611,88 +621,54 @@ describe("shared Phaser Pre FX adapter", () => {
       passCost: 11,
     });
     expect(resolveAssetFrame).toHaveBeenCalledWith("soft-mask");
-    expect(manager.add).toHaveBeenCalledTimes(1);
-    expect(maskedSprite.list.map((controller) => controller.type)).toEqual([
-      20, 14, 12, 16, 21, 8, 9, 4,
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(4);
+    expect(
+      maskedSprite.list.map((controller) => controller.renderNode),
+    ).toEqual([
+      "VvfxVisualMaskFilter",
+      "FilterColorMatrix",
+      "VvfxSpatialGradientFilter",
+      "FilterBarrel",
+      "VvfxNoiseErosionFilter",
+      "VvfxAnimatedShineFilter",
+      "FilterBlur",
+      "FilterGlow",
     ]);
 
-    const maskController = maskedSprite.preFX.add.mock.calls[0][0] as {
+    const maskController = maskedSprite.list[0] as FakeFilterController & {
       active: boolean;
       gameObject: unknown;
       maskFrame: Phaser.Textures.Frame | null;
-      type: number;
     };
-    const pipeline = getRegisteredPipeline() as {
-      config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig;
-      fxHandlers: Array<((...args: unknown[]) => void) | undefined>;
-      shaders: Phaser.Types.Renderer.WebGL.WebGLPipelineShaderConfig[];
-      onDrawSprite: (sprite: Phaser.GameObjects.Image) => void;
-      runDraw: ReturnType<typeof vi.fn>;
-      set1i: ReturnType<typeof vi.fn>;
-      setMatrix4fv: ReturnType<typeof vi.fn>;
-      set2f: ReturnType<typeof vi.fn>;
-      set4f: ReturnType<typeof vi.fn>;
-      bindTexture: ReturnType<typeof vi.fn>;
-      vvfxVisualMaskType: number;
-      vvfxNoiseErosionType: number;
+    const visualMaskNode = nodes.get("VvfxVisualMaskFilter") as {
+      fragmentShaderSource: string;
+      setupTextures: (
+        controller: unknown,
+        textures: unknown[],
+        context: unknown,
+      ) => void;
+      setupUniforms: (controller: unknown, context: unknown) => void;
     };
-    expect(pipeline.vvfxVisualMaskType).toBe(20);
-    expect(pipeline.vvfxNoiseErosionType).toBe(21);
-    expect(pipeline.config.shaders?.[20]).toMatchObject({
-      name: "VvfxVisualMask",
-    });
-    expect(pipeline.config.shaders?.[20]?.fragShader).toContain(
-      "* maskColor.a",
-    );
-
-    pipeline.onDrawSprite(maskedSprite.sprite);
-    expect(pipeline.setMatrix4fv).toHaveBeenCalledWith(
-      "uProjectionMatrix",
-      false,
-      [1, 0, 0, 1],
-    );
-    expect(pipeline.set1i).toHaveBeenCalledWith("uMainSampler", 0);
-    expect(pipeline.set1i).toHaveBeenCalledWith("vvfxMaskSampler", 1);
-    expect(pipeline.bindTexture).toHaveBeenCalledWith(
-      maskFrame.source.glTexture,
-      1,
-    );
-    expect(pipeline.set4f).toHaveBeenCalledWith(
-      "vvfxSourceLogical",
-      0.1,
-      0.1,
-      0.8,
-      0.8,
-    );
-    expect(pipeline.set4f).toHaveBeenCalledWith(
+    expect(visualMaskNode.fragmentShaderSource).toContain("* maskColor.a");
+    const textures = [{ source: true }, null];
+    visualMaskNode.setupTextures(maskController, textures, {});
+    expect(textures[1]).toBe(maskFrame.source.glTexture);
+    visualMaskNode.setupUniforms(maskController, {});
+    expect(setUniform).toHaveBeenCalledWith("vvfxMaskSampler", 1);
+    expect(setUniform).toHaveBeenCalledWith(
       "vvfxMaskLogical",
-      0.1,
-      0.1,
-      0.8,
-      0.8,
+      [0.1, 0.1, 0.8, 0.8],
     );
-    expect(pipeline.set4f).toHaveBeenCalledWith(
+    expect(setUniform).toHaveBeenCalledWith(
       "vvfxMaskTransform",
-      0.5,
-      -0.5,
-      3,
-      1.5,
+      [0.5, -0.5, 3, 1.5],
     );
-    expect(pipeline.set2f).toHaveBeenCalledWith("vvfxTargetScale", 2, 1);
-    expect(pipeline.set2f).toHaveBeenCalledWith(
-      "vvfxMaskRotation",
+    expect(setUniform).toHaveBeenCalledWith("vvfxTargetScale", [2, 1]);
+    expect(setUniform).toHaveBeenCalledWith("vvfxMaskRotation", [
       expect.closeTo(0, 10),
       1,
-    );
-    expect(pipeline.set4f).toHaveBeenCalledWith(
-      "vvfxMaskOptions",
-      0.65,
-      1,
-      1,
-      0,
-    );
-    pipeline.fxHandlers[maskController.type]?.call(pipeline, maskController);
-    expect(pipeline.runDraw).not.toHaveBeenCalled();
+    ]);
+    expect(setUniform).toHaveBeenCalledWith("vvfxMaskOptions", [0.65, 1, 1, 0]);
 
     clearPhaserRenderingEffects(maskedSprite.sprite);
     expect(maskController.active).toBe(false);
@@ -701,7 +677,7 @@ describe("shared Phaser Pre FX adapter", () => {
   });
 
   it("omits a missing visual-mask source safely and warns once per scene", () => {
-    const { scene, manager } = fakeNoisePipelineScene();
+    const { scene, camera, manager } = fakeScene(true);
     const settings = createDefaultRenderingEffects();
     settings.visualMask.enabled = true;
     settings.visualMask.maskAssetId = "missing-mask";
@@ -711,8 +687,8 @@ describe("shared Phaser Pre FX adapter", () => {
       seed: 8,
     });
     const warnings: string[] = [];
-    const firstSprite = fakeSprite();
-    const secondSprite = fakeSprite();
+    const firstSprite = fakeSprite(camera);
+    const secondSprite = fakeSprite(camera);
 
     const first = syncPhaserRenderingEffects({
       scene,
@@ -733,15 +709,14 @@ describe("shared Phaser Pre FX adapter", () => {
     expect(second).toMatchObject({ supported: false, applied: false });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("visual-mask texture");
-    expect(manager.add).not.toHaveBeenCalled();
-    expect(firstSprite.preFX.add).not.toHaveBeenCalled();
-    expect(firstSprite.setPipeline).not.toHaveBeenCalled();
+    expect(manager.addNodeConstructor).not.toHaveBeenCalled();
+    expect(firstSprite.filterList.add).not.toHaveBeenCalled();
   });
 
-  it("registers one custom PreFX pipeline and keeps erosion in the authored FX order", () => {
-    const { scene, manager, getRegisteredPipeline } = fakeNoisePipelineScene();
-    const firstSprite = fakeSprite();
-    const secondSprite = fakeSprite();
+  it("registers custom render nodes once and keeps erosion in authored order", () => {
+    const { scene, camera, manager, nodes, setUniform } = fakeScene(true);
+    const firstSprite = fakeSprite(camera);
+    const secondSprite = fakeSprite(camera);
     const settings = createDefaultRenderingEffects();
     settings.spriteWarp.enabled = true;
     settings.spriteWarp.mode = "barrel";
@@ -771,15 +746,19 @@ describe("shared Phaser Pre FX adapter", () => {
     });
 
     expect(first).toMatchObject({ supported: true, applied: true });
-    expect(manager.add).toHaveBeenCalledTimes(1);
-    expect(firstSprite.preFX.addWipe).not.toHaveBeenCalled();
-    expect(firstSprite.list.map((controller) => controller.type)).toEqual([
-      16, 21, 8, 9, 4,
-    ]);
-    expect(firstSprite.setPipeline).toHaveBeenCalledTimes(1);
-    expect(secondSprite.setPipeline).toHaveBeenCalledTimes(1);
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(4);
+    expect(firstSprite.filterList.addWipe).not.toHaveBeenCalled();
+    expect(firstSprite.list.map((controller) => controller.renderNode)).toEqual(
+      [
+        "FilterBarrel",
+        "VvfxNoiseErosionFilter",
+        "VvfxAnimatedShineFilter",
+        "FilterBlur",
+        "FilterGlow",
+      ],
+    );
 
-    const noiseController = firstSprite.preFX.add.mock.calls[0][0] as {
+    const noiseController = firstSprite.list[1] as FakeFilterController & {
       active: boolean;
       gameObject: unknown;
       progress: number;
@@ -787,46 +766,18 @@ describe("shared Phaser Pre FX adapter", () => {
       noiseScale: number;
       noiseOffsetX: number;
       noiseOffsetY: number;
-      type: number;
     };
-    const pipeline = getRegisteredPipeline() as {
-      config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig;
-      fxHandlers: Array<
-        | ((
-            controller: typeof noiseController,
-            width: number,
-            height: number,
-          ) => void)
-        | undefined
-      >;
-      runDraw: ReturnType<typeof vi.fn>;
-      set2f: ReturnType<typeof vi.fn>;
-      set4f: ReturnType<typeof vi.fn>;
-      setProjectionMatrix: ReturnType<typeof vi.fn>;
-      vvfxNoiseErosionType: number;
+    const noiseNode = nodes.get("VvfxNoiseErosionFilter") as {
+      fragmentShaderSource: string;
+      setupUniforms: (
+        controller: unknown,
+        context: { width: number; height: number },
+      ) => void;
     };
-    expect(pipeline.vvfxNoiseErosionType).toBe(21);
-    expect(pipeline.config.shaders).toHaveLength(22);
-    expect(pipeline.config.shaders?.[20]).toMatchObject({
-      name: "VvfxVisualMask",
-    });
-    expect(pipeline.config.shaders?.[21]).toMatchObject({
-      name: "VvfxNoiseErosion",
-    });
-    expect(pipeline.setProjectionMatrix).toHaveBeenCalledWith(820, 470);
-
-    const handler = pipeline.fxHandlers[noiseController.type];
-    expect(handler).toBeTypeOf("function");
-    handler?.call(pipeline, noiseController, 128, 128);
-    expect(pipeline.set4f).toHaveBeenCalledWith(
-      "vvfxDissolve",
-      0.25,
-      0.1,
-      6,
-      0,
-    );
-    expect(pipeline.set2f).toHaveBeenCalledWith("vvfxTargetToSprite", 2, 2);
-    expect(pipeline.runDraw).toHaveBeenCalledTimes(1);
+    expect(noiseNode.fragmentShaderSource).toContain("vvfxDissolve");
+    noiseNode.setupUniforms(noiseController, { width: 128, height: 64 });
+    expect(setUniform).toHaveBeenCalledWith("vvfxDissolve", [0.25, 0.1, 6, 0]);
+    expect(setUniform).toHaveBeenCalledWith("vvfxTargetToSprite", [1, 0.5]);
 
     const replay = evaluateRenderingEffects(settings, {
       lifetimeProgress: 0.75,
@@ -838,8 +789,8 @@ describe("shared Phaser Pre FX adapter", () => {
       sprite: firstSprite.sprite,
       effects: replay,
     });
-    expect(manager.add).toHaveBeenCalledTimes(1);
-    expect(firstSprite.preFX.add).toHaveBeenCalledTimes(1);
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(4);
+    expect(firstSprite.filterList.add).toHaveBeenCalledTimes(2);
     expect(noiseController.progress).toBe(0.75);
     expect(noiseController.noiseOffsetX).toBe(
       replay.controllers.dissolveNoiseOffsetX,
@@ -853,10 +804,12 @@ describe("shared Phaser Pre FX adapter", () => {
     expect(noiseController.gameObject).toBeNull();
   });
 
-  it("omits noise erosion safely when custom pipeline registration fails", () => {
-    const { scene, manager } = fakeNoisePipelineScene(true);
-    const firstSprite = fakeSprite();
-    const secondSprite = fakeSprite();
+  it("omits custom filters safely when render-node registration fails", () => {
+    const { scene, camera, manager } = fakeScene(true, {
+      failRegistration: true,
+    });
+    const firstSprite = fakeSprite(camera);
+    const secondSprite = fakeSprite(camera);
     const settings = createDefaultRenderingEffects();
     settings.directionalDissolve.enabled = true;
     settings.directionalDissolve.pattern = "noise";
@@ -882,23 +835,17 @@ describe("shared Phaser Pre FX adapter", () => {
 
     expect(first).toMatchObject({ supported: false, applied: false });
     expect(second).toMatchObject({ supported: false, applied: false });
-    expect(manager.add).toHaveBeenCalledTimes(1);
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(1);
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("noise-erosion shader");
-    expect(firstSprite.preFX.add).not.toHaveBeenCalled();
-    expect(firstSprite.setPipeline).not.toHaveBeenCalled();
-    const failedPipeline = manager.add.mock.calls[0][1] as {
-      destroy: ReturnType<typeof vi.fn>;
-    };
-    expect(failedPipeline.destroy).toHaveBeenCalledTimes(1);
+    expect(warnings[0]).toContain("Phaser 4 rendering filters");
+    expect(firstSprite.filterList.add).not.toHaveBeenCalled();
   });
 
-  it("destroys a partially built pipeline when shader installation fails", () => {
-    const { scene, manager, createdPipelines } = fakeNoisePipelineScene(
-      false,
-      true,
-    );
-    const { sprite, preFX, setPipeline } = fakeSprite();
+  it("omits custom filters safely when render-node construction fails", () => {
+    const { scene, camera, manager } = fakeScene(true, {
+      failConstruction: true,
+    });
+    const { sprite, filterList } = fakeSprite(camera);
     const settings = createDefaultRenderingEffects();
     settings.directionalDissolve.enabled = true;
     settings.directionalDissolve.pattern = "noise";
@@ -916,12 +863,46 @@ describe("shared Phaser Pre FX adapter", () => {
     });
 
     expect(result).toMatchObject({ supported: false, applied: false });
-    expect(createdPipelines).toHaveLength(2);
-    expect(createdPipelines[1].destroy).toHaveBeenCalledTimes(1);
-    expect(manager.add).not.toHaveBeenCalled();
-    expect(preFX.add).not.toHaveBeenCalled();
-    expect(setPipeline).not.toHaveBeenCalled();
+    expect(manager.addNodeConstructor).toHaveBeenCalledTimes(4);
+    expect(filterList.add).not.toHaveBeenCalled();
     expect(warnings).toHaveLength(1);
+  });
+
+  it("maps native Phaser 4 filters and preserves unrelated host filters", () => {
+    const { scene, camera } = fakeScene(true);
+    const hostFilter = disposableFilter("HostFilter");
+    const { sprite, filterList, list, controllers } = fakeSprite(
+      camera,
+      fakeTextureFrame(),
+      [hostFilter],
+    );
+    const settings = createDefaultRenderingEffects();
+    settings.spriteWarp.enabled = true;
+    settings.spriteWarp.mode = "heat-shimmer";
+    settings.directionalDissolve.enabled = true;
+    settings.blur.enabled = true;
+    settings.outerGlow.enabled = true;
+
+    const evaluated = evaluateRenderingEffects(settings, {
+      lifetimeProgress: 0.6,
+      elapsedMs: 600,
+      seed: 9,
+    });
+    syncPhaserRenderingEffects({ scene, sprite, effects: evaluated });
+
+    expect(filterList.addDisplacement).toHaveBeenCalledWith(
+      VVFX_RENDERING_NOISE_TEXTURE,
+      evaluated.controllers.displacementX,
+      evaluated.controllers.displacementY,
+    );
+    expect(filterList.addWipe).toHaveBeenCalledWith(0.1, 0, 0, 0);
+    expect(filterList.addGlow).toHaveBeenCalledWith(0x7de9ff, 3, 0, 1, false);
+    expect(controllers.wipe.progress).toBeCloseTo(0.6);
+    expect(list[0]).toBe(hostFilter);
+
+    clearPhaserRenderingEffects(sprite);
+    expect(list).toEqual([hostFilter]);
+    expect(hostFilter.destroy).not.toHaveBeenCalled();
   });
 
   it("creates one deterministic scene noise texture for sprite warp", () => {

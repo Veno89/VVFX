@@ -199,11 +199,11 @@ therefore needs an ordinary opacity fade, while essential clipping should be
 baked into the source art when Canvas parity matters. True scene-behind
 refraction/heat haze is decision-deferred because the portable effect cannot
 infer a game's camera capture. Lighting-aware materials are also
-decision-deferred: Phaser Light2D depends on scene-owned lights, paired normal
-maps, a game-configured light ceiling, camera culling, and a different sprite
-pipeline from Vvfx's managed Experimental PreFX. Vvfx does not enable or mutate
-the game's LightsManager. A future fixed local normal-map experiment would be a
-separate self-contained effect, not Phaser scene-light integration.
+decision-deferred: Phaser lighting depends on scene-owned lights, paired normal
+maps, a game-configured light ceiling, and camera culling. Vvfx's Phaser 4
+filter chain does not enable or mutate the game's LightsManager. A future fixed
+local normal-map experiment would be a separate self-contained effect, not
+Phaser scene-light integration.
 Animated/layer-to-layer/camera masks, collision, fluid simulation, a general
 compositing graph, and custom shaders are not silently approximated. An
 image-silhouette spawn stencil is deterministic position data, not a visual

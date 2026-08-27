@@ -194,13 +194,11 @@ than being presented as universally compatible rendering.
       It is separate from the image-silhouette spawn-position stencil. Animated
       masks, layer-to-layer masks, camera masks, nested masks, and a general
       compositing graph remain deliberately deferred.
-- [x] **Lighting-aware materials — decision-deferred.** Phaser 3.90's Light2D
-      pipeline depends on scene-owned LightsManager state, normal maps paired
-      with diffuse textures, a game-configured light ceiling, and
-      camera-specific culling. Vvfx's managed Experimental PreFX pipeline also
-      owns the sprite pipeline, so a small toggle cannot compose the two without
-      silently dropping existing effects. Creating or changing lights from a
-      portable effect would mutate shared game state and make preview,
+- [x] **Lighting-aware materials — decision-deferred.** Phaser 4 lighting
+      depends on scene-owned LightsManager state, normal maps paired with
+      diffuse textures, a game-configured light ceiling, and camera-specific
+      culling. Creating or changing lights from a portable effect would mutate
+      shared game state and make preview,
       recording, and runtime results depend on host cameras and lights that
       Vvfx cannot safely own or clean up. Ordinary unlit effects remain
       unchanged. A future separately named fixed local normal-map light may be
@@ -277,7 +275,7 @@ documentation should say so plainly.
   Shared helpers may cover repeated behavior, but every optional feature must
   prove that disabled state contributes nothing, removed state has no obsolete
   references, and re-enabling restores only intentionally preserved settings.
-- Cleanup ownership for every sprite, trail sample, Graphics object, PreFX
+- Cleanup ownership for every sprite, trail sample, Graphics object, filter
   controller, texture, timer, tween, listener, subscription, and cache the
   capability creates. Repeated toggle and preview-restart tests must return
   currently live objects and registrations to baseline.

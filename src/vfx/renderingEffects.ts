@@ -70,7 +70,7 @@ export interface SpatialGradientEffectSettings {
 
 /**
  * Both patterns share one lifetime envelope. The directional pattern uses
- * Phaser's built-in Wipe FX; noise uses Vvfx's deterministic PreFX shader.
+ * Phaser's built-in Wipe filter; noise uses a deterministic Vvfx render node.
  */
 export interface DirectionalDissolveEffectSettings {
   enabled: boolean;
@@ -153,18 +153,20 @@ export const MAX_RENDERING_EFFECT_PADDING = 64;
 export const UNSUPPORTED_RENDERING_EFFECTS_WARNING =
   "Experimental pixel effects need Phaser WebGL. This Canvas renderer will show the ordinary sprites without visual masks, blur, glow, brightness/exposure, shine, gradients, dissolve/noise erosion, or sprite warp.";
 
-const VVFX_RENDERING_PIPELINE = "__vvfx-rendering-fx-v2";
-const RENDERING_PIPELINE_WARNING =
-  "Vvfx could not start its Experimental visual-mask or noise-erosion shader, so those effects are omitted.";
+const VVFX_VISUAL_MASK_FILTER = "VvfxVisualMaskFilter";
+const VVFX_NOISE_EROSION_FILTER = "VvfxNoiseErosionFilter";
+const VVFX_SPATIAL_GRADIENT_FILTER = "VvfxSpatialGradientFilter";
+const VVFX_ANIMATED_SHINE_FILTER = "VvfxAnimatedShineFilter";
+const RENDERING_FILTER_WARNING =
+  "Vvfx could not start its Phaser 4 rendering filters, so Experimental pixel effects are omitted.";
 const VISUAL_MASK_SOURCE_WARNING =
   "Vvfx could not resolve the Experimental visual-mask texture, so visual masking is omitted.";
 
 /**
- * Samples a mask in the target sprite's untrimmed local coordinates while the
- * sprite is first drawn into Phaser's PreFX buffer. Later FX controllers then
- * receive the already-masked pixels, preserving Vvfx's authored order.
+ * Samples a mask in the target sprite's local filter coordinates. Later filter
+ * controllers receive the already-masked pixels, preserving authored order.
  */
-const VISUAL_MASK_FRAGMENT_SHADER = `#define SHADER_NAME VVFX_VISUAL_MASK_FS
+const VISUAL_MASK_FRAGMENT_SHADER = `#pragma phaserTemplate(shaderName)
 
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -174,8 +176,6 @@ precision mediump float;
 
 uniform sampler2D uMainSampler;
 uniform sampler2D vvfxMaskSampler;
-uniform vec4 vvfxSourceUv;
-uniform vec4 vvfxSourceLogical;
 uniform vec4 vvfxMaskUv;
 uniform vec4 vvfxMaskLogical;
 uniform vec4 vvfxMaskTransform;
@@ -184,27 +184,11 @@ uniform vec2 vvfxMaskRotation;
 uniform vec4 vvfxMaskOptions;
 
 varying vec2 outTexCoord;
-varying float outTintEffect;
-varying vec4 outTint;
 
 void main ()
 {
-    vec4 texture = texture2D(uMainSampler, outTexCoord);
-    vec4 texel = vec4(outTint.bgr * outTint.a, outTint.a);
-    vec4 color = texture * texel;
-
-    if (outTintEffect == 1.0)
-    {
-        color.rgb = mix(texture.rgb, outTint.bgr * outTint.a, texture.a);
-    }
-    else if (outTintEffect == 2.0)
-    {
-        color = texel;
-    }
-
-    vec2 cutUv = (outTexCoord - vvfxSourceUv.xy) /
-        max(vvfxSourceUv.zw, vec2(0.000001));
-    vec2 targetUv = vvfxSourceLogical.xy + cutUv * vvfxSourceLogical.zw;
+    vec4 color = texture2D(uMainSampler, outTexCoord);
+    vec2 targetUv = outTexCoord;
     vec2 point = (targetUv - vec2(0.5)) * vvfxTargetScale -
         vvfxMaskTransform.xy;
     vec2 rotatedPoint = vec2(
@@ -244,7 +228,7 @@ void main ()
  * GLSL 1 / WebGL 1 fragment shader. The fixed three-octave value-noise field
  * has no time input: direct seeks and replays use the same per-copy pattern.
  */
-const NOISE_EROSION_FRAGMENT_SHADER = `#define SHADER_NAME VVFX_NOISE_EROSION_FS
+const NOISE_EROSION_FRAGMENT_SHADER = `#pragma phaserTemplate(shaderName)
 
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -325,6 +309,62 @@ void main ()
         noiseValue
     );
     gl_FragColor = color * visible;
+}`;
+
+const SPATIAL_GRADIENT_FRAGMENT_SHADER = `#pragma phaserTemplate(shaderName)
+#define SRGB_TO_LINEAR(c) pow((c), vec3(2.2))
+#define LINEAR_TO_SRGB(c) pow((c), vec3(1.0 / 2.2))
+#define SRGB(r, g, b) SRGB_TO_LINEAR(vec3(float(r), float(g), float(b)) / 255.0)
+precision mediump float;
+uniform sampler2D uMainSampler;
+uniform vec2 positionFrom;
+uniform vec2 positionTo;
+uniform vec3 color1;
+uniform vec3 color2;
+uniform float alpha;
+uniform int size;
+varying vec2 outTexCoord;
+float gradientNoise(in vec2 uv)
+{
+    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(uv, magic.xy)));
+}
+float stepped (in float value, in int steps)
+{
+    return steps > 1 ? floor(value * float(steps)) / float(steps - 1) : value;
+}
+void main ()
+{
+    vec2 delta = positionTo - positionFrom;
+    float denominator = max(dot(delta, delta), 0.000001);
+    float distance = dot(outTexCoord - positionFrom, delta) / denominator;
+    float amount = size > 1 ? stepped(distance, size) : distance;
+    amount = smoothstep(0.0, 1.0, clamp(amount, 0.0, 1.0));
+    vec3 color = mix(SRGB(color1.r, color1.g, color1.b), SRGB(color2.r, color2.g, color2.b), amount);
+    color = LINEAR_TO_SRGB(color);
+    color += (1.0 / 255.0) * gradientNoise(outTexCoord) - (0.5 / 255.0);
+    vec4 texture = texture2D(uMainSampler, outTexCoord);
+    gl_FragColor = vec4(mix(color.rgb, texture.rgb, alpha), texture.a);
+}`;
+
+const ANIMATED_SHINE_FRAGMENT_SHADER = `#pragma phaserTemplate(shaderName)
+precision mediump float;
+uniform sampler2D uMainSampler;
+uniform vec2 resolution;
+uniform float speed;
+uniform float time;
+uniform float lineWidth;
+uniform float gradient;
+varying vec2 outTexCoord;
+void main ()
+{
+    vec2 uv = gl_FragCoord.xy / max(resolution.xy, vec2(1.0));
+    vec4 texture = texture2D(uMainSampler, outTexCoord);
+    uv.x = uv.x - mod(time * speed, 2.0) + 0.5;
+    float edge = uv.x * gradient;
+    float shine = smoothstep(edge - lineWidth, edge, uv.y) -
+        smoothstep(edge, edge + lineWidth, uv.y);
+    gl_FragColor = texture + shine * vec4(1.15, 0.85, 0.85, 1.0) * texture;
 }`;
 
 export const DEFAULT_RENDERING_EFFECTS: Readonly<RenderingEffectsSettings> = {
@@ -798,20 +838,20 @@ function colorNumber(value: string): number {
     : 0xffffff;
 }
 
-export function sceneSupportsPhaserPreFx(scene: Phaser.Scene): boolean {
-  return Boolean(phaserPipelineManager(scene));
-}
-
-function phaserPipelineManager(
+function phaserRenderNodeManager(
   scene: Phaser.Scene,
-): Phaser.Renderer.WebGL.PipelineManager | null {
+): Phaser.Renderer.WebGL.RenderNodes.RenderNodeManager | null {
   return (
     (
       scene.sys.renderer as Phaser.Renderer.Canvas.CanvasRenderer & {
-        pipelines?: Phaser.Renderer.WebGL.PipelineManager;
+        renderNodes?: Phaser.Renderer.WebGL.RenderNodes.RenderNodeManager;
       }
-    ).pipelines ?? null
+    ).renderNodes ?? null
   );
+}
+
+export function sceneSupportsPhaserFilters(scene: Phaser.Scene): boolean {
+  return Boolean(phaserRenderNodeManager(scene));
 }
 
 const warningKeysByScene = new WeakMap<object, Set<string>>();
@@ -862,46 +902,79 @@ export function ensureRenderingNoiseTexture(
   return VVFX_RENDERING_NOISE_TEXTURE;
 }
 
-interface NoiseErosionFxController {
-  active: boolean;
-  readonly type: number;
-  gameObject: Phaser.GameObjects.GameObject | null;
-  progress: number;
-  softness: number;
-  noiseScale: number;
-  reverse: boolean;
-  noiseOffsetX: number;
-  noiseOffsetY: number;
-  setActive(value: boolean): this;
-  destroy(): void;
-}
-
 export type PhaserRenderingAssetFrameResolver = (
   assetId: string,
 ) => Phaser.Textures.Frame | null;
 
-interface VisualMaskFxController {
-  active: boolean;
-  readonly type: number;
-  readonly vvfxVisualMaskController: true;
-  gameObject: Phaser.GameObjects.GameObject | null;
-  maskFrame: Phaser.Textures.Frame | null;
-  channel: VisualMaskChannel;
-  invert: boolean;
-  fit: VisualMaskFit;
-  offsetX: number;
-  offsetY: number;
-  scale: number;
-  rotation: number;
-  strength: number;
-  setActive(value: boolean): this;
-  destroy(): void;
+class VvfxFilterController {
+  active = true;
+  allowBaseDraw = true;
+  ignoreDestroy = false;
+  camera: Phaser.Cameras.Scene2D.Camera | null;
+  paddingOverride: Phaser.Geom.Rectangle | null;
+  currentPadding: Phaser.Geom.Rectangle;
+
+  constructor(
+    camera: Phaser.Cameras.Scene2D.Camera,
+    readonly renderNode: string,
+  ) {
+    this.camera = camera;
+    const Rectangle = camera.worldView.constructor as new (
+      x?: number,
+      y?: number,
+      width?: number,
+      height?: number,
+    ) => Phaser.Geom.Rectangle;
+    this.currentPadding = new Rectangle();
+    this.paddingOverride = new Rectangle();
+  }
+
+  getPadding() {
+    return this.paddingOverride ?? this.currentPadding;
+  }
+
+  getPaddingCeil() {
+    const padding = this.getPadding();
+    this.currentPadding.setTo(
+      Math.ceil(padding.x),
+      Math.ceil(padding.y),
+      Math.ceil(padding.width),
+      Math.ceil(padding.height),
+    );
+    return this.currentPadding;
+  }
+
+  setPaddingOverride(left: number | null = 0, top = 0, right = 0, bottom = 0) {
+    if (left === null) this.paddingOverride = null;
+    else {
+      const Rectangle = this.currentPadding.constructor as new (
+        x?: number,
+        y?: number,
+        width?: number,
+        height?: number,
+      ) => Phaser.Geom.Rectangle;
+      const rectangle = this.paddingOverride ?? new Rectangle();
+      rectangle.setTo(left, top, right - left, bottom - top);
+      this.paddingOverride = rectangle;
+    }
+    return this;
+  }
+
+  setActive(value: boolean) {
+    this.active = value;
+    return this;
+  }
+
+  destroy() {
+    this.active = false;
+    this.camera = null;
+    this.paddingOverride = null;
+  }
 }
 
-class VvfxVisualMaskController implements VisualMaskFxController {
-  active = true;
+class VvfxVisualMaskController extends VvfxFilterController {
   readonly vvfxVisualMaskController = true as const;
-  gameObject: Phaser.GameObjects.GameObject | null;
+  gameObject: Phaser.GameObjects.Image | null;
   maskFrame: Phaser.Textures.Frame | null;
   channel: VisualMaskChannel;
   invert: boolean;
@@ -913,11 +986,12 @@ class VvfxVisualMaskController implements VisualMaskFxController {
   strength: number;
 
   constructor(
-    readonly type: number,
+    camera: Phaser.Cameras.Scene2D.Camera,
     sprite: Phaser.GameObjects.Image,
     maskFrame: Phaser.Textures.Frame,
     settings: VisualMaskEffectSettings,
   ) {
+    super(camera, VVFX_VISUAL_MASK_FILTER);
     this.gameObject = sprite;
     this.maskFrame = maskFrame;
     this.channel = settings.channel;
@@ -930,21 +1004,15 @@ class VvfxVisualMaskController implements VisualMaskFxController {
     this.strength = settings.strength;
   }
 
-  setActive(value: boolean) {
-    this.active = value;
-    return this;
-  }
-
-  destroy() {
+  override destroy() {
     this.gameObject = null;
     this.maskFrame = null;
-    this.active = false;
+    super.destroy();
   }
 }
 
-class VvfxNoiseErosionController implements NoiseErosionFxController {
-  active = true;
-  gameObject: Phaser.GameObjects.GameObject | null;
+class VvfxNoiseErosionController extends VvfxFilterController {
+  gameObject: Phaser.GameObjects.Image | null;
   progress = 0;
   softness = 0.1;
   noiseScale = 6;
@@ -953,315 +1021,293 @@ class VvfxNoiseErosionController implements NoiseErosionFxController {
   noiseOffsetY = 0;
 
   constructor(
-    readonly type: number,
+    camera: Phaser.Cameras.Scene2D.Camera,
     sprite: Phaser.GameObjects.Image,
   ) {
+    super(camera, VVFX_NOISE_EROSION_FILTER);
     this.gameObject = sprite;
   }
 
-  setActive(value: boolean) {
-    this.active = value;
-    return this;
-  }
-
-  destroy() {
+  override destroy() {
     this.gameObject = null;
-    this.active = false;
+    super.destroy();
   }
 }
 
-interface VvfxRenderingFxPipeline
-  extends Phaser.Renderer.WebGL.Pipelines.FXPipeline {
-  readonly vvfxRenderingPipeline: true;
-  readonly vvfxVisualMaskType: number;
-  readonly vvfxNoiseErosionType: number;
-  installVvfxShaders(): this;
-}
+class VvfxSpatialGradientController extends VvfxFilterController {
+  readonly colorA: readonly number[];
+  readonly colorB: readonly number[];
+  readonly alpha: number;
+  readonly fromX: number;
+  readonly fromY: number;
+  readonly toX: number;
+  readonly toY: number;
+  readonly bands: number;
 
-type FxPipelineConstructor = new (
-  config: Phaser.Types.Renderer.WebGL.WebGLPipelineConfig,
-) => Phaser.Renderer.WebGL.Pipelines.FXPipeline;
-
-const failedRenderingPipelineManagers = new WeakSet<object>();
-
-function isVvfxRenderingFxPipeline(
-  value: unknown,
-): value is VvfxRenderingFxPipeline {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    (value as Partial<VvfxRenderingFxPipeline>).vvfxRenderingPipeline ===
-      true &&
-    Number.isInteger(
-      (value as Partial<VvfxRenderingFxPipeline>).vvfxVisualMaskType,
-    ) &&
-    Number.isInteger(
-      (value as Partial<VvfxRenderingFxPipeline>).vvfxNoiseErosionType,
-    ),
-  );
-}
-
-function createVvfxRenderingFxPipeline(
-  scene: Phaser.Scene,
-  manager: Phaser.Renderer.WebGL.PipelineManager,
-): VvfxRenderingFxPipeline {
-  const basePipeline = manager.FX_PIPELINE;
-  if (!basePipeline)
-    throw new Error("Phaser's built-in FX pipeline is unavailable.");
-
-  const BaseFxPipeline = basePipeline.constructor as FxPipelineConstructor;
-
-  class ManagedVvfxRenderingFxPipeline
-    extends BaseFxPipeline
-    implements VvfxRenderingFxPipeline
-  {
-    declare spriteBounds: Phaser.Geom.Rectangle;
-    readonly vvfxRenderingPipeline = true as const;
-    readonly vvfxVisualMaskType: number;
-    readonly vvfxNoiseErosionType: number;
-
-    constructor(game: Phaser.Game) {
-      // Phaser's public declaration says `game`, while its 3.90 FXPipeline
-      // implementation receives a WebGL pipeline config object.
-      super({ game });
-      const shaderConfigs = this.config.shaders;
-      if (!shaderConfigs)
-        throw new Error("Phaser's FX shader configuration is unavailable.");
-      this.vvfxVisualMaskType = shaderConfigs.length;
-      shaderConfigs.push({
-        name: "VvfxVisualMask",
-        fragShader: VISUAL_MASK_FRAGMENT_SHADER,
-      });
-      this.vvfxNoiseErosionType = shaderConfigs.length;
-      shaderConfigs.push({
-        name: "VvfxNoiseErosion",
-        fragShader: NOISE_EROSION_FRAGMENT_SHADER,
-      });
-      this.fxHandlers[this.vvfxVisualMaskType] = this.onVvfxVisualMask;
-      this.fxHandlers[this.vvfxNoiseErosionType] = this.onVvfxNoiseErosion;
-    }
-
-    installVvfxShaders() {
-      // The renderer is already booted when an effect first appears, so the
-      // base constructor has compiled its original shaders. Rebuild once with
-      // the appended shaders and restore PreFX's four cached shader handles.
-      this.setShadersFromConfig(this.config);
-      if (!this.shaders[this.vvfxVisualMaskType])
-        throw new Error("The visual-mask shader did not compile.");
-      if (!this.shaders[this.vvfxNoiseErosionType])
-        throw new Error("The noise-erosion shader did not compile.");
-      this.drawSpriteShader = this.shaders[0];
-      this.copyShader = this.shaders[1];
-      this.gameShader = this.shaders[2];
-      this.colorMatrixShader = this.shaders[3];
-      this.currentShader = this.copyShader;
-      this.setProjectionMatrix(
-        this.renderer.projectionWidth,
-        this.renderer.projectionHeight,
-      );
-      return this;
-    }
-
-    onDrawSprite(gameObject: Phaser.GameObjects.Image) {
-      const controller = gameObject.preFX?.list.find(
-        (candidate) =>
-          candidate.type === this.vvfxVisualMaskType &&
-          (candidate as Partial<VisualMaskFxController>)
-            .vvfxVisualMaskController === true &&
-          candidate.active,
-      ) as VisualMaskFxController | undefined;
-      const sourceFrame = gameObject.frame;
-      const maskFrame = controller?.maskFrame;
-      const maskTexture = maskFrame?.source.glTexture;
-      if (!controller || !sourceFrame || !maskFrame || !maskTexture) return;
-
-      const sourceRealWidth = Math.max(1, Math.abs(sourceFrame.realWidth));
-      const sourceRealHeight = Math.max(1, Math.abs(sourceFrame.realHeight));
-      const maskRealWidth = Math.max(1, Math.abs(maskFrame.realWidth));
-      const maskRealHeight = Math.max(1, Math.abs(maskFrame.realHeight));
-      const targetAspect = sourceRealWidth / sourceRealHeight;
-      const maskAspect = maskRealWidth / maskRealHeight;
-
-      let maskRectWidth = targetAspect;
-      let maskRectHeight = 1;
-      if (controller.fit === "contain") {
-        if (maskAspect > targetAspect)
-          maskRectHeight = targetAspect / maskAspect;
-        else maskRectWidth = maskAspect;
-      } else if (controller.fit === "cover") {
-        if (maskAspect > targetAspect) maskRectWidth = maskAspect;
-        else maskRectHeight = targetAspect / maskAspect;
-      }
-      maskRectWidth *= clamp(controller.scale, 0.1, 4);
-      maskRectHeight *= clamp(controller.scale, 0.1, 4);
-
-      const maskSourceWidth = Math.max(1, Math.abs(maskFrame.source.width));
-      const maskSourceHeight = Math.max(1, Math.abs(maskFrame.source.height));
-      const halfTexelU = 0.5 / maskSourceWidth;
-      const halfTexelV = 0.5 / maskSourceHeight;
-      const maskU0 = Math.min(maskFrame.u0, maskFrame.u1) + halfTexelU;
-      const maskV0 = Math.min(maskFrame.v0, maskFrame.v1) + halfTexelV;
-      const maskU1 = Math.max(maskFrame.u0, maskFrame.u1) - halfTexelU;
-      const maskV1 = Math.max(maskFrame.v0, maskFrame.v1) - halfTexelV;
-      const radians = (clamp(controller.rotation, -180, 180) * Math.PI) / 180;
-
-      this.setShader(this.shaders[this.vvfxVisualMaskType]);
-      // PreFX flips its projection immediately before this hook, but it did so
-      // while the built-in draw shader was current. Copy that live matrix to
-      // our draw shader so masked sprites keep Phaser's FBO orientation.
-      this.setMatrix4fv("uProjectionMatrix", false, this.projectionMatrix.val);
-      this.set1i("uMainSampler", 0);
-      this.set1i("vvfxMaskSampler", 1);
-      this.bindTexture(maskTexture, 1);
-      this.set4f(
-        "vvfxSourceUv",
-        sourceFrame.u0,
-        sourceFrame.v0,
-        sourceFrame.u1 - sourceFrame.u0,
-        sourceFrame.v1 - sourceFrame.v0,
-      );
-      this.set4f(
-        "vvfxSourceLogical",
-        sourceFrame.x / sourceRealWidth,
-        sourceFrame.y / sourceRealHeight,
-        sourceFrame.cutWidth / sourceRealWidth,
-        sourceFrame.cutHeight / sourceRealHeight,
-      );
-      this.set4f(
-        "vvfxMaskUv",
-        maskU0,
-        maskV0,
-        Math.max(0, maskU1 - maskU0),
-        Math.max(0, maskV1 - maskV0),
-      );
-      this.set4f(
-        "vvfxMaskLogical",
-        maskFrame.x / maskRealWidth,
-        maskFrame.y / maskRealHeight,
-        maskFrame.cutWidth / maskRealWidth,
-        maskFrame.cutHeight / maskRealHeight,
-      );
-      this.set4f(
-        "vvfxMaskTransform",
-        clamp(controller.offsetX, -2, 2) * targetAspect,
-        clamp(controller.offsetY, -2, 2),
-        maskRectWidth,
-        maskRectHeight,
-      );
-      this.set2f("vvfxTargetScale", targetAspect, 1);
-      this.set2f("vvfxMaskRotation", Math.cos(radians), Math.sin(radians));
-      this.set4f(
-        "vvfxMaskOptions",
-        clamp01(controller.strength),
-        controller.channel === "luminance" ? 1 : 0,
-        controller.invert ? 1 : 0,
-        0,
-      );
-    }
-
-    private onVvfxVisualMask() {
-      // Masking is fused into the initial sprite draw, before all FX passes.
-    }
-
-    private onVvfxNoiseErosion(
-      controller: NoiseErosionFxController,
-      width: number,
-      height: number,
-    ) {
-      const shader = this.shaders[this.vvfxNoiseErosionType];
-      this.setShader(shader);
-      this.set4f(
-        "vvfxDissolve",
-        clamp01(controller.progress),
-        clamp(controller.softness, 0.01, 0.5),
-        clamp(controller.noiseScale, 1, 16),
-        controller.reverse ? 1 : 0,
-      );
-      this.set2f(
-        "vvfxNoiseOffset",
-        controller.noiseOffsetX,
-        controller.noiseOffsetY,
-      );
-      const largestSpriteDimension = Math.max(
-        1,
-        Math.abs(this.spriteBounds.width),
-        Math.abs(this.spriteBounds.height),
-      );
-      this.set2f(
-        "vvfxTargetToSprite",
-        clamp(Math.abs(width) / largestSpriteDimension, 0.25, 256),
-        clamp(Math.abs(height) / largestSpriteDimension, 0.25, 256),
-      );
-      this.runDraw();
-    }
-  }
-
-  const pipeline = new ManagedVvfxRenderingFxPipeline(scene.sys.game);
-  try {
-    return pipeline.installVvfxShaders();
-  } catch (error) {
-    safelyDestroyPipeline(pipeline);
-    throw error;
+  constructor(
+    camera: Phaser.Cameras.Scene2D.Camera,
+    settings: SpatialGradientEffectSettings,
+  ) {
+    super(camera, VVFX_SPATIAL_GRADIENT_FILTER);
+    this.colorA = colorChannels(settings.colorA);
+    this.colorB = colorChannels(settings.colorB);
+    this.alpha = 1 - clamp01(settings.strength);
+    this.fromX = clamp01(settings.fromX);
+    this.fromY = clamp01(settings.fromY);
+    this.toX = clamp01(settings.toX);
+    this.toY = clamp01(settings.toY);
+    this.bands = Math.max(0, Math.min(32, Math.floor(settings.bands)));
   }
 }
 
-function safelyDestroyPipeline(pipeline: { destroy(): unknown } | null) {
-  if (!pipeline) return;
-  try {
-    pipeline.destroy();
-  } catch {
-    // A shader-compilation failure can leave Phaser's partially built pipeline
-    // unable to complete normal destruction. It was never attached to a sprite.
+class VvfxAnimatedShineController extends VvfxFilterController {
+  speed: number;
+  lineWidth: number;
+  gradient: number;
+
+  constructor(
+    camera: Phaser.Cameras.Scene2D.Camera,
+    speed: number,
+    lineWidth: number,
+    gradient: number,
+  ) {
+    super(camera, VVFX_ANIMATED_SHINE_FILTER);
+    this.speed = speed;
+    this.lineWidth = lineWidth;
+    this.gradient = gradient;
   }
 }
 
-function ensureVvfxRenderingFxPipeline(
+function colorChannels(value: string): readonly [number, number, number] {
+  const color = colorNumber(value);
+  return [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
+}
+
+type RenderNodeManager = Phaser.Renderer.WebGL.RenderNodes.RenderNodeManager;
+type BaseFilterShader = Phaser.Renderer.WebGL.RenderNodes.BaseFilterShader;
+type BaseFilterShaderConstructor = new (
+  name: string,
+  manager: RenderNodeManager,
+  fragmentShaderKey?: string,
+  fragmentShaderSource?: string,
+) => BaseFilterShader;
+
+const registeredRenderNodeManagers = new WeakSet<object>();
+const failedRenderNodeManagers = new WeakSet<object>();
+
+function ensureVvfxFilterRenderNodes(
   scene: Phaser.Scene,
   onWarning?: (message: string) => void,
-): VvfxRenderingFxPipeline | null {
-  const manager = phaserPipelineManager(scene);
-  if (!manager) return null;
+): boolean {
+  const manager = phaserRenderNodeManager(scene);
+  if (!manager) return false;
+  if (registeredRenderNodeManagers.has(manager)) return true;
+  if (failedRenderNodeManagers.has(manager)) return false;
 
-  const existing = manager.get(VVFX_RENDERING_PIPELINE);
-  if (isVvfxRenderingFxPipeline(existing)) return existing;
-
-  if (existing || failedRenderingPipelineManagers.has(manager)) {
-    failedRenderingPipelineManagers.add(manager);
-    warnOnce(
-      scene,
-      "rendering-pipeline",
-      RENDERING_PIPELINE_WARNING,
-      onWarning,
-    );
-    return null;
-  }
-
-  let candidate: VvfxRenderingFxPipeline | null = null;
   try {
-    candidate = createVvfxRenderingFxPipeline(scene, manager);
-    manager.add(
-      VVFX_RENDERING_PIPELINE,
-      candidate as unknown as Phaser.Renderer.WebGL.WebGLPipeline,
-    );
-    const registered = manager.get(VVFX_RENDERING_PIPELINE);
-    if (!isVvfxRenderingFxPipeline(registered))
-      throw new Error("Phaser did not register the Vvfx rendering pipeline.");
-    return registered;
+    const wipeNode = manager.getNode("FilterWipe");
+    if (!wipeNode)
+      throw new Error("Phaser's base filter shader is unavailable.");
+    const BaseFilter = Object.getPrototypeOf(Object.getPrototypeOf(wipeNode))
+      .constructor as BaseFilterShaderConstructor;
+
+    class VisualMaskFilterNode extends BaseFilter {
+      constructor(owner: RenderNodeManager) {
+        super(
+          VVFX_VISUAL_MASK_FILTER,
+          owner,
+          undefined,
+          VISUAL_MASK_FRAGMENT_SHADER,
+        );
+      }
+
+      setupTextures(
+        controller: Phaser.Filters.Controller,
+        textures: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper[],
+      ) {
+        const visualMask = controller as unknown as VvfxVisualMaskController;
+        textures[1] = visualMask.maskFrame?.source.glTexture ?? textures[0];
+      }
+
+      setupUniforms(controller: Phaser.Filters.Controller) {
+        const visualMask = controller as unknown as VvfxVisualMaskController;
+        const sourceFrame = visualMask.gameObject?.frame;
+        const maskFrame = visualMask.maskFrame;
+        if (!sourceFrame || !maskFrame) return;
+        const sourceWidth = Math.max(1, Math.abs(sourceFrame.realWidth));
+        const sourceHeight = Math.max(1, Math.abs(sourceFrame.realHeight));
+        const maskWidth = Math.max(1, Math.abs(maskFrame.realWidth));
+        const maskHeight = Math.max(1, Math.abs(maskFrame.realHeight));
+        const targetAspect = sourceWidth / sourceHeight;
+        const maskAspect = maskWidth / maskHeight;
+        let maskRectWidth = targetAspect;
+        let maskRectHeight = 1;
+        if (visualMask.fit === "contain") {
+          if (maskAspect > targetAspect)
+            maskRectHeight = targetAspect / maskAspect;
+          else maskRectWidth = maskAspect;
+        } else if (visualMask.fit === "cover") {
+          if (maskAspect > targetAspect) maskRectWidth = maskAspect;
+          else maskRectHeight = targetAspect / maskAspect;
+        }
+        maskRectWidth *= clamp(visualMask.scale, 0.1, 4);
+        maskRectHeight *= clamp(visualMask.scale, 0.1, 4);
+        const maskSourceWidth = Math.max(1, Math.abs(maskFrame.source.width));
+        const maskSourceHeight = Math.max(1, Math.abs(maskFrame.source.height));
+        const halfTexelU = 0.5 / maskSourceWidth;
+        const halfTexelV = 0.5 / maskSourceHeight;
+        const maskU0 = Math.min(maskFrame.u0, maskFrame.u1) + halfTexelU;
+        const maskV0 = Math.min(maskFrame.v0, maskFrame.v1) + halfTexelV;
+        const maskU1 = Math.max(maskFrame.u0, maskFrame.u1) - halfTexelU;
+        const maskV1 = Math.max(maskFrame.v0, maskFrame.v1) - halfTexelV;
+        const radians = (clamp(visualMask.rotation, -180, 180) * Math.PI) / 180;
+        this.programManager.setUniform("vvfxMaskSampler", 1);
+        this.programManager.setUniform("vvfxMaskUv", [
+          maskU0,
+          maskV0,
+          Math.max(0, maskU1 - maskU0),
+          Math.max(0, maskV1 - maskV0),
+        ]);
+        this.programManager.setUniform("vvfxMaskLogical", [
+          maskFrame.x / maskWidth,
+          maskFrame.y / maskHeight,
+          maskFrame.cutWidth / maskWidth,
+          maskFrame.cutHeight / maskHeight,
+        ]);
+        this.programManager.setUniform("vvfxMaskTransform", [
+          clamp(visualMask.offsetX, -2, 2) * targetAspect,
+          clamp(visualMask.offsetY, -2, 2),
+          maskRectWidth,
+          maskRectHeight,
+        ]);
+        this.programManager.setUniform("vvfxTargetScale", [targetAspect, 1]);
+        this.programManager.setUniform("vvfxMaskRotation", [
+          Math.cos(radians),
+          Math.sin(radians),
+        ]);
+        this.programManager.setUniform("vvfxMaskOptions", [
+          clamp01(visualMask.strength),
+          visualMask.channel === "luminance" ? 1 : 0,
+          visualMask.invert ? 1 : 0,
+          0,
+        ]);
+      }
+    }
+
+    class NoiseErosionFilterNode extends BaseFilter {
+      constructor(owner: RenderNodeManager) {
+        super(
+          VVFX_NOISE_EROSION_FILTER,
+          owner,
+          undefined,
+          NOISE_EROSION_FRAGMENT_SHADER,
+        );
+      }
+
+      setupUniforms(
+        controller: Phaser.Filters.Controller,
+        drawingContext: Phaser.Renderer.WebGL.DrawingContext,
+      ) {
+        const noiseErosion =
+          controller as unknown as VvfxNoiseErosionController;
+        const largestDimension = Math.max(
+          1,
+          Math.abs(drawingContext.width),
+          Math.abs(drawingContext.height),
+        );
+        this.programManager.setUniform("vvfxDissolve", [
+          clamp01(noiseErosion.progress),
+          clamp(noiseErosion.softness, 0.01, 0.5),
+          clamp(noiseErosion.noiseScale, 1, 16),
+          noiseErosion.reverse ? 1 : 0,
+        ]);
+        this.programManager.setUniform("vvfxNoiseOffset", [
+          noiseErosion.noiseOffsetX,
+          noiseErosion.noiseOffsetY,
+        ]);
+        this.programManager.setUniform("vvfxTargetToSprite", [
+          clamp(Math.abs(drawingContext.width) / largestDimension, 0.25, 256),
+          clamp(Math.abs(drawingContext.height) / largestDimension, 0.25, 256),
+        ]);
+      }
+    }
+
+    class SpatialGradientFilterNode extends BaseFilter {
+      constructor(owner: RenderNodeManager) {
+        super(
+          VVFX_SPATIAL_GRADIENT_FILTER,
+          owner,
+          undefined,
+          SPATIAL_GRADIENT_FRAGMENT_SHADER,
+        );
+      }
+
+      setupUniforms(controller: Phaser.Filters.Controller) {
+        const gradient = controller as unknown as VvfxSpatialGradientController;
+        this.programManager.setUniform("positionFrom", [
+          gradient.fromX,
+          gradient.fromY,
+        ]);
+        this.programManager.setUniform("positionTo", [
+          gradient.toX,
+          gradient.toY,
+        ]);
+        this.programManager.setUniform("color1", gradient.colorA);
+        this.programManager.setUniform("color2", gradient.colorB);
+        this.programManager.setUniform("alpha", gradient.alpha);
+        this.programManager.setUniform("size", gradient.bands);
+      }
+    }
+
+    class AnimatedShineFilterNode extends BaseFilter {
+      constructor(owner: RenderNodeManager) {
+        super(
+          VVFX_ANIMATED_SHINE_FILTER,
+          owner,
+          undefined,
+          ANIMATED_SHINE_FRAGMENT_SHADER,
+        );
+      }
+
+      setupUniforms(
+        controller: Phaser.Filters.Controller,
+        drawingContext: Phaser.Renderer.WebGL.DrawingContext,
+      ) {
+        const shine = controller as unknown as VvfxAnimatedShineController;
+        const time = shine.camera?.scene.sys.game.loop.time ?? 0;
+        this.programManager.setUniform("resolution", [
+          drawingContext.width,
+          drawingContext.height,
+        ]);
+        this.programManager.setUniform("time", time / 1_000);
+        this.programManager.setUniform("speed", shine.speed);
+        this.programManager.setUniform("lineWidth", shine.lineWidth);
+        this.programManager.setUniform("gradient", shine.gradient);
+      }
+    }
+
+    const constructors: ReadonlyArray<
+      readonly [string, new (owner: RenderNodeManager) => BaseFilterShader]
+    > = [
+      [VVFX_VISUAL_MASK_FILTER, VisualMaskFilterNode],
+      [VVFX_NOISE_EROSION_FILTER, NoiseErosionFilterNode],
+      [VVFX_SPATIAL_GRADIENT_FILTER, SpatialGradientFilterNode],
+      [VVFX_ANIMATED_SHINE_FILTER, AnimatedShineFilterNode],
+    ];
+    for (const [name] of constructors)
+      if (manager.hasNode(name))
+        throw new Error(`Phaser RenderNode name collision: ${name}`);
+    for (const [name, constructor] of constructors)
+      manager.addNodeConstructor(name, constructor);
+    for (const [name] of constructors)
+      if (!manager.getNode(name))
+        throw new Error(`Phaser did not construct ${name}.`);
+    registeredRenderNodeManagers.add(manager);
+    return true;
   } catch {
-    failedRenderingPipelineManagers.add(manager);
-    if (
-      candidate &&
-      (manager.get(VVFX_RENDERING_PIPELINE) as unknown) === candidate
-    )
-      manager.remove(VVFX_RENDERING_PIPELINE);
-    safelyDestroyPipeline(candidate);
-    warnOnce(
-      scene,
-      "rendering-pipeline",
-      RENDERING_PIPELINE_WARNING,
-      onWarning,
-    );
-    return null;
+    failedRenderNodeManagers.add(manager);
+    warnOnce(scene, "rendering-filters", RENDERING_FILTER_WARNING, onWarning);
+    return false;
   }
 }
 
@@ -1269,14 +1315,15 @@ interface PhaserRenderingEffectHandles {
   signature: string;
   supported: boolean;
   applied: boolean;
+  filterList: Phaser.GameObjects.Components.FilterList;
+  filters: Phaser.Filters.Controller[];
   visualMask?: VvfxVisualMaskController;
-  colorMatrix?: Phaser.FX.ColorMatrix;
-  shine?: Phaser.FX.Shine;
-  barrel?: Phaser.FX.Barrel;
-  displacement?: Phaser.FX.Displacement;
-  directionalDissolve?: Phaser.FX.Wipe;
+  colorMatrix?: Phaser.Display.ColorMatrix;
+  shine?: VvfxAnimatedShineController;
+  barrel?: Phaser.Filters.Barrel;
+  displacement?: Phaser.Filters.Displacement;
+  directionalDissolve?: Phaser.Filters.Wipe;
   noiseErosion?: VvfxNoiseErosionController;
-  renderingPipeline?: VvfxRenderingFxPipeline;
 }
 
 const handlesBySprite = new WeakMap<
@@ -1300,13 +1347,20 @@ export interface PhaserRenderingEffectsResult {
 export function clearPhaserRenderingEffects(
   sprite: Phaser.GameObjects.Image,
 ): void {
-  if (!handlesBySprite.has(sprite)) return;
-  sprite.preFX?.disable(true);
+  const handles = handlesBySprite.get(sprite);
+  if (!handles) return;
+  for (const filter of handles.filters) {
+    try {
+      handles.filterList.remove(filter, true);
+    } catch {
+      filter.destroy();
+    }
+  }
   handlesBySprite.delete(sprite);
 }
 
 /**
- * Synchronizes Phaser Pre FX without stacking duplicate controllers. Call it
+ * Synchronizes Phaser 4 Filters without stacking duplicate controllers. Call it
  * after setting the sprite's frame, tint, transform, and alpha.
  */
 export function syncPhaserRenderingEffects({
@@ -1329,7 +1383,7 @@ export function syncPhaserRenderingEffects({
     return { supported: true, applied: false, passCost };
   }
 
-  if (!sceneSupportsPhaserPreFx(scene) || !sprite.preFX) {
+  if (!sceneSupportsPhaserFilters(scene)) {
     clearPhaserRenderingEffects(sprite);
     warnOnce(
       scene,
@@ -1337,6 +1391,13 @@ export function syncPhaserRenderingEffects({
       UNSUPPORTED_RENDERING_EFFECTS_WARNING,
       onWarning,
     );
+    return { supported: false, applied: false, passCost };
+  }
+
+  sprite.enableFilters();
+  const filterList = sprite.filters?.internal ?? null;
+  if (!filterList) {
+    clearPhaserRenderingEffects(sprite);
     return { supported: false, applied: false, passCost };
   }
 
@@ -1362,66 +1423,76 @@ export function syncPhaserRenderingEffects({
   const signature = renderingEffectSignature(settings, visualMaskFrame);
   let handles = handlesBySprite.get(sprite);
   if (!handles || handles.signature !== signature) {
-    if (handles) sprite.preFX.disable(true);
-    sprite.preFX.setPadding(renderingEffectPadding(settings));
-    handles = { signature, supported: true, applied: false };
+    if (handles) clearPhaserRenderingEffects(sprite);
+    handles = {
+      signature,
+      supported: true,
+      applied: false,
+      filterList,
+      filters: [],
+    };
+
+    const track = <T extends Phaser.Filters.Controller>(filter: T): T => {
+      handles?.filters.push(filter);
+      return filter;
+    };
+    const addCustom = <T extends VvfxFilterController>(filter: T): T => {
+      filterList.add(filter as unknown as Phaser.Filters.Controller);
+      return track(filter as unknown as Phaser.Filters.Controller) as T;
+    };
 
     const dissolve = settings.directionalDissolve;
     const needsNoiseErosion = dissolve.enabled && dissolve.pattern === "noise";
-    const needsRenderingPipeline =
-      Boolean(visualMaskFrame) || needsNoiseErosion;
-    const renderingPipeline = needsRenderingPipeline
-      ? ensureVvfxRenderingFxPipeline(scene, onWarning)
-      : null;
-    if (needsRenderingPipeline && !renderingPipeline) handles.supported = false;
+    const needsCustomFilters =
+      Boolean(visualMaskFrame) ||
+      needsNoiseErosion ||
+      settings.spatialGradient.enabled ||
+      settings.animatedShine.enabled;
+    const customFiltersReady = needsCustomFilters
+      ? ensureVvfxFilterRenderNodes(scene, onWarning)
+      : true;
+    if (!customFiltersReady) handles.supported = false;
     if (visualMaskSettings.enabled && !visualMaskFrame)
       handles.supported = false;
 
-    if (visualMaskFrame && renderingPipeline) {
-      const visualMask = new VvfxVisualMaskController(
-        renderingPipeline.vvfxVisualMaskType,
-        sprite,
-        visualMaskFrame,
-        visualMaskSettings,
+    if (visualMaskFrame && customFiltersReady) {
+      handles.visualMask = addCustom(
+        new VvfxVisualMaskController(
+          filterList.camera,
+          sprite,
+          visualMaskFrame,
+          visualMaskSettings,
+        ),
       );
-      sprite.preFX.add(visualMask as unknown as Phaser.FX.Controller);
-      handles.visualMask = visualMask;
-      handles.renderingPipeline = renderingPipeline;
       handles.applied = true;
     }
 
     if (settings.brightnessExposure.enabled) {
-      handles.colorMatrix = sprite.preFX.addColorMatrix();
+      const colorMatrixFilter = track(filterList.addColorMatrix());
+      handles.colorMatrix = colorMatrixFilter.colorMatrix;
       handles.colorMatrix.brightness(controllers.brightnessMultiplier);
       handles.applied = true;
     }
 
     const gradient = settings.spatialGradient;
-    if (gradient.enabled) {
-      sprite.preFX.addGradient(
-        colorNumber(gradient.colorA),
-        colorNumber(gradient.colorB),
-        1 - clamp01(gradient.strength),
-        clamp01(gradient.fromX),
-        clamp01(gradient.fromY),
-        clamp01(gradient.toX),
-        clamp01(gradient.toY),
-        Math.max(0, Math.min(32, Math.floor(gradient.bands))),
-      );
+    if (gradient.enabled && customFiltersReady) {
+      addCustom(new VvfxSpatialGradientController(filterList.camera, gradient));
       handles.applied = true;
     }
 
     const warp = settings.spriteWarp;
     if (warp.enabled && warp.mode === "barrel") {
-      handles.barrel = sprite.preFX.addBarrel(controllers.barrelAmount);
+      handles.barrel = track(filterList.addBarrel(controllers.barrelAmount));
       handles.applied = true;
     } else if (warp.enabled) {
       const noiseTexture = ensureRenderingNoiseTexture(scene);
       if (noiseTexture) {
-        handles.displacement = sprite.preFX.addDisplacement(
-          noiseTexture,
-          controllers.displacementX,
-          controllers.displacementY,
+        handles.displacement = track(
+          filterList.addDisplacement(
+            noiseTexture,
+            controllers.displacementX,
+            controllers.displacementY,
+          ),
         );
         handles.applied = true;
       } else {
@@ -1435,63 +1506,63 @@ export function syncPhaserRenderingEffects({
     }
 
     if (dissolve.enabled && dissolve.pattern === "directional") {
-      handles.directionalDissolve = sprite.preFX.addWipe(
-        clamp(dissolve.softness, 0.01, 0.5),
-        dissolve.reverse ? 1 : 0,
-        dissolve.axis === "vertical" ? 1 : 0,
+      handles.directionalDissolve = track(
+        filterList.addWipe(
+          clamp(dissolve.softness, 0.01, 0.5),
+          dissolve.reverse ? 1 : 0,
+          dissolve.axis === "vertical" ? 1 : 0,
+          0,
+        ),
       );
       handles.applied = true;
-    } else if (needsNoiseErosion) {
-      if (renderingPipeline) {
-        const noiseErosion = new VvfxNoiseErosionController(
-          renderingPipeline.vvfxNoiseErosionType,
-          sprite,
-        );
-        sprite.preFX.add(noiseErosion as unknown as Phaser.FX.Controller);
-        handles.noiseErosion = noiseErosion;
-        handles.renderingPipeline = renderingPipeline;
-        handles.applied = true;
-      }
+    } else if (needsNoiseErosion && customFiltersReady) {
+      handles.noiseErosion = addCustom(
+        new VvfxNoiseErosionController(filterList.camera, sprite),
+      );
+      handles.applied = true;
     }
 
     const shine = settings.animatedShine;
-    if (shine.enabled) {
-      handles.shine = sprite.preFX.addShine(
-        controllers.shineSpeed,
-        controllers.shineLineWidth,
-        controllers.shineGradient,
-        false,
+    if (shine.enabled && customFiltersReady) {
+      handles.shine = addCustom(
+        new VvfxAnimatedShineController(
+          filterList.camera,
+          controllers.shineSpeed,
+          controllers.shineLineWidth,
+          controllers.shineGradient,
+        ),
       );
       handles.applied = true;
     }
 
     const blur = settings.blur;
     if (blur.enabled) {
-      sprite.preFX.addBlur(
-        Math.max(0, Math.min(2, Math.floor(blur.quality))) as BlurQuality,
-        clamp(blur.offsetX, -12, 12),
-        clamp(blur.offsetY, -12, 12),
-        clamp(blur.strength, 0, 4),
-        colorNumber(blur.color),
-        Math.max(1, Math.min(4, Math.floor(blur.steps))),
+      track(
+        filterList.addBlur(
+          Math.max(0, Math.min(2, Math.floor(blur.quality))) as BlurQuality,
+          clamp(blur.offsetX, -12, 12),
+          clamp(blur.offsetY, -12, 12),
+          clamp(blur.strength, 0, 4),
+          colorNumber(blur.color),
+          Math.max(1, Math.min(4, Math.floor(blur.steps))),
+        ),
       );
       handles.applied = true;
     }
 
     const glow = settings.outerGlow;
     if (glow.enabled) {
-      sprite.preFX.addGlow(
-        colorNumber(glow.color),
-        clamp(glow.outerStrength, 0, 8),
-        clamp(glow.innerStrength, 0, 8),
-        false,
+      track(
+        filterList.addGlow(
+          colorNumber(glow.color),
+          clamp(glow.outerStrength, 0, 8),
+          clamp(glow.innerStrength, 0, 8),
+          1,
+          false,
+        ),
       );
       handles.applied = true;
     }
-    if (handles.renderingPipeline)
-      sprite.setPipeline(
-        handles.renderingPipeline as unknown as Phaser.Renderer.WebGL.WebGLPipeline,
-      );
     handlesBySprite.set(sprite, handles);
   }
 
@@ -1531,14 +1602,6 @@ export function syncPhaserRenderingEffects({
     handles.noiseErosion.noiseOffsetX = controllers.dissolveNoiseOffsetX;
     handles.noiseErosion.noiseOffsetY = controllers.dissolveNoiseOffsetY;
   }
-  if (
-    handles.renderingPipeline &&
-    (sprite.pipeline as unknown) !== handles.renderingPipeline
-  )
-    sprite.setPipeline(
-      handles.renderingPipeline as unknown as Phaser.Renderer.WebGL.WebGLPipeline,
-    );
-
   return {
     supported: handles.supported,
     applied: handles.applied,

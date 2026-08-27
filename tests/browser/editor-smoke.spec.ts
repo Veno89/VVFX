@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const responsiveViewports = [
   { name: "small desktop", width: 1024, height: 720 },
@@ -45,6 +45,12 @@ async function openPerformanceInspector(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Effect performance" });
   await expect(dialog).toBeVisible();
   return dialog;
+}
+
+async function closePerformanceInspector(page: Page, dialog: Locator) {
+  await dialog.getByRole("button", { name: "Reset measured peak" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 }
 
 async function numericMetric(page: Page, testId: string) {
@@ -294,7 +300,7 @@ test("experimental effects run in WebGL and repeated restart keeps one canvas", 
   await expect(
     performanceDialog.getByTestId("performance-active-modifiers"),
   ).toContainText("Sprite warp");
-  await page.keyboard.press("Escape");
+  await closePerformanceInspector(page, performanceDialog);
 
   await addPreset(page, "Masked energy ring");
   const maskedPerformanceDialog = await openPerformanceInspector(page);
@@ -304,14 +310,14 @@ test("experimental effects run in WebGL and repeated restart keeps one canvas", 
   await expect(
     maskedPerformanceDialog.getByTestId("performance-active-modifiers"),
   ).toContainText("Spatial gradient");
-  await page.keyboard.press("Escape");
+  await closePerformanceInspector(page, maskedPerformanceDialog);
 
   await addPreset(page, "Dissolving spirit");
   const erosionPerformanceDialog = await openPerformanceInspector(page);
   await expect(
     erosionPerformanceDialog.getByTestId("performance-active-modifiers"),
   ).toContainText("Dissolve / erosion");
-  await page.keyboard.press("Escape");
+  await closePerformanceInspector(page, erosionPerformanceDialog);
 
   for (let restart = 0; restart < 10; restart += 1)
     await page.getByRole("button", { name: "Restart", exact: true }).click();

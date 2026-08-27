@@ -12,7 +12,7 @@ import {
   RotateCcw,
   SlidersHorizontal,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { PhaserPreview } from "../../preview/PhaserPreview";
 import type {
   PreviewPerformanceSample,
@@ -33,6 +33,7 @@ const VIEW_DIALOG_ID = "preview-appearance-dialog";
 const initialPerformanceSample = (): PreviewPerformanceSample => ({
   liveSprites: 0,
   baseSprites: 0,
+  trailSprites: 0,
   newSpritesPerSecond: 0,
   requestedCopies: 1,
   effectiveCopies: 1,
@@ -52,6 +53,7 @@ export function PreviewPanel({
   onMovePathPoint,
   onPlayToggle,
   onRestart,
+  restartRevision = 0,
   onSpeedChange,
   captureMode = false,
   onCanvasReady,
@@ -80,10 +82,13 @@ export function PreviewPanel({
   ) => void;
   onPlayToggle: () => void;
   onRestart: () => void;
+  restartRevision?: number;
   onSpeedChange: (speed: number) => void;
   captureMode?: boolean;
   onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
 }) {
+  const backgroundFieldId = useId();
+  const seedFieldId = useId();
   const [viewOpen, setViewOpen] = useState(false);
   const [performanceOpen, setPerformanceOpen] = useState(false);
   const [stressCopies, setStressCopies] = useState<StressCopyCount>(1);
@@ -91,15 +96,23 @@ export function PreviewPanel({
     useState<PreviewPerformanceSample>(initialPerformanceSample);
   const [peakSprites, setPeakSprites] = useState(0);
   const backgroundSelectRef = useRef<HTMLSelectElement>(null);
+  const performanceTriggerRef = useRef<HTMLButtonElement>(null);
+  const viewTriggerRef = useRef<HTMLButtonElement>(null);
   const performanceDialogRef = useFocusRegion<HTMLElement>({
     active: performanceOpen,
     trapFocus: false,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: performanceTriggerRef,
     onEscape: () => setPerformanceOpen(false),
   });
   const viewDialogRef = useFocusRegion<HTMLDivElement>({
     active: viewOpen,
     initialFocusRef: backgroundSelectRef,
     trapFocus: false,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: viewTriggerRef,
     onEscape: () => setViewOpen(false),
   });
 
@@ -121,6 +134,7 @@ export function PreviewPanel({
         <div className="preview-tools">
           <div className="menu-wrap">
             <button
+              ref={performanceTriggerRef}
               type="button"
               className={performanceOpen ? "is-active" : ""}
               onClick={() => {
@@ -138,6 +152,7 @@ export function PreviewPanel({
             {performanceOpen && (
               <PerformanceInspector
                 project={project}
+                selectedLayerId={selectedId}
                 sample={performanceSample}
                 peakSprites={peakSprites}
                 requestedCopies={stressCopies}
@@ -197,6 +212,7 @@ export function PreviewPanel({
           </button>
           <div className="menu-wrap">
             <button
+              ref={viewTriggerRef}
               type="button"
               className={viewOpen ? "is-active" : ""}
               onClick={() => {
@@ -224,10 +240,16 @@ export function PreviewPanel({
                   Background, grid, and zoom only help you inspect the effect.
                   The background never becomes part of the exported VFX.
                 </p>
-                <label>
-                  Background{" "}
-                  <HelpTip text="Bright effects can look completely different on light and dark backgrounds. Check both before you finish." />
+                <div className="view-menu-field">
+                  <span className="view-menu-field__label">
+                    <label htmlFor={backgroundFieldId}>Background</label>{" "}
+                    <HelpTip
+                      label="Background"
+                      text="Bright effects can look completely different on light and dark backgrounds. Check both before you finish."
+                    />
+                  </span>
                   <select
+                    id={backgroundFieldId}
                     ref={backgroundSelectRef}
                     value={project.preview.background}
                     onChange={(event) =>
@@ -244,7 +266,7 @@ export function PreviewPanel({
                     <option value="white">White</option>
                     <option value="custom">Custom color</option>
                   </select>
-                </label>
+                </div>
                 {project.preview.background === "custom" && (
                   <label>
                     Custom color{" "}
@@ -258,14 +280,17 @@ export function PreviewPanel({
                   </label>
                 )}
                 <span className="menu-label">Effect variation — exported</span>
-                <label className="seed-field">
-                  Random seed{" "}
-                  <HelpTip
-                    text="A seed lets you replay the exact same random version while adjusting settings."
-                    dismissOnLeave
-                  />
+                <div className="seed-field view-menu-field">
+                  <span className="view-menu-field__label">
+                    <label htmlFor={seedFieldId}>Random seed</label>{" "}
+                    <HelpTip
+                      label="Random seed"
+                      text="A seed lets you replay the exact same random version while adjusting settings."
+                    />
+                  </span>
                   <span>
                     <input
+                      id={seedFieldId}
                       type="number"
                       value={project.preview.randomSeed}
                       onChange={(event) =>
@@ -293,7 +318,7 @@ export function PreviewPanel({
                       <Dices size={14} /> New version
                     </button>
                   </span>
-                </label>
+                </div>
               </div>
             )}
           </div>
@@ -301,6 +326,7 @@ export function PreviewPanel({
       </div>
       <div className="preview-canvas-shell">
         <PhaserPreview
+          key={restartRevision}
           project={project}
           time={time}
           selectedId={selectedId}

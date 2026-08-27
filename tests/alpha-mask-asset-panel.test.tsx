@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssetPanel } from "../src/editor/components/AssetPanel";
 import type { VfxAsset } from "../src/vfx/types";
+import { validPngDataUrl } from "./fixtures/portableImages";
 
 afterEach(cleanup);
 
@@ -9,7 +10,7 @@ const legacyAsset: VfxAsset = {
   id: "legacy-upload",
   name: "Legacy spark",
   mimeType: "image/png",
-  dataUrl: "data:image/png;base64,AAAA",
+  dataUrl: validPngDataUrl(128, 64),
   width: 128,
   height: 64,
   spriteSheet: null,
@@ -111,5 +112,56 @@ describe("asset spawn-silhouette preparation guidance", () => {
       screen.getByText("Sprite sheets cannot be spawn silhouettes.")
         .parentElement,
     ).toHaveTextContent("Upload a separate still PNG or WebP");
+  });
+
+  it("keeps expanded asset guidance inside only the selected card", () => {
+    const first = { ...legacyAsset, id: "first", name: "First asset" };
+    const selected = {
+      ...legacyAsset,
+      id: "selected",
+      name: "Selected asset with a deliberately long descriptive name",
+    };
+    const last = { ...legacyAsset, id: "last", name: "Last asset" };
+
+    render(
+      <AssetPanel
+        assets={[first, selected, last]}
+        selectedId={selected.id}
+        onSelect={vi.fn()}
+        onUpload={vi.fn()}
+        onRename={vi.fn()}
+        onChangeAsset={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    const firstCard = screen
+      .getByRole("button", { name: "Select First asset" })
+      .closest(".asset-card");
+    const selectedCard = screen
+      .getByRole("button", {
+        name: "Select Selected asset with a deliberately long descriptive name",
+      })
+      .closest(".asset-card");
+    const lastCard = screen
+      .getByRole("button", { name: "Select Last asset" })
+      .closest(".asset-card");
+    const details = selectedCard?.querySelector(".asset-card__details");
+
+    expect(firstCard).not.toBeNull();
+    expect(selectedCard).not.toBeNull();
+    expect(lastCard).not.toBeNull();
+    expect(details).not.toBeNull();
+    expect(details).toContainElement(
+      screen.getByRole("region", { name: "Visual mask" }),
+    );
+    expect(details).toContainElement(
+      screen.getByRole("region", { name: "Spawn silhouette" }),
+    );
+    expect(firstCard?.querySelector(".asset-card__details")).toBeNull();
+    expect(lastCard?.querySelector(".asset-card__details")).toBeNull();
+    expect(selectedCard?.nextElementSibling).toBe(lastCard);
   });
 });

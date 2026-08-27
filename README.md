@@ -96,7 +96,12 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   keyboard nudging, and multi-layer move/align/stagger choreography.
 - Reset buttons that restore slider defaults.
 - Authoring-only undo/redo that ignores zoom, playback, selection, and other
-  workspace choices.
+  workspace choices; focused field and slider edits collapse into one clear
+  undo step.
+- Dependency-aware image removal that previews every affected layer and
+  restores the image plus repaired references with one Undo.
+- Responsive project actions, keyboard-routed dialogs and popups, modal
+  background isolation, and typed live status notices.
 - IndexedDB project saves, Save As, duplication, separate recovery autosaves,
   `.vvfx` import/export, and reusable local layer/group/effect templates and
   portable sharing. Export one raw `.vvfx-template` or back up the whole local
@@ -194,13 +199,26 @@ npm run dev           # start the local editor
 npm run typecheck     # check TypeScript without emitting files
 npm run test          # run Vitest once
 npm run test:watch    # rerun tests while editing
+npm run test:browser  # build and run the Chromium workflow smoke suite
+npm run test:runtime-package # install/type-check/execute the packed runtime
 npm run lint          # lint TypeScript and React
 npm run format        # format source, tests, and docs
 npm run format:check  # check formatting without changing files
 npm run build         # create an editor production build
-npm run build:runtime # bundle the local Phaser runtime package
+npm run build:runtime # bundle runtime JavaScript and generate declarations
 npm run build:all     # build both runtime and editor
+npm run verify        # run the local non-browser quality and package gates
+npm run verify:release # run the complete release gate, including Chromium
 ```
+
+`npm run test:browser` uses a temporary production server on port 4173 and
+shuts it down afterward. Install its browser once with
+`npx playwright install chromium`. Set `VVFX_BROWSER_BASE_URL` only when you
+deliberately want Playwright to test an already-running server instead.
+
+The runtime declarations under `packages/phaser-runtime/types` are generated
+from source. Do not edit them by hand. `npm run check:runtime-types` regenerates
+them and fails when a committed declaration is stale.
 
 ## Project structure
 
@@ -222,6 +240,9 @@ docs/                    Architecture, format, capability, guide, and roadmap
 - [Architecture](docs/architecture.md)
 - [Project and runtime formats](docs/vfx-format.md)
 - [Open roadmap](docs/roadmap.md)
+- [Release process](docs/release.md)
+- [Changelog](CHANGELOG.md)
+- [MIT license](LICENSE)
 
 ## Current limitations
 
@@ -267,7 +288,8 @@ docs/                    Architecture, format, capability, guide, and roadmap
   profile. Export `.vvfx` projects for full-project backups, one
   `.vvfx-template` for a reusable effect, or `.vvfx-templates` to back up the
   whole local template library.
-- The editor is desktop-first and requires a window at least 1120 pixels wide.
+- The editor is desktop-first, while responsive project actions and stacked
+  workspace panels keep the complete workflow reachable at narrower widths.
 
 The planned implementation phases are complete. Deliberately deferred research
 items—such as true ribbon geometry, scene-behind refraction, animated masks, and

@@ -20,13 +20,16 @@ export function applySpriteSheetFrames(
   replace = false,
 ) {
   const sheet: SpriteSheetSettings | null = asset.spriteSheet ?? null;
-  if (!sheet) return;
-  if (!replace && texture.has("0")) return;
-
   if (replace) {
     for (const name of Object.keys(texture.frames))
       if (/^\d+$/.test(name)) texture.remove(name);
   }
+
+  // Disabling sprite-sheet treatment must remove frames created by the old
+  // configuration. Returning before the replacement pass leaves those Phaser
+  // Frame objects alive even though evaluation has gone back to __BASE.
+  if (!sheet) return;
+  if (!replace && texture.has("0")) return;
 
   const columns = Math.max(
     1,

@@ -9,6 +9,9 @@ import {
   evaluateInstanceSpatialState,
 } from "./instanceEvaluation";
 import { lerp } from "./interpolation";
+import { isSupportedVfxNumber } from "./inputLimits";
+import { canonicalizeProjectLayerCapabilities } from "./layerLifecycle";
+import { finiteLayerCycleCount } from "./limits";
 import { resolveProjectGroups } from "./groups";
 import { randomSigned } from "./random";
 import { evaluateRenderingEffects } from "./renderingEffects";
@@ -21,6 +24,47 @@ import type {
 } from "./types";
 
 export const MAX_EFFECT_INSTANCES = 500;
+
+export interface EvaluationDiagnostics {
+  instanceEvaluations: number;
+  budgetExhausted: boolean;
+}
+
+function containsOnlySupportedNumbers(
+  value: unknown,
+  visited = new Set<object>(),
+): boolean {
+  if (typeof value === "number") return isSupportedVfxNumber(value);
+  if (value === null || typeof value !== "object") return true;
+  if (visited.has(value)) return true;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1)
+      if (!containsOnlySupportedNumbers(value[index], visited)) return false;
+    return true;
+  }
+  for (const child of Object.values(value))
+    if (!containsOnlySupportedNumbers(child, visited)) return false;
+  return true;
+}
+
+function isSafeEvaluatedInstance(instance: EvaluatedInstance): boolean {
+  return (
+    [
+      instance.x,
+      instance.y,
+      instance.scaleX,
+      instance.scaleY,
+      instance.opacity,
+      instance.rotation,
+      instance.tintStrength,
+    ].every(isSupportedVfxNumber) &&
+    (instance.frame === null || isSupportedVfxNumber(instance.frame)) &&
+    (instance.trailIndex === null ||
+      isSupportedVfxNumber(instance.trailIndex)) &&
+    containsOnlySupportedNumbers(instance.effects)
+  );
+}
 
 function evaluateOne(
   project: VfxProject,
@@ -90,7 +134,13 @@ function evaluateOne(
   let y = spatial.y;
   let rotation = spatial.rotation;
   if (layer.type === "beam") {
-    const endpoints = beamEndpoints[layer.id] ?? {
+    const suppliedEndpoints = Object.prototype.hasOwnProperty.call(
+      beamEndpoints,
+      layer.id,
+    )
+      ? beamEndpoints[layer.id]
+      : undefined;
+    const endpoints = suppliedEndpoints ?? {
       startX: spatial.x,
       startY: spatial.y,
       endX: spatial.x + layer.beam.endX,
@@ -159,19 +209,21 @@ function evaluateOne(
   };
 }
 
-function repeatingSpawnTimes(
+function* repeatingSpawnTimes(
   layer: VfxLayer,
   activation: LayerActivation,
   time: number,
-): number[] {
+  maximumTimes: number,
+): Generator<number> {
+  if (maximumTimes <= 0) return;
   const cycleDuration = Math.max(50, layer.timing.duration);
   const local = time - activation.start;
-  if (local < 0) return [];
+  if (local < 0) return;
   const currentCycle = Math.floor(local / cycleDuration);
   const allowedCycles =
     layer.timing.repeatForever || layer.timing.loop
       ? Infinity
-      : layer.timing.repeat + 1;
+      : finiteLayerCycleCount(layer.timing.repeat);
   const firstCycle = Math.max(
     0,
     currentCycle -
@@ -180,14 +232,15 @@ function repeatingSpawnTimes(
           cycleDuration,
       ),
   );
-  const times: number[] = [];
+  let yielded = 0;
   for (
     let cycle = firstCycle;
-    cycle <= currentCycle && cycle < allowedCycles;
+    cycle <= currentCycle && cycle < allowedCycles && yielded < maximumTimes;
     cycle += 1
-  )
-    times.push(activation.start + cycle * cycleDuration);
-  return times;
+  ) {
+    yield activation.start + cycle * cycleDuration;
+    yielded += 1;
+  }
 }
 
 function emitterSpawnTimes(
@@ -214,24 +267,36 @@ export function evaluateProject(
   time: number,
   selectedId: string | null,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>> = {},
+  diagnostics?: EvaluationDiagnostics,
 ): EvaluatedInstance[] {
-  const resolvedProject = resolveProjectGroups(project);
+  const resolvedProject = canonicalizeProjectLayerCapabilities(
+    resolveProjectGroups(project),
+  );
   const schedule = compileLayerActivations(resolvedProject, time);
   const originals: EvaluatedInstance[] = [];
   const trails: EvaluatedInstance[] = [];
+  const evaluationBudget = { remaining: MAX_EFFECT_INSTANCES };
+  if (diagnostics) {
+    diagnostics.instanceEvaluations = 0;
+    diagnostics.budgetExhausted = false;
+  }
   const soloIds = new Set(
     resolvedProject.layers
       .filter((layer) => layer.solo)
       .map((layer) => layer.id),
   );
 
-  for (const layer of resolvedProject.layers) {
-    if (
-      !layer.enabled ||
-      !layer.visible ||
-      (soloIds.size > 0 && !soloIds.has(layer.id))
-    )
-      continue;
+  const visibleLayers = resolvedProject.layers.filter(
+    (layer) =>
+      layer.enabled &&
+      layer.visible &&
+      (soloIds.size === 0 || soloIds.has(layer.id)),
+  );
+
+  // Authored instances always get first claim on the shared work budget.
+  for (const layer of visibleLayers) {
+    const capacity = MAX_EFFECT_INSTANCES - originals.length;
+    if (capacity <= 0 || evaluationBudget.remaining <= 0) break;
     const current = evaluateLayer(
       resolvedProject,
       layer,
@@ -240,60 +305,77 @@ export function evaluateProject(
       schedule,
       time,
       beamEndpoints,
+      evaluationBudget,
+      capacity,
     );
-    originals.push(...current);
+    for (const instance of current) originals.push(instance);
+  }
 
-    if (layer.trail.enabled) {
-      const count = Math.max(1, Math.min(16, Math.floor(layer.trail.count)));
-      const spacing = Math.max(10, layer.trail.spacing);
-      const lifetime = Math.max(50, layer.trail.lifetime);
-      // Newest samples are the most useful. Stop producing candidates once the
-      // shared effect budget is full instead of allocating discarded trails.
-      for (
-        let trailIndex = 1;
-        trailIndex <= count && trails.length < MAX_EFFECT_INSTANCES;
-        trailIndex += 1
-      ) {
-        const age = trailIndex * spacing;
-        if (age > lifetime || time - age < 0) continue;
-        const opacityMultiplier =
-          layer.trail.opacity * Math.max(0, 1 - age / lifetime);
-        const scaleMultiplier = Math.max(
-          0,
-          1 - trailIndex * layer.trail.scaleFalloff,
-        );
-        for (const instance of evaluateLayer(
-          resolvedProject,
-          layer,
-          time - age,
-          null,
-          schedule,
-          time,
-          beamEndpoints,
-        )) {
-          if (trails.length >= MAX_EFFECT_INSTANCES) break;
-          trails.push({
-            ...instance,
-            key: `${instance.key}:trail:${trailIndex}`,
-            scaleX: instance.scaleX * scaleMultiplier,
-            scaleY: instance.scaleY * scaleMultiplier,
-            opacity: instance.opacity * opacityMultiplier,
-            selected: false,
-            trailIndex,
-          });
+  // Renderer-only trail samples use only budget left after every original.
+  if (evaluationBudget.remaining > 0 && originals.length < MAX_EFFECT_INSTANCES)
+    for (const layer of visibleLayers) {
+      if (!layer.trail.enabled) continue;
+      if (
+        evaluationBudget.remaining <= 0 ||
+        originals.length + trails.length >= MAX_EFFECT_INSTANCES
+      )
+        break;
+      if (layer.trail.enabled) {
+        const count = Math.max(1, Math.min(16, Math.floor(layer.trail.count)));
+        const spacing = Math.max(10, layer.trail.spacing);
+        const lifetime = Math.max(50, layer.trail.lifetime);
+        for (
+          let trailIndex = 1;
+          trailIndex <= count &&
+          evaluationBudget.remaining > 0 &&
+          originals.length + trails.length < MAX_EFFECT_INSTANCES;
+          trailIndex += 1
+        ) {
+          const age = trailIndex * spacing;
+          if (age > lifetime || time - age < 0) continue;
+          const opacityMultiplier =
+            layer.trail.opacity * Math.max(0, 1 - age / lifetime);
+          const scaleMultiplier = Math.max(
+            0,
+            1 - trailIndex * layer.trail.scaleFalloff,
+          );
+          const capacity =
+            MAX_EFFECT_INSTANCES - originals.length - trails.length;
+          for (const instance of evaluateLayer(
+            resolvedProject,
+            layer,
+            time - age,
+            null,
+            schedule,
+            time,
+            beamEndpoints,
+            evaluationBudget,
+            capacity,
+          ))
+            trails.push({
+              ...instance,
+              key: `${instance.key}:trail:${trailIndex}`,
+              scaleX: instance.scaleX * scaleMultiplier,
+              scaleY: instance.scaleY * scaleMultiplier,
+              opacity: instance.opacity * opacityMultiplier,
+              selected: false,
+              trailIndex,
+            });
         }
       }
     }
-
-    if (originals.length >= MAX_EFFECT_INSTANCES) break;
+  const visibleTrails = trails.sort(
+    (left, right) => (right.trailIndex ?? 0) - (left.trailIndex ?? 0),
+  );
+  if (diagnostics) {
+    diagnostics.instanceEvaluations =
+      MAX_EFFECT_INSTANCES - evaluationBudget.remaining;
+    diagnostics.budgetExhausted = evaluationBudget.remaining === 0;
   }
-
-  const visibleOriginals = originals.slice(0, MAX_EFFECT_INSTANCES);
-  const trailCapacity = MAX_EFFECT_INSTANCES - visibleOriginals.length;
-  const visibleTrails = trails
-    .slice(0, trailCapacity)
-    .sort((left, right) => (right.trailIndex ?? 0) - (left.trailIndex ?? 0));
-  return [...visibleTrails, ...visibleOriginals];
+  // Never hand a renderer a derived NaN/Infinity or an authored value outside
+  // the shared numeric envelope, even when evaluation was called directly on
+  // an unvalidated in-memory project.
+  return [...visibleTrails, ...originals].filter(isSafeEvaluatedInstance);
 }
 
 function evaluateLayer(
@@ -304,42 +386,69 @@ function evaluateLayer(
   schedule: LayerActivationSchedule,
   renderTime: number,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
+  evaluationBudget: { remaining: number },
+  maximumInstances: number,
 ): EvaluatedInstance[] {
   const instances: EvaluatedInstance[] = [];
   const activations = schedule.byLayer.get(layer.id) ?? [];
+  const instanceLimit = Math.max(
+    0,
+    Math.min(MAX_EFFECT_INSTANCES, Math.floor(maximumInstances)),
+  );
+  const hasCapacity = () =>
+    instances.length < instanceLimit && evaluationBudget.remaining > 0;
+  const evaluate = (
+    activation: LayerActivation,
+    instanceIndex: number,
+    copyIndex: number,
+    spawnTime: number,
+  ) => {
+    if (!hasCapacity()) return null;
+    evaluationBudget.remaining -= 1;
+    return evaluateOne(
+      project,
+      layer,
+      activation,
+      schedule,
+      selectedId,
+      instanceIndex,
+      copyIndex,
+      spawnTime,
+      time,
+      beamEndpoints,
+    );
+  };
+  if (instanceLimit === 0 || evaluationBudget.remaining <= 0) return instances;
 
   if (layer.type === "static") {
     for (const activation of activations) {
+      if (!hasCapacity()) break;
       if (
         activation.cancelledAt !== null &&
         activation.cancelledAt <= renderTime
       )
         continue;
-      const value = evaluateOne(
-        project,
-        layer,
-        activation,
-        schedule,
-        selectedId,
-        0,
-        0,
-        activation.start,
-        time,
-        beamEndpoints,
-      );
+      const value = evaluate(activation, 0, 0, activation.start);
       if (value) instances.push(value);
     }
     return instances;
   }
 
   if (layer.type === "animated" || layer.type === "beam") {
-    for (const activation of activations) {
+    activationLoop: for (const activation of activations) {
+      if (!hasCapacity()) break;
       if (
         activation.cancelledAt !== null &&
         activation.cancelledAt <= renderTime
       )
         continue;
-      for (const spawnTime of repeatingSpawnTimes(layer, activation, time)) {
+      for (const spawnTime of repeatingSpawnTimes(
+        layer,
+        activation,
+        time,
+        evaluationBudget.remaining,
+      )) {
+        if (!hasCapacity()) break activationLoop;
         const cycle = Math.max(
           0,
           Math.round(
@@ -347,18 +456,7 @@ function evaluateLayer(
               Math.max(50, layer.timing.duration),
           ),
         );
-        const value = evaluateOne(
-          project,
-          layer,
-          activation,
-          schedule,
-          selectedId,
-          cycle,
-          0,
-          spawnTime,
-          time,
-          beamEndpoints,
-        );
+        const value = evaluate(activation, cycle, 0, spawnTime);
         if (value) instances.push(value);
       }
     }
@@ -366,13 +464,20 @@ function evaluateLayer(
   }
 
   if (layer.type === "burst") {
-    for (const activation of activations) {
+    activationLoop: for (const activation of activations) {
+      if (!hasCapacity()) break;
       if (
         activation.cancelledAt !== null &&
         activation.cancelledAt <= renderTime
       )
         continue;
-      for (const spawnTime of repeatingSpawnTimes(layer, activation, time)) {
+      for (const spawnTime of repeatingSpawnTimes(
+        layer,
+        activation,
+        time,
+        evaluationBudget.remaining,
+      )) {
+        if (!hasCapacity()) break activationLoop;
         const cycle = Math.max(
           0,
           Math.round(
@@ -382,20 +487,14 @@ function evaluateLayer(
         );
         for (
           let index = 0;
-          index < Math.min(layer.spawn.count, 250);
+          index < Math.min(layer.spawn.count, 250) && hasCapacity();
           index += 1
         ) {
-          const value = evaluateOne(
-            project,
-            layer,
+          const value = evaluate(
             activation,
-            schedule,
-            selectedId,
             cycle * Math.max(1, layer.spawn.count) + index,
             index,
             spawnTime,
-            time,
-            beamEndpoints,
           );
           if (value) instances.push(value);
         }
@@ -404,27 +503,46 @@ function evaluateLayer(
     return instances;
   }
 
-  for (const activation of activations) {
+  const maximumAlive = Math.max(
+    1,
+    Math.min(MAX_EFFECT_INSTANCES, Math.floor(layer.spawn.maxAlive)),
+  );
+  const emitterLimit = Math.min(instanceLimit, maximumAlive);
+  for (
+    let activationIndex = activations.length - 1;
+    activationIndex >= 0 &&
+    instances.length < emitterLimit &&
+    evaluationBudget.remaining > 0;
+    activationIndex -= 1
+  ) {
+    const activation = activations[activationIndex];
     if (activation.cancelledAt !== null && activation.cancelledAt <= renderTime)
       continue;
     const times = emitterSpawnTimes(project, layer, activation, time);
-    times.forEach((event) => {
-      for (let copy = 0; copy < Math.min(layer.spawn.count, 25); copy += 1) {
-        const value = evaluateOne(
-          project,
-          layer,
+    for (
+      let eventIndex = times.length - 1;
+      eventIndex >= 0 &&
+      instances.length < emitterLimit &&
+      evaluationBudget.remaining > 0;
+      eventIndex -= 1
+    ) {
+      const event = times[eventIndex];
+      for (
+        let copy = Math.min(layer.spawn.count, 25) - 1;
+        copy >= 0 &&
+        instances.length < emitterLimit &&
+        evaluationBudget.remaining > 0;
+        copy -= 1
+      ) {
+        const value = evaluate(
           activation,
-          schedule,
-          selectedId,
           event.index * Math.max(1, layer.spawn.count) + copy,
           copy,
           event.time,
-          time,
-          beamEndpoints,
         );
         if (value) instances.push(value);
       }
-    });
+    }
   }
-  return instances.slice(-Math.max(1, layer.spawn.maxAlive));
+  return instances.reverse();
 }

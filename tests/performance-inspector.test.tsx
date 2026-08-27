@@ -6,6 +6,7 @@ import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 const sample = {
   liveSprites: 42,
   baseSprites: 42,
+  trailSprites: 7,
   newSpritesPerSecond: 18,
   requestedCopies: 1,
   effectiveCopies: 1,
@@ -23,6 +24,7 @@ describe("effect performance inspector", () => {
     render(
       <PerformanceInspector
         project={project}
+        selectedLayerId={project.layers[0].id}
         sample={sample}
         peakSprites={64}
         requestedCopies={1}
@@ -35,9 +37,13 @@ describe("effect performance inspector", () => {
     expect(
       screen.getByRole("dialog", { name: "Effect performance" }),
     ).toBeVisible();
-    expect(screen.getAllByText("Measured")).toHaveLength(3);
+    expect(screen.getAllByText("Measured")).toHaveLength(4);
     expect(screen.getByText("Estimated")).toBeVisible();
     expect(screen.getByText("Long smoke")).toBeVisible();
+    expect(screen.getByText("7")).toBeVisible();
+
+    fireEvent.click(screen.getByText("Lifecycle diagnostic"));
+    expect(screen.getByText(/Long smoke · active/)).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "25×" }));
     expect(onCopiesChange).toHaveBeenCalledWith(25);
@@ -47,6 +53,7 @@ describe("effect performance inspector", () => {
     render(
       <PerformanceInspector
         project={createEmptyProject()}
+        selectedLayerId={null}
         sample={{
           ...sample,
           requestedCopies: 50,

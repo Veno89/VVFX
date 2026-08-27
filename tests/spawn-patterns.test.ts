@@ -12,6 +12,7 @@ import {
   runtimeDefinitionToProject,
   validateRuntimeDefinition,
 } from "../packages/phaser-runtime/src/definition";
+import { TINY_PNG_DATA_URL } from "./fixtures/portableImages";
 
 function placementOffsets(
   project: VfxProject,
@@ -220,7 +221,9 @@ describe("richer placement migration and runtime parity", () => {
       id: "normalization-mask",
       name: "Normalization mask",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       spriteSheet: null,
       atlasFrame: null,
       alphaMask: { columns: 1, rows: 1, alpha: [255] },

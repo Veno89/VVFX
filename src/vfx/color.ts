@@ -1,6 +1,7 @@
 import type { ColorStop } from "./types";
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+export const MAX_COLOR_STOPS = 5;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -17,6 +18,7 @@ export function normalizeColorStops(value: unknown): ColorStop[] {
       { time: 1, color: "#ffffff" },
     ];
   const stops = value
+    .slice(0, MAX_COLOR_STOPS)
     .filter(
       (stop): stop is Record<string, unknown> =>
         typeof stop === "object" && stop !== null && !Array.isArray(stop),
@@ -29,8 +31,7 @@ export function normalizeColorStops(value: unknown): ColorStop[] {
       color: normalizeHexColor(stop.color),
     }))
     .filter((stop) => Number.isFinite(stop.time))
-    .sort((left, right) => left.time - right.time)
-    .slice(0, 5);
+    .sort((left, right) => left.time - right.time);
   if (stops.length < 2)
     return [
       { time: 0, color: stops[0]?.color ?? "#ffffff" },

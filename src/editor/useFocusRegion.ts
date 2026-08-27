@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -30,6 +30,40 @@ interface ActiveRegion {
 }
 
 const activeRegionStack: ActiveRegion[] = [];
+const hiddenModalBackground = new Map<
+  HTMLElement,
+  { ariaHidden: string | null; inert: boolean }
+>();
+
+function restoreModalBackground() {
+  hiddenModalBackground.forEach((original, element) => {
+    if (original.ariaHidden === null) element.removeAttribute("aria-hidden");
+    else element.setAttribute("aria-hidden", original.ariaHidden);
+    if (original.inert) element.setAttribute("inert", "");
+    else element.removeAttribute("inert");
+  });
+  hiddenModalBackground.clear();
+}
+
+function hideModalBackground(surface: HTMLElement) {
+  let branch: HTMLElement = surface;
+  while (branch.parentElement) {
+    const parent = branch.parentElement;
+    Array.from(parent.children).forEach((sibling) => {
+      if (!(sibling instanceof HTMLElement) || sibling === branch) return;
+      if (sibling.hasAttribute("data-modal-live-region")) return;
+      if (!hiddenModalBackground.has(sibling))
+        hiddenModalBackground.set(sibling, {
+          ariaHidden: sibling.getAttribute("aria-hidden"),
+          inert: sibling.hasAttribute("inert"),
+        });
+      sibling.setAttribute("aria-hidden", "true");
+      sibling.setAttribute("inert", "");
+    });
+    if (parent === document.body) break;
+    branch = parent;
+  }
+}
 
 function restoreRegionExposure(region: ActiveRegion) {
   if (region.originalAriaHidden === null)
@@ -70,6 +104,7 @@ function topInteractiveRegion() {
 }
 
 function syncModalExposure() {
+  restoreModalBackground();
   const topModal = topModalRegion();
   activeRegionStack.forEach((region) => {
     if (!region.modal) {
@@ -94,6 +129,7 @@ function syncModalExposure() {
     region.container.setAttribute("aria-hidden", "true");
     region.container.setAttribute("inert", "");
   });
+  if (topModal) hideModalBackground(topModal.surface);
 }
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
@@ -103,6 +139,15 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
     (element) =>
       element.tabIndex >= 0 &&
       !element.closest("[hidden], [inert], [aria-hidden='true']"),
+  );
+}
+
+function isFocusableWithin(container: HTMLElement, element: HTMLElement) {
+  return (
+    container.contains(element) &&
+    element.matches(FOCUSABLE_SELECTOR) &&
+    element.tabIndex >= 0 &&
+    !element.closest("[hidden], [inert], [aria-hidden='true']")
   );
 }
 
@@ -124,6 +169,12 @@ export interface FocusRegionOptions {
   onEscape?: () => void;
   initialFocusRef?: RefObject<HTMLElement | null>;
   restoreFocus?: boolean;
+  /** Close a nonmodal surface when pointer interaction moves elsewhere. */
+  dismissOnPointerOutside?: boolean;
+  /** Close a nonmodal surface when Tab or another action moves focus away. */
+  dismissOnFocusOutside?: boolean;
+  /** Treat an associated trigger as part of the popup for outside dismissal. */
+  dismissBoundaryRef?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -140,10 +191,16 @@ export function useFocusRegion<T extends HTMLElement>({
   onEscape,
   initialFocusRef,
   restoreFocus = true,
+  dismissOnPointerOutside = false,
+  dismissOnFocusOutside = false,
+  dismissBoundaryRef,
 }: FocusRegionOptions = {}): RefObject<T | null> {
   const containerRef = useRef<T>(null);
   const onEscapeRef = useRef(onEscape);
   const escapeEnabledRef = useRef(escapeEnabled);
+  const skipRestoreRef = useRef(false);
+  const boundaryPointerPendingRef = useRef(false);
+  const boundaryPointerResetRef = useRef<number | null>(null);
 
   useEffect(() => {
     onEscapeRef.current = onEscape;
@@ -153,8 +210,14 @@ export function useFocusRegion<T extends HTMLElement>({
     escapeEnabledRef.current = escapeEnabled;
   }, [escapeEnabled]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
+    skipRestoreRef.current = false;
+    boundaryPointerPendingRef.current = false;
+    if (boundaryPointerResetRef.current !== null) {
+      window.clearTimeout(boundaryPointerResetRef.current);
+      boundaryPointerResetRef.current = null;
+    }
     const previouslyFocused =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -163,7 +226,11 @@ export function useFocusRegion<T extends HTMLElement>({
     if (!container) return;
     const regionToken = Symbol("focus-region");
     const focusFirst = () => {
-      const preferred = initialFocusRef?.current;
+      const preferredCandidate = initialFocusRef?.current;
+      const preferred =
+        preferredCandidate && isFocusableWithin(container, preferredCandidate)
+          ? preferredCandidate
+          : null;
       const first = focusableElements(container)[0];
       if (!preferred && !first && !container.hasAttribute("tabindex"))
         container.tabIndex = -1;
@@ -190,6 +257,14 @@ export function useFocusRegion<T extends HTMLElement>({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isTopRegion()) return;
+      if (
+        event.key === "Escape" &&
+        (event.defaultPrevented ||
+          (event.target instanceof Element &&
+            event.target.closest("[data-focus-region-escape-owner]")) ||
+          container.querySelector("[data-focus-region-escape-owner]"))
+      )
+        return;
       if (
         event.key === "Escape" &&
         escapeEnabledRef.current &&
@@ -229,19 +304,67 @@ export function useFocusRegion<T extends HTMLElement>({
 
     const handleFocusIn = (event: FocusEvent) => {
       if (
-        isTopRegion() &&
-        trapFocus &&
-        event.target instanceof Node &&
-        !container.contains(event.target)
+        !isTopRegion() ||
+        !(event.target instanceof Node) ||
+        container.contains(event.target)
       )
+        return;
+      if (
+        dismissBoundaryRef?.current?.contains(event.target) &&
+        boundaryPointerPendingRef.current
+      ) {
+        boundaryPointerPendingRef.current = false;
+        if (boundaryPointerResetRef.current !== null) {
+          window.clearTimeout(boundaryPointerResetRef.current);
+          boundaryPointerResetRef.current = null;
+        }
+        return;
+      }
+      if (trapFocus) {
         focusFirst();
+        return;
+      }
+      if (dismissOnFocusOutside && onEscapeRef.current) {
+        skipRestoreRef.current = true;
+        onEscapeRef.current();
+      }
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        !isTopRegion() ||
+        !dismissOnPointerOutside ||
+        !(event.target instanceof Node) ||
+        container.contains(event.target)
+      )
+        return;
+      if (dismissBoundaryRef?.current?.contains(event.target)) {
+        boundaryPointerPendingRef.current = true;
+        if (boundaryPointerResetRef.current !== null)
+          window.clearTimeout(boundaryPointerResetRef.current);
+        boundaryPointerResetRef.current = window.setTimeout(() => {
+          boundaryPointerPendingRef.current = false;
+          boundaryPointerResetRef.current = null;
+        }, 0);
+        return;
+      }
+      if (!onEscapeRef.current) return;
+      skipRestoreRef.current = true;
+      onEscapeRef.current();
     };
 
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      if (boundaryPointerResetRef.current !== null) {
+        window.clearTimeout(boundaryPointerResetRef.current);
+        boundaryPointerResetRef.current = null;
+      }
+      boundaryPointerPendingRef.current = false;
       const regionIndex = activeRegionStack.findIndex(
         (candidate) => candidate.token === regionToken,
       );
@@ -262,6 +385,7 @@ export function useFocusRegion<T extends HTMLElement>({
         container.contains(currentFocus);
       if (
         restoreFocus &&
+        !skipRestoreRef.current &&
         wasTopRegion &&
         focusStillBelongsToRegion &&
         previouslyFocused?.isConnected
@@ -283,6 +407,9 @@ export function useFocusRegion<T extends HTMLElement>({
     active,
     activationKey,
     autoFocus,
+    dismissOnFocusOutside,
+    dismissOnPointerOutside,
+    dismissBoundaryRef,
     initialFocusRef,
     restoreFocus,
     trapFocus,

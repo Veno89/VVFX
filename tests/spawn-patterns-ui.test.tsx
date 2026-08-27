@@ -24,12 +24,9 @@ function renderLayer(layer: SpawnLayer) {
 }
 
 function placementSelect(): HTMLSelectElement {
-  const label = screen.getByText(/^Placement pattern/, {
-    selector: ".field__label",
-  });
-  const select = label.closest("label")?.querySelector("select");
-  if (!select) throw new Error("Placement pattern select was not rendered.");
-  return select;
+  return screen.getByRole("combobox", {
+    name: "Placement pattern",
+  }) as HTMLSelectElement;
 }
 
 describe("richer placement Inspector controls", () => {

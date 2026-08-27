@@ -16,6 +16,10 @@ import {
   isSupportedAlphaMaskDataUrl,
   prepareAlphaMaskFromImageData,
 } from "../src/editor/alphaMaskImport";
+import {
+  TINY_PNG_DATA_URL,
+  TINY_WEBP_DATA_URL,
+} from "./fixtures/portableImages";
 
 function rgba(...alpha: number[]): Uint8ClampedArray {
   const pixels = new Uint8ClampedArray(alpha.length * 4);
@@ -54,10 +58,9 @@ describe("alpha-mask upload preparation primitives", () => {
   });
 
   it("accepts only local PNG and WebP data URLs", () => {
-    expect(isSupportedAlphaMaskDataUrl("data:image/png;base64,AAAA")).toBe(
-      true,
-    );
-    expect(isSupportedAlphaMaskDataUrl("data:image/webp,AAAA")).toBe(true);
+    expect(isSupportedAlphaMaskDataUrl(TINY_PNG_DATA_URL)).toBe(true);
+    expect(isSupportedAlphaMaskDataUrl(TINY_WEBP_DATA_URL)).toBe(true);
+    expect(isSupportedAlphaMaskDataUrl("data:image/webp,AAAA")).toBe(false);
     expect(isSupportedAlphaMaskDataUrl("data:image/jpeg;base64,AAAA")).toBe(
       false,
     );

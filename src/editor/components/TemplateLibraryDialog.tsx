@@ -13,7 +13,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TemplateImportSummary } from "../../persistence/templates";
 import { COMPOSITION_PRESETS } from "../../vfx/presets";
 import type {
@@ -45,6 +45,8 @@ export function TemplateLibraryDialog({
   selectedGroupName,
   canSaveCurrent,
   templates,
+  invalidSavedCount = 0,
+  excessSavedCount = 0,
   saveSummaries = {},
   onSaveCurrent,
   onInsert,
@@ -53,6 +55,7 @@ export function TemplateLibraryDialog({
   onDuplicate,
   onExportOne,
   onDelete,
+  onRemoveInvalidSaved,
   onImport,
   onExport,
   onClose,
@@ -62,18 +65,21 @@ export function TemplateLibraryDialog({
   selectedGroupName?: string;
   canSaveCurrent: boolean;
   templates: VfxTemplate[];
+  invalidSavedCount?: number;
+  excessSavedCount?: number;
   saveSummaries?: Partial<Record<TemplateSaveScope, TemplateDependencySummary>>;
   onSaveCurrent: (
     name: string,
     description: string,
     scope: TemplateSaveScope,
   ) => Promise<void>;
-  onInsert: (template: VfxTemplate) => void;
+  onInsert: (template: VfxTemplate) => void | Promise<void>;
   onInsertBuiltIn: (presetId: string) => void;
   onRename: (template: VfxTemplate, name: string) => Promise<void>;
   onDuplicate: (template: VfxTemplate) => Promise<void>;
   onExportOne: (template: VfxTemplate) => void;
   onDelete: (template: VfxTemplate) => Promise<void>;
+  onRemoveInvalidSaved?: () => Promise<void>;
   onImport: (file: File) => Promise<TemplateImportSummary>;
   onExport: () => void;
   onClose: () => void;
@@ -84,48 +90,68 @@ export function TemplateLibraryDialog({
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<TemplateSaveScope>("effect");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
+  const saveTriggerRef = useRef<HTMLButtonElement>(null);
+  const templateNameRef = useRef<HTMLInputElement>(null);
+  const closeSaveForm = () => {
+    setSaveOpen(false);
+    window.requestAnimationFrame(() => saveTriggerRef.current?.focus());
+  };
   const dialogRef = useFocusRegion<HTMLElement>({
     escapeEnabled: !busy,
-    onEscape: onClose,
+    onEscape: saveOpen ? closeSaveForm : onClose,
   });
   const saveSummary = saveSummaries[scope];
 
-  const saveCurrent = async () => {
+  useEffect(() => {
+    if (!saveOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      templateNameRef.current?.focus();
+      templateNameRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [saveOpen]);
+
+  const runBusy = async (
+    operation: () => Promise<void>,
+    fallbackMessage: string,
+  ) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      await onSaveCurrent(name, description, scope);
-      setSaveOpen(false);
-      setDescription("");
+      await operation();
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "The template could not be saved.",
-      );
+      setError(caught instanceof Error ? caught.message : fallbackMessage);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
+  const saveCurrent = async () => {
+    await runBusy(async () => {
+      await onSaveCurrent(name, description, scope);
+      closeSaveForm();
+      setDescription("");
+    }, "The template could not be saved.");
+  };
+
   const importPack = async (file: File) => {
-    setBusy(true);
-    setError(null);
     setImportResult(null);
-    try {
+    await runBusy(async () => {
       const result = await onImport(file);
       setImportResult(importSummaryText(result));
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "The template pack could not be imported.",
-      );
-    } finally {
-      setBusy(false);
-    }
+    }, "The template pack could not be imported.");
+  };
+
+  const insertSavedTemplate = async (template: VfxTemplate) => {
+    await runBusy(async () => {
+      await onInsert(template);
+    }, "The template could not be inserted.");
   };
 
   return (
@@ -133,7 +159,10 @@ export function TemplateLibraryDialog({
       className="dialog-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (!busy && event.currentTarget === event.target) onClose();
+        if (!busy && event.currentTarget === event.target) {
+          if (saveOpen) closeSaveForm();
+          else onClose();
+        }
       }}
     >
       <section
@@ -141,6 +170,7 @@ export function TemplateLibraryDialog({
         className="dialog template-library-dialog"
         role="dialog"
         aria-modal="true"
+        aria-busy={busy}
         aria-labelledby="template-library-title"
       >
         <header>
@@ -160,6 +190,7 @@ export function TemplateLibraryDialog({
         <div className="template-library-scroll">
           <div className="template-library-toolbar">
             <button
+              ref={saveTriggerRef}
               type="button"
               className="primary-action"
               disabled={!canSaveCurrent || busy}
@@ -169,6 +200,8 @@ export function TemplateLibraryDialog({
                 setSaveOpen(true);
                 setError(null);
               }}
+              aria-controls="template-save-current-form"
+              aria-expanded={saveOpen}
             >
               <Save size={14} /> Save current effect
             </button>
@@ -181,7 +214,12 @@ export function TemplateLibraryDialog({
             </button>
             <button
               type="button"
-              disabled={templates.length === 0 || busy}
+              disabled={templates.length === 0 || busy || excessSavedCount > 0}
+              title={
+                excessSavedCount > 0
+                  ? "Resolve the template limit before exporting a complete backup."
+                  : "Export every saved template"
+              }
               onClick={onExport}
             >
               <Download size={14} /> Export all
@@ -189,6 +227,7 @@ export function TemplateLibraryDialog({
             <input
               ref={importRef}
               hidden
+              disabled={busy}
               type="file"
               accept=".vvfx-template,.vvfx-templates,.json,application/json"
               onChange={(event) => {
@@ -200,14 +239,18 @@ export function TemplateLibraryDialog({
           </div>
           {saveOpen && (
             <form
+              id="template-save-current-form"
               className="template-save-form"
+              aria-labelledby="template-save-current-title"
               onSubmit={(event) => {
                 event.preventDefault();
                 void saveCurrent();
               }}
             >
               <div>
-                <strong>Save reusable layers</strong>
+                <strong id="template-save-current-title">
+                  Save reusable layers
+                </strong>
                 <p>
                   Inserted templates become ordinary editable layers. Timing,
                   event links, groups, and used images travel with the copy.
@@ -249,6 +292,7 @@ export function TemplateLibraryDialog({
               <label>
                 What to save
                 <select
+                  disabled={busy}
                   value={scope}
                   onChange={(event) => {
                     const next = event.target.value as TemplateSaveScope;
@@ -278,6 +322,8 @@ export function TemplateLibraryDialog({
               <label>
                 Template name
                 <input
+                  ref={templateNameRef}
+                  disabled={busy}
                   value={name}
                   required
                   maxLength={120}
@@ -287,6 +333,7 @@ export function TemplateLibraryDialog({
               <label>
                 Short reminder <small>optional</small>
                 <textarea
+                  disabled={busy}
                   value={description}
                   maxLength={280}
                   placeholder="For example: Quick blue impact for enemy hits"
@@ -294,11 +341,7 @@ export function TemplateLibraryDialog({
                 />
               </label>
               <div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setSaveOpen(false)}
-                >
+                <button type="button" disabled={busy} onClick={closeSaveForm}>
                   Cancel
                 </button>
                 <button
@@ -324,6 +367,55 @@ export function TemplateLibraryDialog({
             >
               Import complete: {importResult}.
             </p>
+          )}
+          {invalidSavedCount > 0 && (
+            <div className="storage-repair-warning" role="alert">
+              <div>
+                <strong>
+                  {invalidSavedCount} unreadable template
+                  {invalidSavedCount === 1 ? "" : "s"} found
+                </strong>
+                <p>
+                  Vvfx preserved the stored data, but it cannot safely use it.
+                  Remove {invalidSavedCount === 1 ? "this" : "these"}
+                  {invalidSavedCount === 1
+                    ? " unreadable template"
+                    : " unreadable templates"}{" "}
+                  to free browser storage.
+                </p>
+              </div>
+              {onRemoveInvalidSaved && (
+                <button
+                  type="button"
+                  className="danger-action"
+                  disabled={busy}
+                  onClick={() => {
+                    void runBusy(
+                      onRemoveInvalidSaved,
+                      "The unreadable templates could not be removed.",
+                    );
+                  }}
+                >
+                  <Trash2 size={14} /> Remove unreadable
+                </button>
+              )}
+            </div>
+          )}
+          {excessSavedCount > 0 && (
+            <div className="storage-repair-warning" role="alert">
+              <div>
+                <strong>Template save limit exceeded</strong>
+                <p>
+                  This browser has {excessSavedCount} template
+                  {excessSavedCount === 1 ? "" : "s"} beyond the supported
+                  limit. Your templates were preserved; remove at least{" "}
+                  {excessSavedCount} saved{" "}
+                  {excessSavedCount === 1 ? "entry" : "entries"} from the list
+                  below to make the library writable again. Export all is
+                  disabled until the complete library can be included.
+                </p>
+              </div>
+            </div>
           )}
           <div className="template-section-heading">
             <div>
@@ -377,10 +469,15 @@ export function TemplateLibraryDialog({
           {templates.length === 0 ? (
             <div className="empty-state template-library-empty">
               <Library size={30} />
-              <strong>No saved effect templates yet</strong>
+              <strong>
+                {invalidSavedCount > 0
+                  ? "No readable effect templates"
+                  : "No saved effect templates yet"}
+              </strong>
               <p>
-                Build an effect, save it here, then insert a fresh copy into any
-                project later.
+                {invalidSavedCount > 0
+                  ? "Remove the unreadable data above, then save or import a healthy template."
+                  : "Build an effect, save it here, then insert a fresh copy into any project later."}
               </p>
             </div>
           ) : (
@@ -421,7 +518,7 @@ export function TemplateLibraryDialog({
                       type="button"
                       className="primary-action"
                       disabled={busy}
-                      onClick={() => onInsert(template)}
+                      onClick={() => void insertSavedTemplate(template)}
                     >
                       <Plus size={14} /> Insert copy
                     </button>
@@ -440,13 +537,9 @@ export function TemplateLibraryDialog({
                           nextName.trim() === template.name
                         )
                           return;
-                        void onRename(template, nextName.trim()).catch(
-                          (caught: unknown) =>
-                            setError(
-                              caught instanceof Error
-                                ? caught.message
-                                : "The template could not be renamed.",
-                            ),
+                        void runBusy(
+                          () => onRename(template, nextName.trim()),
+                          "The template could not be renamed.",
                         );
                       }}
                     >
@@ -458,12 +551,9 @@ export function TemplateLibraryDialog({
                       title="Duplicate template"
                       aria-label={`Duplicate ${template.name}`}
                       onClick={() => {
-                        void onDuplicate(template).catch((caught: unknown) =>
-                          setError(
-                            caught instanceof Error
-                              ? caught.message
-                              : "The template could not be duplicated.",
-                          ),
+                        void runBusy(
+                          () => onDuplicate(template),
+                          "The template could not be duplicated.",
                         );
                       }}
                     >
@@ -490,12 +580,9 @@ export function TemplateLibraryDialog({
                             `Delete “${template.name}” from this browser?`,
                           )
                         )
-                          void onDelete(template).catch((caught: unknown) =>
-                            setError(
-                              caught instanceof Error
-                                ? caught.message
-                                : "The template could not be deleted.",
-                            ),
+                          void runBusy(
+                            () => onDelete(template),
+                            "The template could not be deleted.",
                           );
                       }}
                     >

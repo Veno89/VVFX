@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  deleteInvalidTemplateRecord,
   deleteTemplate,
+  inspectStoredTemplates,
   listTemplates,
   saveTemplate,
   saveTemplates,
@@ -26,6 +28,8 @@ import {
   type VfxTemplate,
 } from "../src/vfx/templates";
 import type { VfxAsset } from "../src/vfx/types";
+import { MAX_SAVED_TEMPLATES } from "../src/vfx/inputLimits";
+import { TINY_PNG_DATA_URL } from "./fixtures/portableImages";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -44,6 +48,54 @@ async function putRawTemplateRecord(record: Record<string, unknown>) {
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+async function countRawTemplateRecords(): Promise<number> {
+  const database = await openDatabase();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const request = database
+        .transaction(TEMPLATE_STORE, "readonly")
+        .objectStore(TEMPLATE_STORE)
+        .count();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function putRawTemplates(templates: VfxTemplate[]): Promise<void> {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(TEMPLATE_STORE, "readwrite");
+      const store = transaction.objectStore(TEMPLATE_STORE);
+      templates.forEach((template) => store.put(template));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function deleteRawTemplates(keys: IDBValidKey[]): Promise<void> {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(TEMPLATE_STORE, "readwrite");
+      const store = transaction.objectStore(TEMPLATE_STORE);
+      keys.forEach((key) => store.delete(key));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
 }
 
 describe("portable template format v2", () => {
@@ -175,7 +227,9 @@ describe("scoped template dependencies and timing anchors", () => {
       id: "template-visual",
       name: "Portable visual",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       transparency: "yes",
       spriteSheet: null,
       atlasFrame: null,
@@ -440,6 +494,32 @@ describe("scoped template dependencies and timing anchors", () => {
 });
 
 describe("atomic collision-safe template import", () => {
+  it("keeps an oversized template library inspectable through a bounded repair view", async () => {
+    const baseline = await countRawTemplateRecords();
+    const templates = Array.from(
+      { length: MAX_SAVED_TEMPLATES + 1 },
+      (_, index) => oneLayerTemplate(`Overflow template ${index}`),
+    );
+    const keys = templates.map((template) => template.id);
+    await putRawTemplates(templates);
+
+    try {
+      const inspection = await inspectStoredTemplates();
+      expect(inspection.totalRecords).toBe(baseline + templates.length);
+      expect(inspection.excessRecords).toBe(
+        Math.max(0, inspection.totalRecords - MAX_SAVED_TEMPLATES),
+      );
+      expect(
+        inspection.templates.length + inspection.invalidRecords.length,
+      ).toBe(Math.min(inspection.totalRecords, MAX_SAVED_TEMPLATES + 1));
+      await expect(listTemplates()).rejects.toThrow(/exceeds.*safety limit/i);
+    } finally {
+      await deleteRawTemplates(keys);
+    }
+
+    expect(await countRawTemplateRecords()).toBe(baseline);
+  });
+
   it("preserves an existing template and imports different same-ID content as a copy", async () => {
     const original = await saveTemplate(oneLayerTemplate("Collision original"));
     const conflicting = {
@@ -449,12 +529,12 @@ describe("atomic collision-safe template import", () => {
     };
     let importedId: string | undefined;
     try {
-      expect(await saveTemplates([original])).toEqual({
+      expect(await saveTemplates([original])).toMatchObject({
         added: 0,
         alreadyHere: 1,
         importedAsCopy: 0,
       });
-      expect(await saveTemplates([conflicting])).toEqual({
+      expect(await saveTemplates([conflicting])).toMatchObject({
         added: 0,
         alreadyHere: 0,
         importedAsCopy: 1,
@@ -502,30 +582,55 @@ describe("atomic collision-safe template import", () => {
     });
     let importedId: string | undefined;
     try {
-      expect(await saveTemplates([incoming])).toEqual({
+      await expect(saveTemplate(incoming)).rejects.toThrow(
+        /damaged saved record/i,
+      );
+      expect(await saveTemplates([incoming])).toMatchObject({
         added: 0,
         alreadyHere: 0,
         importedAsCopy: 1,
       });
-      const imported = (await listTemplates()).find(
+      const inspection = await inspectStoredTemplates();
+      expect(inspection.invalidRecords).toEqual([
+        expect.objectContaining({
+          key: incoming.id,
+          reason: expect.stringMatching(/template|format/i),
+        }),
+      ]);
+      const imported = inspection.templates.find(
         (template) => template.name === "Reserved collision (imported)",
       );
       expect(imported?.id).not.toBe(incoming.id);
       importedId = imported?.id;
+      await expect(listTemplates()).rejects.toThrow(/invalid record/i);
+      if (importedId)
+        await expect(deleteInvalidTemplateRecord(importedId)).rejects.toThrow(
+          /valid template/i,
+        );
 
       const database = await openDatabase();
-      const raw = await new Promise<unknown>((resolve, reject) => {
-        const request = database
-          .transaction(TEMPLATE_STORE, "readonly")
-          .objectStore(TEMPLATE_STORE)
-          .get(incoming.id);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      database.close();
+      let raw: unknown;
+      try {
+        raw = await new Promise<unknown>((resolve, reject) => {
+          const request = database
+            .transaction(TEMPLATE_STORE, "readonly")
+            .objectStore(TEMPLATE_STORE)
+            .get(incoming.id);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      } finally {
+        database.close();
+      }
       expect(raw).toMatchObject({ sentinel: "keep-me" });
+
+      await deleteInvalidTemplateRecord(incoming.id);
+      expect((await inspectStoredTemplates()).invalidRecords).toEqual([]);
+      expect(
+        (await listTemplates()).some((template) => template.id === importedId),
+      ).toBe(true);
     } finally {
-      await deleteTemplate(incoming.id);
+      await deleteInvalidTemplateRecord(incoming.id);
       if (importedId) await deleteTemplate(importedId);
     }
   });

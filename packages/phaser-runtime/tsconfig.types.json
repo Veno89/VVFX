@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "composite": false,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": false,
+    "isolatedModules": false,
+    "noEmit": false,
+    "outDir": "./types",
+    "rootDir": "../..",
+    "skipLibCheck": true
+  },
+  "include": ["./src/**/*.ts"]
+}

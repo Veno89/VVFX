@@ -3,6 +3,14 @@ import {
   MAX_ALPHA_MASK_DIMENSION,
   type AssetAlphaMask,
 } from "../vfx/alphaMask";
+import {
+  IMAGE_DECODE_TIMEOUT_MS,
+  isSafeImageDimensions,
+} from "../vfx/inputLimits";
+import {
+  inspectPortableImageDataUrl,
+  type PortableImageInspection,
+} from "../vfx/portableImage";
 
 export interface PreparedImageAlphaMask {
   width: number;
@@ -11,8 +19,13 @@ export interface PreparedImageAlphaMask {
   alphaMask: AssetAlphaMask;
 }
 
+export type VerifiedPortableImage = Extract<
+  PortableImageInspection,
+  { ok: true }
+>;
+
 export function isSupportedAlphaMaskDataUrl(dataUrl: string): boolean {
-  return /^data:image\/(?:png|webp)(?:;[^,]*)?,/i.test(dataUrl);
+  return inspectPortableImageDataUrl(dataUrl).ok;
 }
 
 /** Computes an aspect-preserving, bounded grid before canvas allocation. */
@@ -52,6 +65,8 @@ export function prepareAlphaMaskFromLoadedImage(
 ): PreparedImageAlphaMask {
   const width = image.naturalWidth;
   const height = image.naturalHeight;
+  if (!isSafeImageDimensions(width, height))
+    throw new Error("The decoded image dimensions exceed Vvfx's safety limit.");
   const { columns, rows } = alphaMaskGridDimensions(width, height);
   const canvas = document.createElement("canvas");
   canvas.width = columns;
@@ -72,18 +87,144 @@ export function prepareAlphaMaskFromLoadedImage(
   };
 }
 
+const imageAbortError = () =>
+  new DOMException("Image decoding was cancelled.", "AbortError");
+
+const asImageError = (error: unknown, fallback: string) =>
+  error instanceof Error ? error : new Error(fallback);
+
+function decodePortableImageDataUrl<T>(
+  dataUrl: string,
+  signal: AbortSignal | undefined,
+  consumeImage: (
+    image: HTMLImageElement,
+    inspection: VerifiedPortableImage,
+  ) => T,
+): Promise<T> {
+  const inspection = inspectPortableImageDataUrl(dataUrl);
+  if (!inspection.ok) return Promise.reject(new Error(inspection.error));
+  if (signal?.aborted) return Promise.reject(imageAbortError());
+
+  return new Promise<T>((resolve, reject) => {
+    let candidate: HTMLImageElement;
+    try {
+      candidate = new Image();
+    } catch (error) {
+      reject(asImageError(error, "This image could not be decoded."));
+      return;
+    }
+
+    let settled = false;
+    let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+    let listeningForAbort = false;
+
+    const clearSource = () => {
+      try {
+        candidate.src = "";
+      } catch {
+        // Some browser/test image implementations expose a read-only source.
+      }
+    };
+    const cleanup = () => {
+      if (timeout !== undefined) globalThis.clearTimeout(timeout);
+      try {
+        candidate.onload = null;
+      } catch {
+        // Continue tearing down the remaining owned image state.
+      }
+      try {
+        candidate.onerror = null;
+      } catch {
+        // Continue tearing down the remaining owned image state.
+      }
+      if (listeningForAbort) {
+        try {
+          signal?.removeEventListener("abort", abort);
+        } catch {
+          // A non-standard signal must not prevent image teardown.
+        }
+        listeningForAbort = false;
+      }
+      clearSource();
+    };
+    const fail = (error: Error | DOMException) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    function abort() {
+      fail(imageAbortError());
+    }
+    const loaded = () => {
+      if (settled) return;
+      if (
+        candidate.naturalWidth !== inspection.width ||
+        candidate.naturalHeight !== inspection.height
+      ) {
+        fail(
+          new Error("The decoded image dimensions do not match its header."),
+        );
+        return;
+      }
+      let result: T;
+      try {
+        result = consumeImage(candidate, inspection);
+      } catch (error) {
+        fail(asImageError(error, "This image could not be prepared."));
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    try {
+      candidate.onload = loaded;
+      candidate.onerror = () =>
+        fail(new Error("This PNG or WebP image could not be decoded."));
+      if (signal) {
+        signal.addEventListener("abort", abort, { once: true });
+        listeningForAbort = true;
+        if (signal.aborted) {
+          abort();
+          return;
+        }
+      }
+      candidate.decoding = "async";
+      timeout = globalThis.setTimeout(
+        () => fail(new Error("Image decoding took too long.")),
+        IMAGE_DECODE_TIMEOUT_MS,
+      );
+      candidate.src = dataUrl;
+    } catch (error) {
+      fail(asImageError(error, "This image could not be decoded."));
+    }
+  });
+}
+
+/**
+ * Verifies that a structurally valid embedded PNG/WebP also decodes in the
+ * browser. The owned Image is fully released and no canvas is allocated.
+ */
+export function verifyPortableImageDataUrl(
+  dataUrl: string,
+  signal?: AbortSignal,
+): Promise<VerifiedPortableImage> {
+  return decodePortableImageDataUrl(
+    dataUrl,
+    signal,
+    (_image, inspection) => inspection,
+  );
+}
+
 /** Only local PNG/WebP data URLs are decoded; remote/CORS URLs are rejected. */
 export async function prepareAlphaMaskFromDataUrl(
   dataUrl: string,
+  signal?: AbortSignal,
 ): Promise<PreparedImageAlphaMask> {
-  if (!isSupportedAlphaMaskDataUrl(dataUrl))
-    throw new Error("Spawn masks must come from a local PNG or WebP upload.");
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const candidate = new Image();
-    candidate.onload = () => resolve(candidate);
-    candidate.onerror = () =>
-      reject(new Error("This image could not be decoded as a spawn mask."));
-    candidate.src = dataUrl;
-  });
-  return prepareAlphaMaskFromLoadedImage(image);
+  return decodePortableImageDataUrl(dataUrl, signal, (image) =>
+    prepareAlphaMaskFromLoadedImage(image),
+  );
 }

@@ -10,6 +10,7 @@ import {
   validateProject,
 } from "../src/vfx/serialization";
 import { createDefaultRenderingEffects } from "../src/vfx/renderingEffects";
+import { validPngDataUrl } from "./fixtures/portableImages";
 
 describe("Vvfx project files", () => {
   it("starts new users with an empty composition and reusable practice shapes", () => {
@@ -24,7 +25,7 @@ describe("Vvfx project files", () => {
       id: "user-image",
       name: "My spark",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,abc",
+      dataUrl: validPngDataUrl(128, 32),
       transparency: "yes",
       width: 128,
       height: 32,
@@ -46,7 +47,7 @@ describe("Vvfx project files", () => {
     expect(
       result.project?.assets.find((asset) => asset.id === "user-image")
         ?.dataUrl,
-    ).toContain("base64,abc");
+    ).toBe(project.assets.at(-1)?.dataUrl);
     expect(result.project?.layers[0].assetId).toBe("user-image");
     expect(
       result.project?.assets.find((asset) => asset.id === "user-image")
@@ -64,6 +65,27 @@ describe("Vvfx project files", () => {
     });
     expect(result.project?.layers[0].groupId).toBe(group.id);
     expect(result.project?.timeline).toEqual(project.timeline);
+  });
+
+  it("preserves the legacy vvfx-missing asset identifier", () => {
+    const project = createEmptyProject("Legacy missing-key project");
+    project.assets.push({
+      id: "vvfx-missing",
+      name: "Legacy missing-key image",
+      mimeType: "image/png",
+      dataUrl: validPngDataUrl(1, 1),
+      transparency: "yes",
+      width: 1,
+      height: 1,
+      spriteSheet: null,
+    });
+
+    expect(validateProject(project)).toMatchObject({ ok: true });
+    const result = deserializeProject(serializeProject(project));
+    expect(result).toMatchObject({ ok: true });
+    expect(
+      result.project?.assets.some((asset) => asset.id === "vvfx-missing"),
+    ).toBe(true);
   });
 
   it("migrates version 1 projects with still-image playback defaults", () => {

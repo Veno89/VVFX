@@ -2,10 +2,11 @@
   "name": "@vvfx/phaser-runtime",
   "version": "0.14.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "./dist/vvfx-phaser-runtime.js",
   "module": "./dist/vvfx-phaser-runtime.js",
-  "types": "./types/index.d.ts",
+  "types": "./types/packages/phaser-runtime/src/index.d.ts",
   "files": [
     "dist",
     "types",
@@ -13,7 +14,7 @@
   ],
   "exports": {
     ".": {
-      "types": "./types/index.d.ts",
+      "types": "./types/packages/phaser-runtime/src/index.d.ts",
       "import": "./dist/vvfx-phaser-runtime.js"
     }
   },

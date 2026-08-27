@@ -52,7 +52,7 @@ that layer type.
 | Delay and lifetime                                          | Yes                     | Yes                       | Per copy                  | Per copy               | Exact                   | Exact               | Exact via runtime   | Timeline and layer summary          | Minimum normalized duration is 50 ms                                                                                                                                                                                                                                |
 | Timing markers and choreography notes                       | Yes                     | Yes                       | Yes                       | Yes                    | Editor authoring aid    | Omitted             | Omitted             | Timeline timing-plan helper         | Named markers, pasted notes, snapping, and frame readouts organize authoring; they never change effect playback                                                                                                                                                     |
 | Exact timing and multi-layer alignment                      | Yes                     | Yes                       | Yes                       | Yes                    | Exact                   | Exact layer values  | Exact via runtime   | Timeline precision bar              | Start/End/Duration use milliseconds; multi-move, align, and stagger commit ordinary layer timing values                                                                                                                                                             |
-| Layer events                                                | Source/target           | Source/target             | Source/target             | Start/repeat source    | Exact and deterministic | Exact               | Exact via runtime   | Events Inspector and recipes        | Start/percentage/repeat/finish events play or restart layers; cycles, depth, and total activations are bounded                                                                                                                                                      |
+| Layer events                                                | Source/target           | Source/target             | Source/target             | Start/repeat source    | Exact and deterministic | Exact               | Exact via runtime   | Events Inspector and recipes        | Start/percentage/repeat/finish events play or restart layers; active cycles, depth, and total activations are bounded, while disabled links remain inert stored configuration                                                                                       |
 | Copy-finish spatial events                                  | Existing target only    | Source/recommended target | Source/recommended target | Source/existing target | Exact and deterministic | Exact               | Exact via runtime   | Firework / spark-to-smoke guidance  | Each original copy can play a target at its final position; the new-event picker recommends finite, unattached Triggered animated/burst targets, while seeded chance, maximum plays, graph guards, and the shared sprite budget bound fan-out; trails never trigger |
 | Repeat, yoyo, and easing                                    | --                      | Yes                       | Yes                       | Per-copy yoyo/easing   | Exact                   | Exact               | Exact via runtime   | Curve preview and tooltips          | An emitter's interval already repeats it; its project duration, not layer repeat count, bounds new emissions                                                                                                                                                        |
 | Built-in and custom easing                                  | --                      | Yes                       | Yes                       | Per copy               | Exact                   | Exact               | Exact via runtime   | Visual easing graph                 | Custom cubic controls allow anticipation and overshoot                                                                                                                                                                                                              |
@@ -91,7 +91,7 @@ effects are WebGL-only. On Canvas the runtime keeps the ordinary sprite and
 skips the GPU effect; it never drops the layer or silently removes its settings
 from exported data.
 
-| Experimental capability    | Inspector | Editor preview     | Runtime JSON v14 | Phaser runtime     | WebM/GIF capture         | Canvas fallback         |
+| Experimental capability    | Inspector | Editor preview     | Runtime JSON v15 | Phaser runtime     | WebM/GIF capture         | Canvas fallback         |
 | -------------------------- | --------- | ------------------ | ---------------- | ------------------ | ------------------------ | ----------------------- |
 | Outer glow                 | Yes       | Experimental WebGL | Preserved        | Experimental WebGL | Captures rendered canvas | Plain sprite            |
 | Blur                       | Yes       | Experimental WebGL | Preserved        | Experimental WebGL | Captures rendered canvas | Plain sprite            |
@@ -115,6 +115,29 @@ rendering resolution and clips the selected sprite; it does not reuse the
 bounded spawn-silhouette alpha grid. Canvas keeps the ordinary unmasked sprite.
 Sprite warp and local heat shimmer change the selected sprite texture only;
 they do not sample or bend the game scene behind it.
+
+## Optional-feature lifecycle
+
+The same state rules apply to every optional capability in this matrix:
+
+| Authored state | Editor preview                                                | Editable project / save-load                                                                        | Runtime JSON v15 and generated Phaser TS                                                   | Undo/redo                                                  |
+| -------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Enabled        | Applies immediately                                           | Configuration and `enabled: true` are saved                                                         | Applies through the shared evaluator/runtime                                               | Restores the complete enabled configuration                |
+| Disabled       | Contributes nothing; cached visual/transient state is cleared | Tuned configuration is preserved with `enabled: false`                                              | Disabled configuration is intentionally retained but does not play or allocate the feature | Restores the prior enabled state and settings              |
+| Removed        | Stops immediately; dependent references are repaired          | List/reference data is deleted or set to `null`; required blocks use canonical disabled defaults    | Removed events/references are absent; required blocks contain only canonical defaults      | Restores or removes the complete authored value atomically |
+| Reset          | Re-evaluates with the default value                           | Only the named control or feature scope changes; enabled state and unrelated settings remain intact | Exports the reset authored value                                                           | Is one authoring change                                    |
+
+For numeric or nullable capabilities, neutral values carry the same meaning:
+zero gravity/slowdown and randomness contribute nothing, `tint: null` means no
+tint, and `blendMode: "normal"` means no additive blend. Property presets are
+not hidden runtime modifiers: they generate ordinary editable property moments.
+Trail presets likewise populate the ordinary trail configuration. Removing or
+resetting either affects only that authored data.
+
+The Advanced **Effect performance** panel includes a collapsed Lifecycle
+diagnostic. It lists only modifiers and event links that can affect the selected
+layer now, alongside measured live and trail sprite counts. Preserved settings
+inside a disabled feature are intentionally absent from that active list.
 
 ## Asset and playback support
 

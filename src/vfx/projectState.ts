@@ -1,4 +1,5 @@
 import { makeId } from "./defaults";
+import { MAX_VFX_NAME_LENGTH } from "./inputLimits";
 import { activationEffectiveEnd, compileLayerActivations } from "./events";
 import { resolveProjectGroups } from "./groups";
 import type { VfxAsset, VfxProject } from "./types";
@@ -105,11 +106,14 @@ export function copyProject(
   name = `${project.metadata.name} copy`,
 ): VfxProject {
   const now = new Date().toISOString();
+  const safeName = name.trim().slice(0, MAX_VFX_NAME_LENGTH);
   return {
     ...JSON.parse(JSON.stringify(project)),
     metadata: {
       id: makeId("project"),
-      name: name.trim() || `${project.metadata.name} copy`,
+      name:
+        safeName ||
+        `${project.metadata.name.slice(0, MAX_VFX_NAME_LENGTH - 5).trimEnd()} copy`,
       createdAt: now,
       updatedAt: now,
     },

@@ -23,6 +23,7 @@ import type {
   BeamLayer,
 } from "./types";
 import { createDefaultRenderingEffects } from "./renderingEffects";
+import { MAX_VFX_NAME_LENGTH } from "./inputLimits";
 
 export const BUILT_IN_ASSETS: VfxAsset[] = [
   {
@@ -246,14 +247,23 @@ export const DEFAULT_KEYFRAMES: KeyframeSettings = {
 
 let idCounter = 0;
 export function makeId(prefix: string): string {
+  const safePrefix =
+    prefix
+      .slice(0, 64)
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^[^A-Za-z0-9]+/, "")
+      .slice(0, 32) || "id";
   idCounter += 1;
-  return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}`;
+  if (typeof globalThis.crypto?.randomUUID === "function")
+    return `${safePrefix}-${globalThis.crypto.randomUUID()}-${idCounter.toString(36)}`;
+  return `${safePrefix}-${Date.now().toString(36)}-${idCounter.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function createGroup(name = "Unnamed group"): VfxGroup {
+  const safeName = name.trim().slice(0, MAX_VFX_NAME_LENGTH);
   return {
     id: makeId("group"),
-    name: name.trim() || "Unnamed group",
+    name: safeName || "Unnamed group",
     x: 0,
     y: 0,
     delay: 0,
@@ -303,9 +313,10 @@ export function createLayer(
           : "Animated image",
   assetId: string | null = "builtin-flash",
 ): VfxLayer {
+  const safeName = name.trim().slice(0, MAX_VFX_NAME_LENGTH);
   const base = {
     id: makeId("layer"),
-    name,
+    name: safeName || "Unnamed layer",
     assetId,
     visible: true,
     enabled: true,
@@ -544,11 +555,12 @@ export function createExampleProject(): VfxProject {
 
 export function createEmptyProject(name = "Untitled Effect"): VfxProject {
   const now = new Date().toISOString();
+  const safeName = name.trim().slice(0, MAX_VFX_NAME_LENGTH);
   return {
     formatVersion: 17,
     metadata: {
       id: makeId("project"),
-      name,
+      name: safeName || "Untitled Effect",
       createdAt: now,
       updatedAt: now,
     },

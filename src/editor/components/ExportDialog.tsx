@@ -9,7 +9,13 @@ import {
   Film,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   canRecordWebm,
   type PreviewRecording,
@@ -27,6 +33,10 @@ import { useFocusRegion } from "../useFocusRegion";
 
 type ExportTab = "preview" | "runtime" | "phaser" | "project";
 type PreviewFormat = PreviewRecordingRequest["format"];
+
+const EXPORT_TABS: ExportTab[] = ["preview", "runtime", "phaser", "project"];
+const exportTabId = (tab: ExportTab) => `export-tab-${tab}`;
+const exportPanelId = (tab: ExportTab) => `export-panel-${tab}`;
 
 const PREVIEW_SIZES = [
   { id: "game", label: "Game 16:9 · 640 × 360", width: 640, height: 360 },
@@ -61,7 +71,10 @@ export function ExportDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<ExportTab>("preview");
-  const [copied, setCopied] = useState(false);
+  const [copiedTab, setCopiedTab] = useState<ExportTab | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const copyRequestRef = useRef(0);
   const [recording, setRecording] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState(0);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -70,23 +83,42 @@ export function ExportDialog({
   const [lastRecording, setLastRecording] = useState<PreviewRecording | null>(
     null,
   );
-  const [webmSupported, setWebmSupported] = useState(false);
+  const [webmSupported, setWebmSupported] = useState<boolean | null>(null);
   const dialogRef = useFocusRegion<HTMLElement>({
     escapeEnabled: !recording,
     onEscape: onClose,
   });
   useEffect(() => {
     const timer = window.setTimeout(() => setWebmSupported(canRecordWebm()), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      copyRequestRef.current += 1;
+      window.clearTimeout(timer);
+      if (copyResetTimerRef.current !== null)
+        window.clearTimeout(copyResetTimerRef.current);
+    };
   }, []);
-  const values = useMemo(
-    () => ({
-      runtime: JSON.stringify(createRuntimeDefinition(project), null, 2),
-      phaser: generatePhaserCode(project),
-      project: serializeProject(project),
-    }),
-    [project],
-  );
+  const preparedExports = useMemo(() => {
+    try {
+      return {
+        values: {
+          runtime: JSON.stringify(createRuntimeDefinition(project), null, 2),
+          phaser: generatePhaserCode(project),
+          project: serializeProject(project),
+        },
+        error: null,
+      };
+    } catch (error) {
+      return {
+        values: { runtime: "", phaser: "", project: "" },
+        error:
+          error instanceof Error
+            ? error.message
+            : "This project is not ready to export.",
+      };
+    }
+  }, [project]);
+  const values = preparedExports.values;
+  const integrityError = preparedExports.error;
   const content = tab === "preview" ? "" : values[tab];
   const base = safeFilename(project.metadata.name);
   const previewSize =
@@ -105,11 +137,89 @@ export function ExportDialog({
   const hasExportableLayer = project.layers.some(
     (layer) => layer.enabled && layer.visible && layer.assetId,
   );
-  const hasExperimentalRenderingEffects = project.layers.some((layer) =>
-    hasEnabledRenderingEffects(layer.appearance.effects),
+  const hasExperimentalRenderingEffects = project.layers.some(
+    (layer) =>
+      layer.enabled && hasEnabledRenderingEffects(layer.appearance.effects),
   );
 
+  const selectTab = (nextTab: ExportTab) => {
+    copyRequestRef.current += 1;
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+    setCopiedTab(null);
+    setCopyError(null);
+    setTab(nextTab);
+  };
+
+  const moveTabFocus = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      ![
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "Home",
+        "End",
+      ].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    const currentIndex = EXPORT_TABS.indexOf(tab);
+    const nextTab =
+      event.key === "Home"
+        ? EXPORT_TABS[0]
+        : event.key === "End"
+          ? EXPORT_TABS.at(-1)!
+          : EXPORT_TABS[
+              (currentIndex +
+                (event.key === "ArrowLeft" || event.key === "ArrowUp"
+                  ? -1
+                  : 1) +
+                EXPORT_TABS.length) %
+                EXPORT_TABS.length
+            ];
+    selectTab(nextTab);
+    window.requestAnimationFrame(() =>
+      document.getElementById(exportTabId(nextTab))?.focus(),
+    );
+  };
+
+  const copyCurrentExport = async () => {
+    const request = ++copyRequestRef.current;
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+    setCopiedTab(null);
+    setCopyError(null);
+    try {
+      if (!navigator.clipboard?.writeText)
+        throw new Error("Clipboard access is unavailable in this browser.");
+      await navigator.clipboard.writeText(content);
+      if (request !== copyRequestRef.current) return;
+      setCopiedTab(tab);
+      copyResetTimerRef.current = window.setTimeout(() => {
+        if (request !== copyRequestRef.current) return;
+        setCopiedTab(null);
+        copyResetTimerRef.current = null;
+      }, 1600);
+    } catch (error) {
+      if (request !== copyRequestRef.current) return;
+      setCopyError(
+        error instanceof Error
+          ? error.message
+          : "This export could not be copied to the clipboard.",
+      );
+    }
+  };
+
   const recordPreview = async () => {
+    if (integrityError) {
+      setRecordingError(integrityError);
+      return;
+    }
     setRecording(true);
     setRecordingProgress(0);
     setRecordingError(null);
@@ -163,41 +273,70 @@ export function ExportDialog({
             <X size={18} />
           </button>
         </header>
-        <div className="dialog-tabs">
+        <div className="dialog-tabs" role="tablist" aria-label="Export type">
           <button
+            id={exportTabId("preview")}
             type="button"
+            role="tab"
+            aria-selected={tab === "preview"}
+            aria-controls={exportPanelId("preview")}
+            tabIndex={tab === "preview" ? 0 : -1}
             className={tab === "preview" ? "is-active" : ""}
-            onClick={() => setTab("preview")}
+            onClick={() => selectTab("preview")}
+            onKeyDown={moveTabFocus}
             disabled={recording}
           >
             <Film size={15} /> Preview video
           </button>
           <button
+            id={exportTabId("runtime")}
             type="button"
+            role="tab"
+            aria-selected={tab === "runtime"}
+            aria-controls={exportPanelId("runtime")}
+            tabIndex={tab === "runtime" ? 0 : -1}
             className={tab === "runtime" ? "is-active" : ""}
-            onClick={() => setTab("runtime")}
+            onClick={() => selectTab("runtime")}
+            onKeyDown={moveTabFocus}
             disabled={recording}
           >
             <FileJson size={15} /> Runtime JSON
           </button>
           <button
+            id={exportTabId("phaser")}
             type="button"
+            role="tab"
+            aria-selected={tab === "phaser"}
+            aria-controls={exportPanelId("phaser")}
+            tabIndex={tab === "phaser" ? 0 : -1}
             className={tab === "phaser" ? "is-active" : ""}
-            onClick={() => setTab("phaser")}
+            onClick={() => selectTab("phaser")}
+            onKeyDown={moveTabFocus}
             disabled={recording}
           >
             <FileCode2 size={15} /> Phaser code
           </button>
           <button
+            id={exportTabId("project")}
             type="button"
+            role="tab"
+            aria-selected={tab === "project"}
+            aria-controls={exportPanelId("project")}
+            tabIndex={tab === "project" ? 0 : -1}
             className={tab === "project" ? "is-active" : ""}
-            onClick={() => setTab("project")}
+            onClick={() => selectTab("project")}
+            onKeyDown={moveTabFocus}
             disabled={recording}
           >
             <Download size={15} /> Vvfx project
           </button>
         </div>
         <p className="export-explainer">{info}</p>
+        {integrityError && (
+          <p className="preview-export-error" role="alert">
+            {integrityError}
+          </p>
+        )}
         {hasExperimentalRenderingEffects && (
           <p className="export-explainer" role="note">
             Experimental pixel effects require Phaser WebGL. Runtime JSON,
@@ -208,7 +347,12 @@ export function ExportDialog({
           </p>
         )}
         {tab === "preview" ? (
-          <div className="preview-export-panel">
+          <div
+            id={exportPanelId("preview")}
+            className="preview-export-panel"
+            role="tabpanel"
+            aria-labelledby={exportTabId("preview")}
+          >
             <div className="preview-export-options">
               <label>
                 Format
@@ -303,7 +447,7 @@ export function ExportDialog({
                 {Math.max(1, Math.ceil(lastRecording.blob.size / 1024))} KB
               </p>
             )}
-            {previewFormat === "webm" && !webmSupported && (
+            {previewFormat === "webm" && webmSupported === false && (
               <p className="preview-export-error" role="alert">
                 WebM recording is unavailable in this browser. GIF export still
                 works, or use the latest Chrome, Edge, or Firefox.
@@ -316,9 +460,20 @@ export function ExportDialog({
             )}
           </div>
         ) : (
-          <pre className="code-preview">
+          <pre
+            id={exportPanelId(tab)}
+            className="code-preview"
+            role="tabpanel"
+            aria-labelledby={exportTabId(tab)}
+            tabIndex={0}
+          >
             <code>{content}</code>
           </pre>
+        )}
+        {tab !== "preview" && copyError && (
+          <p className="preview-export-error" role="alert">
+            {copyError}
+          </p>
         )}
         <footer>
           {tab === "preview" ? (
@@ -329,8 +484,9 @@ export function ExportDialog({
                 type="button"
                 disabled={
                   recording ||
-                  (previewFormat === "webm" && !webmSupported) ||
-                  !hasExportableLayer
+                  (previewFormat === "webm" && webmSupported !== true) ||
+                  !hasExportableLayer ||
+                  Boolean(integrityError)
                 }
                 onClick={() => void recordPreview()}
               >
@@ -348,18 +504,20 @@ export function ExportDialog({
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(content);
-                  setCopied(true);
-                  window.setTimeout(() => setCopied(false), 1600);
-                }}
+                disabled={Boolean(integrityError)}
+                onClick={() => void copyCurrentExport()}
               >
-                {copied ? <Check size={15} /> : <Clipboard size={15} />}{" "}
-                {copied ? "Copied" : "Copy"}
+                {copiedTab === tab ? (
+                  <Check size={15} />
+                ) : (
+                  <Clipboard size={15} />
+                )}{" "}
+                {copiedTab === tab ? "Copied" : "Copy"}
               </button>
               <button
                 className="primary-action"
                 type="button"
+                disabled={Boolean(integrityError)}
                 onClick={() =>
                   downloadText(
                     `${base}${extension}`,

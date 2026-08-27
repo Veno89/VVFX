@@ -13,12 +13,13 @@ import {
   insertTemplateIntoProject,
 } from "../src/vfx/templates";
 import type { VfxAsset } from "../src/vfx/types";
+import { TINY_WEBP_DATA_URL, validPngDataUrl } from "./fixtures/portableImages";
 
 const maskAsset = (id = "mask-source"): VfxAsset => ({
   id,
   name: "Lightning silhouette",
   mimeType: "image/png",
-  dataUrl: "data:image/png;base64,prepared-mask",
+  dataUrl: validPngDataUrl(200, 100),
   transparency: "yes",
   width: 200,
   height: 100,
@@ -104,7 +105,10 @@ describe("alpha-mask spawning integration", () => {
     const destination = createEmptyProject("Destination");
     destination.assets.push({
       ...maskAsset(mask.id),
-      dataUrl: "data:image/png;base64,different-image",
+      mimeType: "image/webp",
+      dataUrl: TINY_WEBP_DATA_URL,
+      width: 1,
+      height: 1,
       alphaMask: { columns: 1, rows: 1, alpha: [255] },
     });
     const inserted = insertTemplateIntoProject(destination, template);

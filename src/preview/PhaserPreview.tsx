@@ -15,7 +15,9 @@ import {
   alphaMaskWorldDimensions,
 } from "../vfx/alphaMask";
 import { applySpriteSheetFrames } from "../vfx/phaserFrames";
+import { VVFX_INTERNAL_MISSING_TEXTURE_KEY } from "../vfx/inputLimits";
 import {
+  clearPhaserRenderingEffects,
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
 } from "../vfx/renderingEffects";
@@ -30,6 +32,7 @@ import {
   layerPositionAfterPreviewDrag,
   pathPointAfterPreviewDrag,
 } from "./dragPosition";
+import { destroyStalePreviewSprites } from "./spriteLifecycle";
 
 interface PhaserPreviewProps {
   project: VfxProject;
@@ -59,6 +62,211 @@ interface LiveScene {
   overlay: Phaser.GameObjects.Graphics;
   grid: Phaser.GameObjects.Graphics;
   pathHandles: Map<string, PathHandle>;
+  assetTextures: PreviewAssetTextureState;
+}
+
+interface PreviewAssetTextureSignature {
+  source: string;
+  width: number | null;
+  height: number | null;
+  atlasFrame: string | null;
+  frameWidth: number | null;
+  frameHeight: number | null;
+  frameCount: number | null;
+}
+
+interface PendingPreviewAssetTexture {
+  signature: PreviewAssetTextureSignature;
+  addedEvent: string;
+  onAdded: (texture: Phaser.Textures.Texture) => void;
+  onError: (key: string) => void;
+}
+
+export interface PreviewAssetTextureState {
+  installed: Map<string, PreviewAssetTextureSignature>;
+  pending: Map<string, PendingPreviewAssetTexture>;
+  currentAssets: () => VfxProject["assets"];
+  onRevision: () => void;
+  beforeRemove?: (assetId: string) => void;
+  disposed: boolean;
+}
+
+const previewAssetTextureSignature = (
+  asset: VfxProject["assets"][number],
+): PreviewAssetTextureSignature => ({
+  // Keep the project's immutable source string instead of joining/copying up
+  // to 24 MiB of Base64 data into another signature on every asset sync.
+  source: asset.dataUrl,
+  width: asset.width ?? null,
+  height: asset.height ?? null,
+  atlasFrame: asset.atlasFrame ?? null,
+  frameWidth: asset.spriteSheet?.frameWidth ?? null,
+  frameHeight: asset.spriteSheet?.frameHeight ?? null,
+  frameCount: asset.spriteSheet?.frameCount ?? null,
+});
+
+const previewAssetTextureSignaturesEqual = (
+  left: PreviewAssetTextureSignature | undefined,
+  right: PreviewAssetTextureSignature,
+) =>
+  Boolean(
+    left &&
+    left.source === right.source &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.atlasFrame === right.atlasFrame &&
+    left.frameWidth === right.frameWidth &&
+    left.frameHeight === right.frameHeight &&
+    left.frameCount === right.frameCount,
+  );
+
+const previewAssetById = (assets: VfxProject["assets"], assetId: string) =>
+  assets.find(
+    (asset) => asset.id === assetId && asset.mimeType !== "image/builtin",
+  );
+
+export function createPreviewAssetTextureState(
+  currentAssets: () => VfxProject["assets"],
+): PreviewAssetTextureState {
+  return {
+    installed: new Map(),
+    pending: new Map(),
+    currentAssets,
+    onRevision: () => undefined,
+    disposed: false,
+  };
+}
+
+function removePreviewAssetTexture(
+  scene: Phaser.Scene,
+  state: PreviewAssetTextureState,
+  assetId: string,
+) {
+  state.installed.delete(assetId);
+  if (!scene.textures.exists(assetId)) return;
+  state.beforeRemove?.(assetId);
+  scene.textures.remove(assetId);
+}
+
+/**
+ * Keeps preview-owned texture keys aligned with the current project library.
+ * Pending Base64 decodes cannot be aborted through Phaser's TextureManager, so
+ * their keyed completion handlers consult the latest assets and immediately
+ * discard a late or superseded texture instead of resurrecting it.
+ */
+export function syncPreviewAssetTextures(
+  scene: Phaser.Scene,
+  assets: VfxProject["assets"],
+  state: PreviewAssetTextureState,
+  onRevision: () => void,
+  beforeRemove?: (assetId: string) => void,
+) {
+  if (state.disposed) return;
+  state.onRevision = onRevision;
+  state.beforeRemove = beforeRemove;
+
+  const customAssets = assets.filter(
+    (asset) => asset.mimeType !== "image/builtin",
+  );
+  const desired = new Map(
+    customAssets.map((asset) => [
+      asset.id,
+      previewAssetTextureSignature(asset),
+    ]),
+  );
+
+  for (const [assetId, installedSignature] of state.installed) {
+    if (
+      previewAssetTextureSignaturesEqual(
+        desired.get(assetId),
+        installedSignature,
+      )
+    )
+      continue;
+    removePreviewAssetTexture(scene, state, assetId);
+  }
+
+  for (const asset of customAssets) {
+    const signature = desired.get(asset.id) as PreviewAssetTextureSignature;
+    if (scene.textures.exists(asset.id)) {
+      state.installed.set(asset.id, signature);
+      applySpriteSheetFrames(scene.textures.get(asset.id), asset, true);
+      continue;
+    }
+
+    // Let an older in-flight decode finish. Its handler will either accept the
+    // still-current source or remove it and request a fresh synchronization.
+    if (state.pending.has(asset.id)) continue;
+
+    const addedEvent = `addtexture-${asset.id}`;
+    const cleanup = () => {
+      if (state.pending.get(asset.id) !== pending) return;
+      scene.textures.off(addedEvent, pending.onAdded);
+      scene.textures.off("onerror", pending.onError);
+      state.pending.delete(asset.id);
+    };
+    const onAdded = (texture: Phaser.Textures.Texture) => {
+      cleanup();
+      if (state.disposed) return;
+      const current = previewAssetById(state.currentAssets(), asset.id);
+      if (
+        !current ||
+        !previewAssetTextureSignaturesEqual(
+          previewAssetTextureSignature(current),
+          pending.signature,
+        )
+      ) {
+        removePreviewAssetTexture(scene, state, asset.id);
+        state.onRevision();
+        return;
+      }
+      state.installed.set(asset.id, pending.signature);
+      applySpriteSheetFrames(texture, current, true);
+      state.onRevision();
+    };
+    const onError = (key: string) => {
+      if (key !== asset.id) return;
+      cleanup();
+      if (state.disposed) return;
+      const current = previewAssetById(state.currentAssets(), asset.id);
+      if (
+        current &&
+        !previewAssetTextureSignaturesEqual(
+          previewAssetTextureSignature(current),
+          pending.signature,
+        )
+      )
+        state.onRevision();
+    };
+    const pending: PendingPreviewAssetTexture = {
+      signature,
+      addedEvent,
+      onAdded,
+      onError,
+    };
+    state.pending.set(asset.id, pending);
+    scene.textures.once(addedEvent, onAdded);
+    scene.textures.on("onerror", onError);
+    try {
+      scene.textures.addBase64(asset.id, asset.dataUrl);
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  }
+}
+
+export function disposePreviewAssetTextureState(
+  scene: Phaser.Scene,
+  state: PreviewAssetTextureState,
+) {
+  state.disposed = true;
+  for (const pending of state.pending.values()) {
+    scene.textures.off(pending.addedEvent, pending.onAdded);
+    scene.textures.off("onerror", pending.onError);
+  }
+  state.pending.clear();
+  state.installed.clear();
 }
 
 function createBuiltInTextures(scene: Phaser.Scene) {
@@ -94,7 +302,7 @@ function createBuiltInTextures(scene: Phaser.Scene) {
       .fillCircle(92, 76, 28);
     g.fillStyle(0xffffff, 0.34).fillCircle(61, 69, 29).fillCircle(79, 70, 24);
   });
-  make("vvfx-missing", (g) => {
+  make(VVFX_INTERNAL_MISSING_TEXTURE_KEY, (g) => {
     g.fillStyle(0x211f30, 1).fillRoundedRect(20, 20, 88, 88, 16);
     g.lineStyle(5, 0xff6d8d, 0.9).strokeRoundedRect(20, 20, 88, 88, 16);
     g.lineBetween(40, 40, 88, 88).lineBetween(88, 40, 40, 88);
@@ -179,6 +387,8 @@ export function PhaserPreview({
   const lastPerformanceSignatureRef = useRef("");
   const idlePerformanceTimerRef = useRef<number | null>(null);
   const [textureRevision, setTextureRevision] = useState(0);
+  const latestAssetsRef = useRef(project.assets);
+  latestAssetsRef.current = project.assets;
 
   useEffect(() => {
     moveRef.current = onMoveLayer;
@@ -237,6 +447,9 @@ export function PhaserPreview({
               overlay: this.add.graphics().setDepth(10002),
               grid: this.add.graphics().setDepth(-100),
               pathHandles: new Map(),
+              assetTextures: createPreviewAssetTextureState(
+                () => latestAssetsRef.current,
+              ),
             };
           },
         },
@@ -246,6 +459,11 @@ export function PhaserPreview({
     });
     return () => {
       cancelled = true;
+      if (liveRef.current)
+        disposePreviewAssetTextureState(
+          liveRef.current.scene,
+          liveRef.current.assetTextures,
+        );
       liveRef.current = null;
       canvasReadyRef.current?.(null);
       gameRef.current?.destroy(true);
@@ -262,19 +480,19 @@ export function PhaserPreview({
       );
       return () => window.clearTimeout(timer);
     }
-    for (const asset of project.assets) {
-      if (asset.mimeType === "image/builtin") continue;
-      if (live.scene.textures.exists(asset.id)) {
-        applySpriteSheetFrames(live.scene.textures.get(asset.id), asset, true);
-        continue;
-      }
-      live.scene.textures.once("addtexture", (key: string) => {
-        if (key !== asset.id) return;
-        applySpriteSheetFrames(live.scene.textures.get(asset.id), asset, true);
-        setTextureRevision((revision) => revision + 1);
-      });
-      live.scene.textures.addBase64(asset.id, asset.dataUrl);
-    }
+    syncPreviewAssetTextures(
+      live.scene,
+      project.assets,
+      live.assetTextures,
+      () => setTextureRevision((revision) => revision + 1),
+      (assetId) => {
+        for (const sprite of live.sprites.values()) {
+          clearPhaserRenderingEffects(sprite);
+          if (sprite.texture.key === assetId)
+            sprite.setTexture(VVFX_INTERNAL_MISSING_TEXTURE_KEY, "__BASE");
+        }
+      },
+    );
   }, [project.assets, textureRevision]);
 
   useEffect(() => {
@@ -320,24 +538,27 @@ export function PhaserPreview({
       captureMode,
     );
     const instances = replication.instances;
+    const trailSprites = instances.reduce(
+      (count, instance) => count + (instance.trailIndex === null ? 0 : 1),
+      0,
+    );
     const resolveRenderingAssetFrame: PhaserRenderingAssetFrameResolver = (
       assetId,
     ) => resolvePreviewRenderingAssetFrame(scene, project.assets, assetId);
     const editingEnabled = !captureMode && stressCopies === 1;
     const sampleTime = window.performance.now();
     const nextKeys = new Set(instances.map((instance) => instance.key));
-    for (const [key, sprite] of sprites) {
-      if (!nextKeys.has(key) && !sprite.getData("vvfxDragging")) {
-        sprite.destroy();
-        sprites.delete(key);
-      }
-    }
+    const currentAssetIds = new Set(project.assets.map((asset) => asset.id));
+    const currentLayerIds = new Set(project.layers.map((layer) => layer.id));
+    destroyStalePreviewSprites(sprites, nextKeys, currentLayerIds);
 
     instances.forEach((instance) => {
       const texture =
-        instance.assetId && scene.textures.exists(instance.assetId)
+        instance.assetId &&
+        currentAssetIds.has(instance.assetId) &&
+        scene.textures.exists(instance.assetId)
           ? instance.assetId
-          : "vvfx-missing";
+          : VVFX_INTERNAL_MISSING_TEXTURE_KEY;
       let sprite = sprites.get(instance.key);
       if (!sprite) {
         const draggableSprite = scene.add.image(
@@ -764,6 +985,7 @@ export function PhaserPreview({
       performanceSampleRef.current?.({
         liveSprites: sprites.size,
         baseSprites: baseInstances.length,
+        trailSprites,
         newSpritesPerSecond: countRecentCreations(
           creationTimestampsRef.current,
           sampleTime,
@@ -779,6 +1001,7 @@ export function PhaserPreview({
       performanceSampleRef.current?.({
         liveSprites: liveRef.current?.sprites.size ?? 0,
         baseSprites: baseInstances.length,
+        trailSprites,
         newSpritesPerSecond: 0,
         requestedCopies: replication.requestedCopies,
         effectiveCopies: replication.effectiveCopies,

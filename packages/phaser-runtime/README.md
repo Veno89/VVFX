@@ -21,9 +21,16 @@ effects with one warning. Use an ordinary opacity fade when erosion must still
 disappear, and bake essential clipping into the source art when Canvas must
 match. Sprite warp and shimmer never refract the scene behind the effect.
 
-From the Vvfx repository, build it with `npm run build:runtime`. A local Phaser
-game can then install the package folder, for example with
-`npm install ../Vvfx/packages/phaser-runtime`.
+From the Vvfx repository, build it with `npm run build:runtime`. This produces
+the JavaScript bundle and regenerates the package declarations from the same
+TypeScript source. A local Phaser game can then install the package folder, for
+example with `npm install ../Vvfx/packages/phaser-runtime`.
+
+Before sharing a runtime build, run `npm run test:runtime-package`. The check
+creates the real npm tarball, installs it into an isolated consumer, validates
+the published file list, type-checks its public API, and executes its JavaScript
+exports. The package remains marked private/local; publishing it to a registry
+requires an explicit release decision.
 
 ```ts
 import { playVvfx } from "@vvfx/phaser-runtime";
@@ -71,6 +78,31 @@ await playVvfx(this, impact, {
 Embedded sprite sheets are sliced automatically. When mapping a sheet to a
 game texture through `assetKeys`, preload it as a Phaser sprite sheet with
 numeric frames starting at zero and the same frame dimensions used in Vvfx.
+
+Image loading is cancelled automatically if the Phaser scene shuts down. A
+caller can also cancel startup explicitly; no effect is constructed after a
+cancelled or timed-out load:
+
+```ts
+const controller = new AbortController();
+const loading = playVvfx(this, impact, { signal: controller.signal });
+
+controller.abort();
+try {
+  await loading;
+} catch (error) {
+  if (!(error instanceof Error) || error.name !== "AbortError") throw error;
+}
+```
+
+Embedded images decode with bounded concurrency and share one 10-second
+startup deadline. `loadVvfxAssets(scene, definition, assetKeys, signal)`
+accepts the same optional cancellation signal for manual preload workflows.
+Browser image decoding itself cannot always be interrupted after the browser
+has started it. Cancellation stops Vvfx startup immediately, clears the
+candidate source where possible, and rejects late callbacks; any decode that
+still finishes is not installed as a Phaser texture and cannot create an
+effect.
 
 Package version 0.14.0 emits runtime format version 15 and accepts versions 1
 through 15. Older exports are migrated with safe defaults for capabilities

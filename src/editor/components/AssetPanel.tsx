@@ -12,8 +12,22 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { prepareAlphaMaskFromDataUrl } from "../alphaMaskImport";
-import { DEFAULT_FRAME_ANIMATION } from "../../vfx/defaults";
+import { DEFAULT_FRAME_ANIMATION, makeId } from "../../vfx/defaults";
 import { maximumAlphaMaskValue } from "../../vfx/alphaMask";
+import {
+  MAX_IMAGE_FILE_BYTES,
+  MAX_PROJECT_ASSETS,
+  MAX_PROJECT_EMBEDDED_IMAGE_BYTES,
+  MAX_PROJECT_IMAGE_PIXELS,
+  MAX_UPLOAD_FILES,
+  MAX_VFX_NAME_LENGTH,
+} from "../../vfx/inputLimits";
+import {
+  inspectPortableImageDataUrl,
+  inspectPortableImageHeader,
+  type PortableImageInspection,
+  type PortableImageMimeType,
+} from "../../vfx/portableImage";
 import {
   normalizeSpriteSheet,
   spriteSheetFromGrid,
@@ -23,18 +37,126 @@ import {
 import type { VfxAsset } from "../../vfx/types";
 import { FlipbookPreview } from "./FlipbookPreview";
 
-async function readImage(file: File): Promise<VfxAsset> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
+export type PreparedAssetMetadata = Pick<
+  VfxAsset,
+  "alphaMask" | "transparency" | "width" | "height"
+>;
+
+const cancelled = () =>
+  new DOMException("Image preparation was cancelled.", "AbortError");
+
+function ensureActive(signal: AbortSignal): void {
+  if (signal.aborted) throw cancelled();
+}
+
+function readBlob(
+  blob: Blob,
+  mode: "array-buffer" | "data-url",
+  signal: AbortSignal,
+): Promise<ArrayBuffer | string> {
+  ensureActive(signal);
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("This image could not be read."));
-    reader.readAsDataURL(file);
+    let settled = false;
+    const cleanup = () => {
+      reader.onload = null;
+      reader.onerror = null;
+      reader.onabort = null;
+      signal.removeEventListener("abort", abort);
+    };
+    const finish = (value: ArrayBuffer | string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const fail = (error: Error | DOMException) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const abort = () => {
+      try {
+        if (reader.readyState === FileReader.LOADING) reader.abort();
+      } catch {
+        // The cancellation still rejects even when a browser shim cannot abort.
+      }
+      fail(cancelled());
+    };
+    reader.onload = () => {
+      if (mode === "array-buffer" && reader.result instanceof ArrayBuffer)
+        finish(reader.result);
+      else if (mode === "data-url" && typeof reader.result === "string")
+        finish(reader.result);
+      else fail(new Error("This image could not be read."));
+    };
+    reader.onerror = () => fail(new Error("This image could not be read."));
+    reader.onabort = () => fail(cancelled());
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      if (mode === "array-buffer") reader.readAsArrayBuffer(blob);
+      else reader.readAsDataURL(blob);
+    } catch (error) {
+      fail(
+        error instanceof Error
+          ? error
+          : new Error("This image could not be read."),
+      );
+    }
   });
-  const inspection = await prepareAlphaMaskFromDataUrl(dataUrl);
+}
+
+async function inspectImageFile(
+  file: File,
+  signal: AbortSignal,
+): Promise<Extract<PortableImageInspection, { ok: true }>> {
+  const mimeType = file.type as PortableImageMimeType;
+  const header = (await readBlob(
+    file.slice(0, 32),
+    "array-buffer",
+    signal,
+  )) as ArrayBuffer;
+  const headerInspection = inspectPortableImageHeader(
+    new Uint8Array(header),
+    mimeType,
+    file.size,
+  );
+  if (!headerInspection.ok) throw new Error(headerInspection.error);
+  return headerInspection;
+}
+
+async function readImage(
+  file: File,
+  headerInspection: Extract<PortableImageInspection, { ok: true }>,
+  signal: AbortSignal,
+): Promise<VfxAsset> {
+  ensureActive(signal);
+  const mimeType = file.type as PortableImageMimeType;
+  const dataUrl = (await readBlob(file, "data-url", signal)) as string;
+  const dataInspection = inspectPortableImageDataUrl(dataUrl, mimeType);
+  if (!dataInspection.ok) throw new Error(dataInspection.error);
+  if (
+    dataInspection.width !== headerInspection.width ||
+    dataInspection.height !== headerInspection.height ||
+    dataInspection.byteLength !== headerInspection.byteLength
+  )
+    throw new Error("The image changed while it was being imported.");
+  const inspection = await prepareAlphaMaskFromDataUrl(dataUrl, signal);
+  ensureActive(signal);
+  if (
+    inspection.width !== headerInspection.width ||
+    inspection.height !== headerInspection.height
+  )
+    throw new Error("The decoded image dimensions do not match its header.");
   return {
-    id: `asset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-    name: file.name.replace(/\.(png|webp)$/i, ""),
-    mimeType: file.type === "image/webp" ? "image/webp" : "image/png",
+    id: makeId("asset"),
+    name:
+      file.name
+        .replace(/\.(png|webp)$/i, "")
+        .trim()
+        .slice(0, MAX_VFX_NAME_LENGTH) || "Imported image",
+    mimeType,
     dataUrl,
     transparency: inspection.transparency,
     width: inspection.width,
@@ -285,26 +407,37 @@ function AssetVisualMaskStatus({ asset }: { asset: VfxAsset }) {
 
 export function AssetPanel({
   assets,
+  projectGeneration = 0,
   selectedId,
   onSelect,
   onUpload,
   onRename,
   onChangeAsset,
+  onPrepareAsset,
   onRemove,
   onCreateLayer,
   onError,
 }: {
   assets: VfxAsset[];
+  projectGeneration?: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onUpload: (assets: VfxAsset[]) => void;
+  onUpload: (assets: VfxAsset[], projectGeneration: number) => boolean | void;
   onRename: (id: string, name: string) => void;
   onChangeAsset: (asset: VfxAsset) => void;
+  onPrepareAsset?: (
+    assetId: string,
+    metadata: PreparedAssetMetadata,
+    projectGeneration: number,
+  ) => boolean | void;
   onRemove: (id: string) => void;
   onCreateLayer: (assetId: string) => void;
   onError: (message: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeUploadRef = useRef<AbortController | null>(null);
+  const activeLegacyPreparationRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [preparingUploads, setPreparingUploads] = useState(false);
   const [preparingAssetId, setPreparingAssetId] = useState<string | null>(null);
@@ -325,8 +458,50 @@ export function AssetPanel({
     };
   }, []);
 
+  useEffect(() => {
+    const upload = activeUploadRef.current;
+    const legacyPreparation = activeLegacyPreparationRef.current;
+    activeUploadRef.current = null;
+    activeLegacyPreparationRef.current = null;
+    upload?.abort();
+    legacyPreparation?.abort();
+    queueMicrotask(() => {
+      if (
+        !mountedRef.current ||
+        activeUploadRef.current ||
+        activeLegacyPreparationRef.current
+      ) {
+        return;
+      }
+      setPreparingUploads(false);
+      setPreparingAssetId(null);
+      setPreparationNotice(null);
+      setDraggingFiles(false);
+    });
+  }, [projectGeneration]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const upload = activeUploadRef.current;
+      const legacyPreparation = activeLegacyPreparationRef.current;
+      activeUploadRef.current = null;
+      activeLegacyPreparationRef.current = null;
+      upload?.abort();
+      legacyPreparation?.abort();
+    };
+  }, []);
+
   const handleFiles = async (files: FileList | null) => {
-    if (!files?.length || preparingUploads) return;
+    if (!files?.length || preparingUploads || activeUploadRef.current) return;
+    const uploadProjectGeneration = projectGeneration;
+    if (files.length > MAX_UPLOAD_FILES) {
+      const message = `Add at most ${MAX_UPLOAD_FILES} images at once.`;
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+      return;
+    }
     const allowed = [...files].filter(
       (file) => file.type === "image/png" || file.type === "image/webp",
     );
@@ -342,51 +517,140 @@ export function AssetPanel({
       setPreparationNotice({ kind: "error", message });
       onError(message);
     }
+    if (assets.length + allowed.length > MAX_PROJECT_ASSETS) {
+      const message = `A project can contain at most ${MAX_PROJECT_ASSETS} images, including built-ins.`;
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+      return;
+    }
+    const oversized = allowed.find((file) => file.size > MAX_IMAGE_FILE_BYTES);
+    if (oversized) {
+      const message = `${oversized.name} is larger than the supported ${MAX_IMAGE_FILE_BYTES / 1024 / 1024} MB image limit.`;
+      setPreparationNotice({ kind: "error", message });
+      onError(message);
+      return;
+    }
+    const controller = new AbortController();
+    activeUploadRef.current = controller;
     setPreparingUploads(true);
     setPreparationNotice({
       kind: "status",
       message: `Preparing ${allowed.length === 1 ? "image" : `${allowed.length} images`} and spawn ${allowed.length === 1 ? "silhouette" : "silhouettes"}…`,
     });
     try {
-      const uploaded = await Promise.all(allowed.map(readImage));
-      onUpload(uploaded);
+      let existingBytes = 0;
+      let existingPixels = 0;
+      for (const asset of assets) {
+        if (asset.builtIn) continue;
+        const inspection = inspectPortableImageDataUrl(
+          asset.dataUrl,
+          asset.mimeType === "image/webp" ? "image/webp" : "image/png",
+        );
+        if (!inspection.ok)
+          throw new Error(
+            `The existing image "${asset.name}" is damaged. Replace or remove it before importing more images.`,
+          );
+        existingBytes += inspection.byteLength;
+        existingPixels += inspection.width * inspection.height;
+      }
+      const headers: Extract<PortableImageInspection, { ok: true }>[] = [];
+      for (const file of allowed) {
+        ensureActive(controller.signal);
+        headers.push(await inspectImageFile(file, controller.signal));
+      }
+      const incomingBytes = headers.reduce(
+        (total, inspection) => total + inspection.byteLength,
+        0,
+      );
+      if (existingBytes + incomingBytes > MAX_PROJECT_EMBEDDED_IMAGE_BYTES)
+        throw new Error(
+          `Embedded project images are limited to ${MAX_PROJECT_EMBEDDED_IMAGE_BYTES / 1024 / 1024} MB in total.`,
+        );
+      const incomingPixels = headers.reduce(
+        (total, inspection) => total + inspection.width * inspection.height,
+        0,
+      );
+      if (existingPixels + incomingPixels > MAX_PROJECT_IMAGE_PIXELS)
+        throw new Error(
+          "These images exceed the project's decoded texture budget.",
+        );
+      const uploaded: VfxAsset[] = [];
+      for (const [index, file] of allowed.entries()) {
+        ensureActive(controller.signal);
+        uploaded.push(await readImage(file, headers[index], controller.signal));
+      }
+      if (onUpload(uploaded, uploadProjectGeneration) === false) {
+        if (activeUploadRef.current === controller)
+          setPreparationNotice({
+            kind: "error",
+            message:
+              "Those images were not added because the project or image library changed.",
+          });
+        return;
+      }
       const readyCount = uploaded.filter(
         (asset) =>
           asset.alphaMask && maximumAlphaMaskValue(asset.alphaMask) > 0,
       ).length;
-      setPreparationNotice({
-        kind: "status",
-        message:
-          readyCount === uploaded.length
-            ? `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added with ${uploaded.length === 1 ? "a spawn silhouette" : "spawn silhouettes"} ready.`
-            : `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added. ${uploaded.length - readyCount} contained no visible pixels for silhouette spawning.`,
-      });
-    } catch {
+      if (activeUploadRef.current === controller)
+        setPreparationNotice({
+          kind: "status",
+          message:
+            readyCount === uploaded.length
+              ? `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added with ${uploaded.length === 1 ? "a spawn silhouette" : "spawn silhouettes"} ready.`
+              : `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added. ${uploaded.length - readyCount} contained no visible pixels for silhouette spawning.`,
+        });
+    } catch (error) {
+      if (controller.signal.aborted || activeUploadRef.current !== controller)
+        return;
       const message =
-        "One of these images could not be prepared. Try exporting it again as PNG or WebP.";
+        error instanceof Error
+          ? error.message
+          : "One of these images could not be prepared. Try exporting it again as PNG or WebP.";
       setPreparationNotice({ kind: "error", message });
       onError(message);
     } finally {
-      setPreparingUploads(false);
+      if (activeUploadRef.current === controller) {
+        activeUploadRef.current = null;
+        if (mountedRef.current) setPreparingUploads(false);
+      }
     }
   };
 
   const prepareLegacyAsset = async (asset: VfxAsset) => {
-    if (asset.builtIn || preparingAssetId) return;
+    if (asset.builtIn || preparingAssetId || activeLegacyPreparationRef.current)
+      return;
+    const controller = new AbortController();
+    activeLegacyPreparationRef.current = controller;
+    const preparationProjectGeneration = projectGeneration;
     setPreparingAssetId(asset.id);
     setPreparationNotice({
       kind: "status",
       message: `Preparing ${asset.name} as a spawn silhouette…`,
     });
     try {
-      const prepared = await prepareAlphaMaskFromDataUrl(asset.dataUrl);
-      onChangeAsset({
-        ...asset,
+      const prepared = await prepareAlphaMaskFromDataUrl(
+        asset.dataUrl,
+        controller.signal,
+      );
+      ensureActive(controller.signal);
+      const metadata: PreparedAssetMetadata = {
         alphaMask: prepared.alphaMask,
         transparency: prepared.transparency,
         width: prepared.width,
         height: prepared.height,
-      });
+      };
+      const accepted = onPrepareAsset
+        ? onPrepareAsset(asset.id, metadata, preparationProjectGeneration)
+        : onChangeAsset({ ...asset, ...metadata });
+      if (accepted === false) {
+        setPreparationNotice({
+          kind: "error",
+          message:
+            "Spawn silhouette preparation was discarded because the image or project changed.",
+        });
+        return;
+      }
       if (maximumAlphaMaskValue(prepared.alphaMask) === 0) {
         const message = `${asset.name} contains no visible pixels for silhouette spawning.`;
         setPreparationNotice({ kind: "error", message });
@@ -398,11 +662,19 @@ export function AssetPanel({
         message: `${asset.name} is ready to use as a spawn silhouette.`,
       });
     } catch {
+      if (
+        controller.signal.aborted ||
+        activeLegacyPreparationRef.current !== controller
+      )
+        return;
       const message = `${asset.name} could not be prepared as a spawn silhouette. Re-upload the original PNG or WebP and try again.`;
       setPreparationNotice({ kind: "error", message });
       onError(message);
     } finally {
-      setPreparingAssetId(null);
+      if (activeLegacyPreparationRef.current === controller) {
+        activeLegacyPreparationRef.current = null;
+        if (mountedRef.current) setPreparingAssetId(null);
+      }
     }
   };
 
@@ -510,6 +782,7 @@ export function AssetPanel({
           >
             <button
               className="asset-card__select"
+              data-asset-select={asset.id}
               type="button"
               onClick={() => onSelect(asset.id)}
               aria-label={`Select ${asset.name}`}
@@ -522,6 +795,7 @@ export function AssetPanel({
             <span className="asset-card__meta">
               <input
                 aria-label={`Rename ${asset.name}`}
+                maxLength={MAX_VFX_NAME_LENGTH}
                 value={asset.name}
                 onFocus={() => onSelect(asset.id)}
                 onChange={(event) => onRename(asset.id, event.target.value)}
@@ -548,6 +822,7 @@ export function AssetPanel({
               {!asset.builtIn && (
                 <button
                   type="button"
+                  disabled={preparingAssetId === asset.id}
                   onClick={() => onRemove(asset.id)}
                   title="Remove asset"
                   aria-label={`Remove ${asset.name}`}
@@ -563,7 +838,7 @@ export function AssetPanel({
               </span>
             )}
             {selectedId === asset.id && (
-              <>
+              <div className="asset-card__details">
                 <AssetVisualMaskStatus asset={asset} />
                 {!asset.builtIn && (
                   <>
@@ -578,7 +853,7 @@ export function AssetPanel({
                     />
                   </>
                 )}
-              </>
+              </div>
             )}
           </div>
         ))}

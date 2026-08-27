@@ -143,6 +143,7 @@ export function normalizeKeyframes(
   frames: TransformKeyframe[],
 ): TransformKeyframe[] {
   const sorted = frames
+    .slice(0, MAX_KEYFRAMES)
     .filter((frame) => Number.isFinite(frame.time))
     .map((frame) => ({
       time: clamp01(frame.time),
@@ -151,8 +152,7 @@ export function normalizeKeyframes(
       opacity: clamp01(frame.opacity),
       rotation: frame.rotation,
     }))
-    .sort((a, b) => a.time - b.time)
-    .slice(0, MAX_KEYFRAMES);
+    .sort((a, b) => a.time - b.time);
 
   if (sorted.length < 2) return [];
   sorted[0] = { ...sorted[0], time: 0 };

@@ -12,6 +12,7 @@ import {
   serializeTemplatePack,
   validateTemplate,
 } from "../src/vfx/templates";
+import { TINY_WEBP_DATA_URL, validPngDataUrl } from "./fixtures/portableImages";
 
 describe("reusable effect templates", () => {
   it("copies the complete effect and only the images its layers use", () => {
@@ -89,7 +90,9 @@ describe("reusable effect templates", () => {
       id: "uploaded-flame",
       name: "New flame strip",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,new",
+      dataUrl: validPngDataUrl(128, 32),
+      width: 128,
+      height: 32,
       transparency: "yes",
       spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 4 },
     });
@@ -100,8 +103,10 @@ describe("reusable effect templates", () => {
     target.assets.push({
       id: "uploaded-flame",
       name: "Old flame",
-      mimeType: "image/png",
-      dataUrl: "data:image/png;base64,old",
+      mimeType: "image/webp",
+      dataUrl: TINY_WEBP_DATA_URL,
+      width: 1,
+      height: 1,
       transparency: "yes",
     });
     const result = insertTemplateIntoProject(target, template);
@@ -111,11 +116,11 @@ describe("reusable effect templates", () => {
     expect(
       result.project.assets.find((asset) => asset.id === inserted?.assetId)
         ?.dataUrl,
-    ).toBe("data:image/png;base64,new");
+    ).toBe(source.assets.at(-1)?.dataUrl);
     expect(
       result.project.assets.find((asset) => asset.id === "uploaded-flame")
         ?.dataUrl,
-    ).toBe("data:image/png;base64,old");
+    ).toBe(TINY_WEBP_DATA_URL);
   });
 
   it("keeps templates saved before effect groups compatible", () => {
@@ -207,6 +212,33 @@ describe("reusable effect templates", () => {
     );
     expect(inserted.project.layers[0].timing.delay).toBe(1000);
     expect(inserted.project.layers[1].timing.delay).toBe(75);
+  });
+
+  it("refuses to serialize a template after its embedded image is damaged", () => {
+    const project = createEmptyProject("Outbound image guard");
+    project.assets.push({
+      id: "uploaded-image",
+      name: "Uploaded image",
+      mimeType: "image/png",
+      dataUrl: validPngDataUrl(1, 1),
+      transparency: "yes",
+      width: 1,
+      height: 1,
+      spriteSheet: null,
+      atlasFrame: null,
+      alphaMask: null,
+    });
+    project.layers.push(
+      createLayer("animated", "Uploaded image", "uploaded-image"),
+    );
+    const damaged = structuredClone(createTemplateFromProject(project));
+    const uploaded = damaged.assets.find(
+      (asset) => asset.id === "uploaded-image",
+    );
+    if (!uploaded) throw new Error("Missing uploaded template fixture");
+    uploaded.dataUrl = "data:image/png;base64,AAAA";
+
+    expect(() => serializeTemplate(damaged)).toThrow(/image/i);
   });
 
   it("rejects future project formats, duplicate pack IDs, and remote images", () => {

@@ -16,10 +16,13 @@ import {
   insertTemplateIntoProject,
 } from "../src/vfx/templates";
 import type { VfxAsset, VfxLayer } from "../src/vfx/types";
+import { validPngDataUrl } from "./fixtures/portableImages";
+
+const DEFAULT_MASK_DATA_URL = validPngDataUrl(128, 64);
 
 function stillMask(
   id = "visual-mask-source",
-  source = "data:image/png;base64,bWFzaw==",
+  source = DEFAULT_MASK_DATA_URL,
 ): VfxAsset {
   return {
     id,
@@ -222,7 +225,7 @@ describe("visual-mask asset dependencies", () => {
 
     const destination = createEmptyProject("Destination");
     destination.assets.push(
-      stillMask(mask.id, "data:image/png;base64,ZGlmZmVyZW50"),
+      stillMask(mask.id, validPngDataUrl(128, 64, [64, 128, 255, 255])),
     );
     const inserted = insertTemplateIntoProject(destination, template);
     const insertedMaskId =

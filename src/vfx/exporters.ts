@@ -2,6 +2,7 @@ import type { VvfxRuntimeDefinition } from "../../packages/phaser-runtime/src/ty
 import { tintNumber } from "./color";
 import { resolveProjectGroups } from "./groups";
 import { hasEnabledRenderingEffects } from "./renderingEffects";
+import { requireCurrentProject } from "./serialization";
 import { spriteFrameSequence } from "./spriteSheet";
 import type { VfxLayer, VfxProject } from "./types";
 
@@ -18,7 +19,9 @@ const EASE_MAP = {
 export function createRuntimeDefinition(
   project: VfxProject,
 ): VvfxRuntimeDefinition {
-  const resolvedProject = resolveProjectGroups(project);
+  const resolvedProject = resolveProjectGroups(
+    requireCurrentProject(project, "runtime-export"),
+  );
   return {
     format: "vvfx-runtime",
     formatVersion: 15,
@@ -126,7 +129,7 @@ function layerCode(
 ): string {
   const variable = `layer${index}`;
   const textureId = layer.assetId ?? "choose-an-asset";
-  const texture = `textureKeys[${codeString(textureId)}] ?? ${codeString(textureId)}`;
+  const texture = `resolveTextureKey(${codeString(textureId)})`;
   const tintLine = layer.appearance.tint
     ? `\n  ${variable}.setTint(0x${tintNumber(layer.appearance.tint, layer.appearance.tintStrength).toString(16).padStart(6, "0")});`
     : "";
@@ -304,8 +307,13 @@ function layerCode(
 }
 
 export function generatePhaserCode(project: VfxProject): string {
-  const functionName = `play${project.metadata.name.replace(/[^a-zA-Z0-9]/g, "") || "Vfx"}`;
-  const definition = JSON.stringify(createRuntimeDefinition(project), null, 2);
+  const currentProject = requireCurrentProject(project, "runtime-export");
+  const functionName = `play${currentProject.metadata.name.replace(/[^a-zA-Z0-9]/g, "") || "Vfx"}`;
+  const definition = JSON.stringify(
+    createRuntimeDefinition(currentProject),
+    null,
+    2,
+  );
   return `import Phaser from "phaser";
 import {
   playVvfx,
@@ -329,6 +337,7 @@ export function ${functionName}(
     assetKeys?: Record<string, string>;
     assetFrames?: Record<string, string | number>;
     beamEndpoints?: BeamEndpoints;
+    signal?: AbortSignal;
     seed?: number;
     baseDepth?: number;
     loop?: boolean;
@@ -346,6 +355,7 @@ export function ${functionName}(
     assetKeys: options.assetKeys,
     assetFrames: options.assetFrames,
     beamEndpoints: options.beamEndpoints,
+    signal: options.signal,
     baseDepth: options.baseDepth,
     loop: options.loop,
     autoDestroy: options.autoDestroy,
@@ -355,17 +365,49 @@ export function ${functionName}(
 `;
 }
 
+function hasReachableEnabledLayerEvent(layers: readonly VfxLayer[]): boolean {
+  const layersById = new Map(layers.map((layer) => [layer.id, layer]));
+  const reachable = new Set(
+    layers
+      .filter((layer) => layer.enabled && layer.startMode === "timeline")
+      .map((layer) => layer.id),
+  );
+  const pending = [...reachable];
+  let hasReachableEdge = false;
+
+  for (let index = 0; index < pending.length; index += 1) {
+    const source = layersById.get(pending[index]);
+    if (!source?.enabled) continue;
+    for (const event of source.events) {
+      if (!event.enabled) continue;
+      const target = layersById.get(event.targetLayerId);
+      if (!target?.enabled) continue;
+      hasReachableEdge = true;
+      if (reachable.has(target.id)) continue;
+      reachable.add(target.id);
+      pending.push(target.id);
+    }
+  }
+
+  return hasReachableEdge;
+}
+
 /**
  * An educational, hand-written Phaser approximation. The runtime-backed
  * generatePhaserCode export is the supported parity path.
  */
 export function generateStandalonePhaserCode(project: VfxProject): string {
-  if (project.layers.some((layer) => layer.type === "beam"))
+  const currentProject = requireCurrentProject(project, "standalone-export");
+  const activeEvents = hasReachableEnabledLayerEvent(currentProject.layers);
+  const standaloneLayers = currentProject.layers.filter(
+    (layer) => layer.enabled && layer.startMode === "timeline",
+  );
+  if (standaloneLayers.some((layer) => layer.type === "beam"))
     throw new Error(
       "The educational standalone Phaser approximation does not support Beam layers. Use the supported runtime-backed Phaser TypeScript export for endpoint fitting and runtime setEndpoints(...).",
     );
   if (
-    project.layers.some(
+    standaloneLayers.some(
       (layer) =>
         (layer.type === "burst" || layer.type === "emitter") &&
         layer.spawn.shape === "mask",
@@ -375,54 +417,49 @@ export function generateStandalonePhaserCode(project: VfxProject): string {
       "The educational standalone Phaser approximation does not support image-silhouette spawning. Use the supported runtime-backed Phaser TypeScript export for exact mask playback.",
     );
   if (
-    project.layers.some((layer) =>
+    standaloneLayers.some((layer) =>
       hasEnabledRenderingEffects(layer.appearance.effects),
     )
   )
     throw new Error(
       "The educational standalone Phaser approximation does not support experimental WebGL pixel effects. Use the supported runtime-backed Phaser TypeScript export for WebGL playback and safe Canvas fallback.",
     );
-  if (
-    project.layers.some(
-      (layer) => layer.startMode === "triggered" || layer.events.length > 0,
-    )
-  )
+  if (activeEvents)
     throw new Error(
       "The educational standalone Phaser approximation does not support layer events. Use the supported runtime-backed Phaser TypeScript export for exact playback.",
     );
-  return generateResolvedPhaserCode(resolveProjectGroups(project));
+  return generateResolvedPhaserCode(resolveProjectGroups(currentProject));
 }
 
 function generateResolvedPhaserCode(project: VfxProject): string {
   const functionName = `play${project.metadata.name.replace(/[^a-zA-Z0-9]/g, "") || "Vfx"}`;
+  const standaloneLayers = project.layers.filter(
+    (layer) => layer.enabled && layer.startMode === "timeline",
+  );
   const assetIds = project.assets
     .filter((asset) =>
-      project.layers.some((layer) => layer.assetId === asset.id),
+      standaloneLayers.some((layer) => layer.assetId === asset.id),
     )
     .map((asset) => asset.id);
-  const layerCodeBlocks = project.layers
-    .filter((layer) => layer.enabled)
+  const layerCodeBlocks = standaloneLayers
     .map((layer, index) => layerCode(layer, index, project))
     .join("\n\n");
-  const includesSimpleTrail = project.layers.some(
+  const includesSimpleTrail = standaloneLayers.some(
     (layer) =>
-      layer.enabled &&
       layer.trail.enabled &&
       (layer.type === "static" || layer.type === "animated"),
   );
-  const includesSimpleMotionPath = project.layers.some(
-    (layer) =>
-      layer.enabled && layer.type === "animated" && layer.motionPath.enabled,
+  const includesSimpleMotionPath = standaloneLayers.some(
+    (layer) => layer.type === "animated" && layer.motionPath.enabled,
   );
-  const includesSimpleKeyframes = project.layers.some(
+  const includesSimpleKeyframes = standaloneLayers.some(
     (layer) =>
-      layer.enabled &&
       layer.type === "animated" &&
       layer.keyframes.enabled &&
       layer.keyframes.frames.length >= 2,
   );
-  const includesCustomEasing = project.layers.some(
-    (layer) => layer.enabled && layer.timing.easing === "custom",
+  const includesCustomEasing = standaloneLayers.some(
+    (layer) => layer.timing.easing === "custom",
   );
   const customEasingHelper = includesCustomEasing
     ? `
@@ -652,6 +689,12 @@ export function ${functionName}(
   const tweens: Phaser.Tweens.Tween[] = [];
   const timers: Phaser.Time.TimerEvent[] = [];
   const cleanups: Array<() => void> = [];
+  const resolveTextureKey = (id: string) => {
+    const descriptor = Object.getOwnPropertyDescriptor(textureKeys, id);
+    return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+      ? descriptor.value
+      : id;
+  };
 
 ${layerCodeBlocks}
 

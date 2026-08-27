@@ -3,6 +3,7 @@ import { animationProgress, applyEasing } from "./interpolation";
 import { evaluateTransformKeyframes } from "./keyframes";
 import { evaluateMotionPath } from "./motionPath";
 import { randomBetween, randomSigned } from "./random";
+import { finiteLayerCycleCount } from "./limits";
 import { sampleAlphaMaskOffset } from "./alphaMask";
 import type { LayerActivationContext, VfxLayer, VfxProject } from "./types";
 import { isSpawnLayer } from "./types";
@@ -179,7 +180,7 @@ export function* copySpawnDescriptors(
   const cycleLimit =
     layer.timing.repeatForever || layer.timing.loop
       ? requestedCycles
-      : Math.min(requestedCycles, Math.max(1, layer.timing.repeat + 1));
+      : Math.min(requestedCycles, finiteLayerCycleCount(layer.timing.repeat));
   const copies =
     layer.type === "burst"
       ? Math.max(1, Math.min(250, Math.floor(layer.spawn.count)))

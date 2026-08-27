@@ -13,16 +13,58 @@ import {
   DEFAULT_TRAIL,
   DEFAULT_TRANSFORM,
 } from "./defaults";
-import { normalizeColorStops, normalizeHexColor } from "./color";
+import {
+  canonicalizeLayerCapabilities,
+  canonicalizeProjectLayerCapabilities,
+} from "./layerLifecycle";
+import {
+  MAX_COLOR_STOPS,
+  normalizeColorStops,
+  normalizeHexColor,
+} from "./color";
 import {
   findLayerEventCycle,
   maximumLayerEventDepth,
   MAX_EVENT_DEPTH,
   MAX_EVENTS_PER_LAYER,
 } from "./events";
-import { keyframesFromTransform, normalizeKeyframes } from "./keyframes";
+import {
+  keyframesFromTransform,
+  MAX_KEYFRAMES,
+  normalizeKeyframes,
+} from "./keyframes";
 import { normalizeFrameAnimation, normalizeSpriteSheet } from "./spriteSheet";
 import { normalizeRenderingEffects } from "./renderingEffects";
+import {
+  findLayerAttachmentCycle,
+  maximumLayerAttachmentDepth,
+} from "./attachments";
+import { boundedLayerRepeat } from "./limits";
+import {
+  isSafeVfxId,
+  isSupportedVfxNumber,
+  MAX_ATTACHMENT_DEPTH,
+  MAX_MOTION_PATH_POINTS,
+  MAX_PROJECT_ASSETS,
+  MAX_PROJECT_EMBEDDED_IMAGE_BYTES,
+  MAX_PROJECT_FILE_BYTES,
+  MAX_PROJECT_GROUPS,
+  MAX_PROJECT_IMAGE_PIXELS,
+  MAX_PROJECT_LAYERS,
+  MAX_TIMELINE_MARKERS,
+  MAX_VFX_EMITTER_INTERVAL_MS,
+  MAX_VFX_NAME_LENGTH,
+  MAX_VFX_POSITION_MAGNITUDE,
+  MAX_VFX_ROTATION_MAGNITUDE,
+  MAX_VFX_SCALE,
+  MAX_VFX_SPAWN_GEOMETRY,
+  MAX_VFX_TIMING_MS,
+  utf8ByteLength,
+} from "./inputLimits";
+import {
+  inspectPortableImageDataUrl,
+  type PortableImageMimeType,
+} from "./portableImage";
 import {
   alphaMaskThresholdByte,
   maximumAlphaMaskValue,
@@ -49,13 +91,111 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const numberOr = (value: unknown, fallback: number) =>
-  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  isSupportedVfxNumber(value) ? value : fallback;
 
 const stringOr = (value: unknown, fallback: string) =>
   typeof value === "string" ? value : fallback;
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value));
+
+const CURRENT_PROJECT_FORMAT_VERSION = 17;
+const MAX_TIMELINE_NOTES_LENGTH = 12_000;
+const MAX_TIMELINE_MARKER_LABEL_LENGTH = 120;
+
+const builtInAssetsById = new Map(
+  BUILT_IN_ASSETS.map((asset) => [asset.id, asset] as const),
+);
+
+function isDenseArray(value: unknown[]): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!(index in value)) return false;
+  }
+  return true;
+}
+
+function isSafeVfxName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= MAX_VFX_NAME_LENGTH
+  );
+}
+
+function normalizedImportedName(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const name = value.trim().slice(0, MAX_VFX_NAME_LENGTH);
+  return name || fallback;
+}
+
+function validateNestedArray(
+  owner: unknown,
+  key: string,
+  maximum: number,
+  label: string,
+): string | null {
+  if (!isRecord(owner) || owner[key] === undefined) return null;
+  const value = owner[key];
+  if (!Array.isArray(value)) return `${label} is damaged.`;
+  if (value.length > maximum)
+    return `${label} contains more than the supported ${maximum} entries.`;
+  if (!isDenseArray(value)) return `${label} is damaged.`;
+  return null;
+}
+
+function validateRawLayerCollections(
+  value: unknown,
+  strictCurrentFormat: boolean,
+): string | null {
+  if (!isRecord(value)) return null;
+  const motionPathError = validateNestedArray(
+    value.motionPath,
+    "points",
+    MAX_MOTION_PATH_POINTS,
+    "A layer's motion path",
+  );
+  if (motionPathError) return motionPathError;
+  const keyframeError = validateNestedArray(
+    value.keyframes,
+    "frames",
+    MAX_KEYFRAMES,
+    "A layer's keyframe list",
+  );
+  if (keyframeError) return keyframeError;
+  const appearance = isRecord(value.appearance) ? value.appearance : null;
+  const colorOverLifetime = appearance?.colorOverLifetime;
+  const colorStopError = validateNestedArray(
+    colorOverLifetime,
+    "stops",
+    MAX_COLOR_STOPS,
+    "A layer's color-stop list",
+  );
+  if (colorStopError) return colorStopError;
+  if (!strictCurrentFormat) return null;
+
+  const nestedCollections = [
+    [
+      isRecord(value.motionPath) ? value.motionPath.points : undefined,
+      "motion path point",
+    ],
+    [
+      isRecord(value.keyframes) ? value.keyframes.frames : undefined,
+      "keyframe",
+    ],
+    [
+      isRecord(colorOverLifetime) ? colorOverLifetime.stops : undefined,
+      "color stop",
+    ],
+  ] as const;
+  for (const [collection, label] of nestedCollections) {
+    if (
+      Array.isArray(collection) &&
+      collection.some((candidate) => !isRecord(candidate))
+    )
+      return `A layer contains a damaged ${label}.`;
+  }
+  return null;
+}
 
 function normalizeBehaviorEnvelope(
   value: unknown,
@@ -79,22 +219,24 @@ function optionalHexColor(value: unknown): string | null {
   return normalizeHexColor(value);
 }
 
-function validateRawLayerEvents(value: unknown): string | null {
+function validateRawLayerEvents(
+  value: unknown,
+  strictCurrentFormat: boolean,
+): string | null {
   if (!isRecord(value) || value.events === undefined) return null;
   if (!Array.isArray(value.events)) return "A layer's event list is damaged.";
   if (value.events.length > MAX_EVENTS_PER_LAYER)
     return `A layer contains more than the supported ${MAX_EVENTS_PER_LAYER} events.`;
+  if (!isDenseArray(value.events)) return "A layer's event list is damaged.";
   for (const event of value.events) {
     if (
       !isRecord(event) ||
-      typeof event.id !== "string" ||
-      !event.id.trim() ||
+      !isSafeVfxId(event.id) ||
       !["start", "percentage", "finish", "repeat", "copy-finish"].includes(
         String(event.trigger),
       ) ||
       !["play", "restart"].includes(String(event.action)) ||
-      typeof event.targetLayerId !== "string" ||
-      !event.targetLayerId.trim()
+      !isSafeVfxId(event.targetLayerId)
     )
       return "A layer event is damaged or missing its target.";
     if (
@@ -104,6 +246,19 @@ function validateRawLayerEvents(value: unknown): string | null {
     )
       return "A percentage event is missing a valid chosen point.";
   }
+  if (
+    strictCurrentFormat &&
+    value.events.some(
+      (event) =>
+        !isRecord(event) ||
+        typeof event.enabled !== "boolean" ||
+        typeof event.chance !== "number" ||
+        !Number.isFinite(event.chance) ||
+        typeof event.maxTriggers !== "number" ||
+        !Number.isFinite(event.maxTriggers),
+    )
+  )
+    return "A layer event is damaged or incomplete.";
   return null;
 }
 
@@ -170,7 +325,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   const beam = isRecord(value.beam) ? value.beam : {};
   const base = {
     id: stringOr(value.id, `imported-layer-${index}`),
-    name: stringOr(value.name, `Imported layer ${index + 1}`),
+    name: normalizedImportedName(value.name, `Imported layer ${index + 1}`),
     type: type as LayerType,
     assetId: typeof value.assetId === "string" ? value.assetId : null,
     visible: typeof value.visible === "boolean" ? value.visible : true,
@@ -181,46 +336,96 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
     parentId: typeof value.parentId === "string" ? value.parentId : null,
     groupId: typeof value.groupId === "string" ? value.groupId : null,
     transform: {
-      x: numberOr(transform.x, DEFAULT_TRANSFORM.x),
-      y: numberOr(transform.y, DEFAULT_TRANSFORM.y),
-      startScale: numberOr(transform.startScale, DEFAULT_TRANSFORM.startScale),
-      endScale: numberOr(transform.endScale, DEFAULT_TRANSFORM.endScale),
-      startScaleX: numberOr(
-        transform.startScaleX,
-        DEFAULT_TRANSFORM.startScaleX,
+      x: clamp(
+        numberOr(transform.x, DEFAULT_TRANSFORM.x),
+        -MAX_VFX_POSITION_MAGNITUDE,
+        MAX_VFX_POSITION_MAGNITUDE,
       ),
-      startScaleY: numberOr(
-        transform.startScaleY,
-        DEFAULT_TRANSFORM.startScaleY,
+      y: clamp(
+        numberOr(transform.y, DEFAULT_TRANSFORM.y),
+        -MAX_VFX_POSITION_MAGNITUDE,
+        MAX_VFX_POSITION_MAGNITUDE,
       ),
-      endScaleX: numberOr(transform.endScaleX, DEFAULT_TRANSFORM.endScaleX),
-      endScaleY: numberOr(transform.endScaleY, DEFAULT_TRANSFORM.endScaleY),
+      startScale: clamp(
+        numberOr(transform.startScale, DEFAULT_TRANSFORM.startScale),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      endScale: clamp(
+        numberOr(transform.endScale, DEFAULT_TRANSFORM.endScale),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      startScaleX: clamp(
+        numberOr(transform.startScaleX, DEFAULT_TRANSFORM.startScaleX),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      startScaleY: clamp(
+        numberOr(transform.startScaleY, DEFAULT_TRANSFORM.startScaleY),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      endScaleX: clamp(
+        numberOr(transform.endScaleX, DEFAULT_TRANSFORM.endScaleX),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      endScaleY: clamp(
+        numberOr(transform.endScaleY, DEFAULT_TRANSFORM.endScaleY),
+        0,
+        MAX_VFX_SCALE,
+      ),
       separateScale:
         typeof transform.separateScale === "boolean"
           ? transform.separateScale
           : false,
-      startOpacity: numberOr(
-        transform.startOpacity,
-        DEFAULT_TRANSFORM.startOpacity,
+      startOpacity: clamp(
+        numberOr(transform.startOpacity, DEFAULT_TRANSFORM.startOpacity),
+        0,
+        1,
       ),
-      endOpacity: numberOr(transform.endOpacity, DEFAULT_TRANSFORM.endOpacity),
-      rotation: numberOr(transform.rotation, DEFAULT_TRANSFORM.rotation),
-      rotationDuring: numberOr(
-        transform.rotationDuring,
-        DEFAULT_TRANSFORM.rotationDuring,
+      endOpacity: clamp(
+        numberOr(transform.endOpacity, DEFAULT_TRANSFORM.endOpacity),
+        0,
+        1,
       ),
-      movementX: numberOr(transform.movementX, DEFAULT_TRANSFORM.movementX),
-      movementY: numberOr(transform.movementY, DEFAULT_TRANSFORM.movementY),
+      rotation: clamp(
+        numberOr(transform.rotation, DEFAULT_TRANSFORM.rotation),
+        -MAX_VFX_ROTATION_MAGNITUDE,
+        MAX_VFX_ROTATION_MAGNITUDE,
+      ),
+      rotationDuring: clamp(
+        numberOr(transform.rotationDuring, DEFAULT_TRANSFORM.rotationDuring),
+        -MAX_VFX_ROTATION_MAGNITUDE,
+        MAX_VFX_ROTATION_MAGNITUDE,
+      ),
+      movementX: clamp(
+        numberOr(transform.movementX, DEFAULT_TRANSFORM.movementX),
+        -MAX_VFX_POSITION_MAGNITUDE,
+        MAX_VFX_POSITION_MAGNITUDE,
+      ),
+      movementY: clamp(
+        numberOr(transform.movementY, DEFAULT_TRANSFORM.movementY),
+        -MAX_VFX_POSITION_MAGNITUDE,
+        MAX_VFX_POSITION_MAGNITUDE,
+      ),
     },
     timing: {
-      delay: Math.max(0, numberOr(timing.delay, DEFAULT_TIMING.delay)),
-      duration: Math.max(
-        50,
-        numberOr(timing.duration, DEFAULT_TIMING.duration),
-      ),
-      repeat: Math.max(
+      delay: clamp(
+        numberOr(timing.delay, DEFAULT_TIMING.delay),
         0,
-        Math.floor(numberOr(timing.repeat, DEFAULT_TIMING.repeat)),
+        MAX_VFX_TIMING_MS,
+      ),
+      duration: clamp(
+        numberOr(timing.duration, DEFAULT_TIMING.duration),
+        50,
+        MAX_VFX_TIMING_MS,
+      ),
+      repeat: boundedLayerRepeat(
+        typeof timing.repeat === "number"
+          ? timing.repeat
+          : DEFAULT_TIMING.repeat,
       ),
       repeatForever:
         typeof timing.repeatForever === "boolean"
@@ -376,31 +581,52 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
       },
     },
     random: {
-      positionX: Math.max(
-        0,
+      positionX: clamp(
         numberOr(random.positionX, DEFAULT_RANDOM.positionX),
-      ),
-      positionY: Math.max(
         0,
+        MAX_VFX_POSITION_MAGNITUDE,
+      ),
+      positionY: clamp(
         numberOr(random.positionY, DEFAULT_RANDOM.positionY),
-      ),
-      startScale: Math.max(
         0,
+        MAX_VFX_POSITION_MAGNITUDE,
+      ),
+      startScale: clamp(
         numberOr(random.startScale, DEFAULT_RANDOM.startScale),
-      ),
-      endScale: Math.max(0, numberOr(random.endScale, DEFAULT_RANDOM.endScale)),
-      rotation: Math.max(0, numberOr(random.rotation, DEFAULT_RANDOM.rotation)),
-      duration: Math.max(0, numberOr(random.duration, DEFAULT_RANDOM.duration)),
-      movementX: Math.max(
         0,
+        MAX_VFX_SCALE,
+      ),
+      endScale: clamp(
+        numberOr(random.endScale, DEFAULT_RANDOM.endScale),
+        0,
+        MAX_VFX_SCALE,
+      ),
+      rotation: clamp(
+        numberOr(random.rotation, DEFAULT_RANDOM.rotation),
+        0,
+        MAX_VFX_ROTATION_MAGNITUDE,
+      ),
+      duration: clamp(
+        numberOr(random.duration, DEFAULT_RANDOM.duration),
+        0,
+        MAX_VFX_TIMING_MS,
+      ),
+      movementX: clamp(
         numberOr(random.movementX, DEFAULT_RANDOM.movementX),
-      ),
-      movementY: Math.max(
         0,
-        numberOr(random.movementY, DEFAULT_RANDOM.movementY),
+        MAX_VFX_POSITION_MAGNITUDE,
       ),
-      delay: Math.max(0, numberOr(random.delay, DEFAULT_RANDOM.delay)),
-      opacity: Math.max(0, numberOr(random.opacity, DEFAULT_RANDOM.opacity)),
+      movementY: clamp(
+        numberOr(random.movementY, DEFAULT_RANDOM.movementY),
+        0,
+        MAX_VFX_POSITION_MAGNITUDE,
+      ),
+      delay: clamp(
+        numberOr(random.delay, DEFAULT_RANDOM.delay),
+        0,
+        MAX_VFX_TIMING_MS,
+      ),
+      opacity: clamp(numberOr(random.opacity, DEFAULT_RANDOM.opacity), 0, 1),
     },
     frameAnimation: normalizeFrameAnimation({
       framesPerSecond: numberOr(
@@ -496,7 +722,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
       points: Array.isArray(motionPath.points)
         ? motionPath.points
             .filter(isRecord)
-            .slice(0, 6)
+            .slice(0, MAX_MOTION_PATH_POINTS)
             .map((point) => ({
               x: Math.max(-1000, Math.min(1000, numberOr(point.x, 0))),
               y: Math.max(-1000, Math.min(1000, numberOr(point.y, 0))),
@@ -513,10 +739,14 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
     ? normalizeKeyframes(
         keyframes.frames.filter(isRecord).map((frame) => ({
           time: numberOr(frame.time, Number.NaN),
-          scaleX: numberOr(frame.scaleX, 1),
-          scaleY: numberOr(frame.scaleY, 1),
-          opacity: numberOr(frame.opacity, 1),
-          rotation: numberOr(frame.rotation, 0),
+          scaleX: clamp(numberOr(frame.scaleX, 1), 0, MAX_VFX_SCALE),
+          scaleY: clamp(numberOr(frame.scaleY, 1), 0, MAX_VFX_SCALE),
+          opacity: clamp(numberOr(frame.opacity, 1), 0, 1),
+          rotation: clamp(
+            numberOr(frame.rotation, 0),
+            -MAX_VFX_ROTATION_MAGNITUDE,
+            MAX_VFX_ROTATION_MAGNITUDE,
+          ),
         })),
       )
     : [];
@@ -539,17 +769,30 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   };
 
   if (type === "static" || type === "animated")
-    return { ...baseWithKeyframes, type, spawn: null, beam: null } as VfxLayer;
+    return canonicalizeLayerCapabilities({
+      ...baseWithKeyframes,
+      type,
+      spawn: null,
+      beam: null,
+    } as VfxLayer);
   if (type === "beam")
-    return {
+    return canonicalizeLayerCapabilities({
       ...baseWithKeyframes,
       type,
       spawn: null,
       beam: {
-        endX: clamp(numberOr(beam.endX, DEFAULT_BEAM.endX), -5000, 5000),
-        endY: clamp(numberOr(beam.endY, DEFAULT_BEAM.endY), -5000, 5000),
+        endX: clamp(
+          numberOr(beam.endX, DEFAULT_BEAM.endX),
+          -MAX_VFX_POSITION_MAGNITUDE,
+          MAX_VFX_POSITION_MAGNITUDE,
+        ),
+        endY: clamp(
+          numberOr(beam.endY, DEFAULT_BEAM.endY),
+          -MAX_VFX_POSITION_MAGNITUDE,
+          MAX_VFX_POSITION_MAGNITUDE,
+        ),
       },
-    } as VfxLayer;
+    } as VfxLayer);
   const spawn = isRecord(value.spawn) ? value.spawn : {};
   const normalizedSpawnShape = [
     "point",
@@ -585,11 +828,17 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
       ),
       intervalMin: Math.max(
         30,
-        numberOr(spawn.intervalMin, DEFAULT_SPAWN.intervalMin),
+        Math.min(
+          MAX_VFX_EMITTER_INTERVAL_MS,
+          numberOr(spawn.intervalMin, DEFAULT_SPAWN.intervalMin),
+        ),
       ),
       intervalMax: Math.max(
         30,
-        numberOr(spawn.intervalMax, DEFAULT_SPAWN.intervalMax),
+        Math.min(
+          MAX_VFX_EMITTER_INTERVAL_MS,
+          numberOr(spawn.intervalMax, DEFAULT_SPAWN.intervalMax),
+        ),
       ),
       maxAlive: Math.max(
         1,
@@ -626,9 +875,21 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
         0,
         0.5,
       ),
-      width: Math.max(0, numberOr(spawn.width, DEFAULT_SPAWN.width)),
-      height: Math.max(0, numberOr(spawn.height, DEFAULT_SPAWN.height)),
-      radius: Math.max(0, numberOr(spawn.radius, DEFAULT_SPAWN.radius)),
+      width: clamp(
+        numberOr(spawn.width, DEFAULT_SPAWN.width),
+        0,
+        MAX_VFX_SPAWN_GEOMETRY,
+      ),
+      height: clamp(
+        numberOr(spawn.height, DEFAULT_SPAWN.height),
+        0,
+        MAX_VFX_SPAWN_GEOMETRY,
+      ),
+      radius: clamp(
+        numberOr(spawn.radius, DEFAULT_SPAWN.radius),
+        0,
+        MAX_VFX_SPAWN_GEOMETRY,
+      ),
       lineLength: clamp(
         numberOr(spawn.lineLength, DEFAULT_SPAWN.lineLength),
         0,
@@ -668,13 +929,15 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
       )
         ? (spawn.direction as typeof DEFAULT_SPAWN.direction)
         : DEFAULT_SPAWN.direction,
-      directionAngle: numberOr(
-        spawn.directionAngle,
-        DEFAULT_SPAWN.directionAngle,
+      directionAngle: clamp(
+        numberOr(spawn.directionAngle, DEFAULT_SPAWN.directionAngle),
+        -360,
+        360,
       ),
-      directionSpread: Math.max(
-        0,
+      directionSpread: clamp(
         numberOr(spawn.directionSpread, DEFAULT_SPAWN.directionSpread),
+        0,
+        180,
       ),
       rotateToDirection:
         typeof spawn.rotateToDirection === "boolean"
@@ -696,13 +959,20 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
 function normalizeGroup(value: unknown, index: number): VfxGroup | null {
   if (!isRecord(value)) return null;
   const fallbackName = `Imported group ${index + 1}`;
-  const name = stringOr(value.name, fallbackName).trim().slice(0, 120);
   return {
     id: stringOr(value.id, `imported-group-${index}`),
-    name: name || fallbackName,
-    x: Math.max(-5000, Math.min(5000, numberOr(value.x, 0))),
-    y: Math.max(-5000, Math.min(5000, numberOr(value.y, 0))),
-    delay: Math.max(0, Math.min(30_000, numberOr(value.delay, 0))),
+    name: normalizedImportedName(value.name, fallbackName),
+    x: clamp(
+      numberOr(value.x, 0),
+      -MAX_VFX_POSITION_MAGNITUDE,
+      MAX_VFX_POSITION_MAGNITUDE,
+    ),
+    y: clamp(
+      numberOr(value.y, 0),
+      -MAX_VFX_POSITION_MAGNITUDE,
+      MAX_VFX_POSITION_MAGNITUDE,
+    ),
+    delay: clamp(numberOr(value.delay, 0), 0, MAX_VFX_TIMING_MS),
   };
 }
 
@@ -713,7 +983,7 @@ function normalizeTimeline(
   if (!isRecord(value)) return { markers: [], notes: "" };
   const markerIds = new Set<string>();
   const markers = (Array.isArray(value.markers) ? value.markers : [])
-    .slice(0, 100)
+    .slice(0, MAX_TIMELINE_MARKERS)
     .flatMap((candidate, index) => {
       if (!isRecord(candidate)) return [];
       const fallbackId = `imported-marker-${index}`;
@@ -725,18 +995,21 @@ function normalizeTimeline(
         {
           id,
           time: clamp(numberOr(candidate.time, 0), 0, duration),
-          label: (label || "Timing marker").slice(0, 120),
+          label: (label || "Timing marker").slice(
+            0,
+            MAX_TIMELINE_MARKER_LABEL_LENGTH,
+          ),
         },
       ];
     })
     .sort((left, right) => left.time - right.time);
   return {
     markers,
-    notes: stringOr(value.notes, "").slice(0, 12_000),
+    notes: stringOr(value.notes, "").slice(0, MAX_TIMELINE_NOTES_LENGTH),
   };
 }
 
-export function validateProject(input: unknown): ValidationResult {
+function validateProjectUnchecked(input: unknown): ValidationResult {
   if (!isRecord(input))
     return { ok: false, error: "This file does not contain a Vvfx project." };
   if (
@@ -769,9 +1042,192 @@ export function validateProject(input: unknown): ValidationResult {
       error: "This project is missing its layers or image library.",
     };
   }
+  const strictCurrentFormat =
+    input.formatVersion === CURRENT_PROJECT_FORMAT_VERSION;
+  if (input.layers.length > MAX_PROJECT_LAYERS)
+    return {
+      ok: false,
+      error: `Projects are limited to ${MAX_PROJECT_LAYERS} layers.`,
+    };
+  if (input.assets.length > MAX_PROJECT_ASSETS)
+    return {
+      ok: false,
+      error: `Projects are limited to ${MAX_PROJECT_ASSETS} images.`,
+    };
+  if (!isDenseArray(input.layers) || !isDenseArray(input.assets))
+    return {
+      ok: false,
+      error: "This project's layers or image library is damaged.",
+    };
+  if (strictCurrentFormat && !Array.isArray(input.groups))
+    return { ok: false, error: "This project is missing its effect groups." };
+  if (Array.isArray(input.groups)) {
+    if (input.groups.length > MAX_PROJECT_GROUPS)
+      return {
+        ok: false,
+        error: `Projects are limited to ${MAX_PROJECT_GROUPS} effect groups.`,
+      };
+    if (!isDenseArray(input.groups))
+      return { ok: false, error: "This project's effect groups are damaged." };
+  }
+  if (strictCurrentFormat && !isRecord(input.timeline))
+    return { ok: false, error: "This project is missing its timeline." };
+  if (isRecord(input.timeline)) {
+    if (strictCurrentFormat && !Array.isArray(input.timeline.markers))
+      return {
+        ok: false,
+        error: "This project is missing its timeline markers.",
+      };
+    if (
+      input.timeline.markers !== undefined &&
+      !Array.isArray(input.timeline.markers)
+    )
+      return {
+        ok: false,
+        error: "This project's timeline markers are damaged.",
+      };
+    if (
+      Array.isArray(input.timeline.markers) &&
+      input.timeline.markers.length > MAX_TIMELINE_MARKERS
+    )
+      return {
+        ok: false,
+        error: `Projects are limited to ${MAX_TIMELINE_MARKERS} timeline markers.`,
+      };
+    if (
+      Array.isArray(input.timeline.markers) &&
+      !isDenseArray(input.timeline.markers)
+    )
+      return {
+        ok: false,
+        error: "This project's timeline markers are damaged.",
+      };
+    if (Array.isArray(input.timeline.markers)) {
+      const markerIds = new Set<string>();
+      for (const marker of input.timeline.markers) {
+        if (!isRecord(marker)) {
+          if (strictCurrentFormat)
+            return {
+              ok: false,
+              error: "This project contains a damaged timeline marker.",
+            };
+          continue;
+        }
+        if (
+          (strictCurrentFormat || marker.id !== undefined) &&
+          !isSafeVfxId(marker.id)
+        )
+          return {
+            ok: false,
+            error: "A timeline marker has an unsafe identifier.",
+          };
+        if (
+          strictCurrentFormat &&
+          (!isSafeVfxName(marker.label) ||
+            typeof marker.time !== "number" ||
+            !Number.isFinite(marker.time))
+        )
+          return {
+            ok: false,
+            error: "This project contains a damaged timeline marker.",
+          };
+        if (strictCurrentFormat && isSafeVfxId(marker.id)) {
+          if (markerIds.has(marker.id))
+            return {
+              ok: false,
+              error: "Two timeline markers share the same identifier.",
+            };
+          markerIds.add(marker.id);
+        }
+      }
+    }
+  }
+
+  const metadata = isRecord(input.metadata) ? input.metadata : {};
+  if (strictCurrentFormat && !isRecord(input.metadata))
+    return { ok: false, error: "This project is missing its project details." };
+  if (
+    (strictCurrentFormat || metadata.id !== undefined) &&
+    !isSafeVfxId(metadata.id)
+  )
+    return { ok: false, error: "This project's identifier is not safe." };
+  if (strictCurrentFormat && !isSafeVfxName(metadata.name))
+    return {
+      ok: false,
+      error: `Project names must be between 1 and ${MAX_VFX_NAME_LENGTH} characters (metadata.name).`,
+    };
+
   for (const rawLayer of input.layers) {
-    const eventError = validateRawLayerEvents(rawLayer);
+    const collectionError = validateRawLayerCollections(
+      rawLayer,
+      strictCurrentFormat,
+    );
+    if (collectionError) return { ok: false, error: collectionError };
+    const eventError = validateRawLayerEvents(rawLayer, strictCurrentFormat);
     if (eventError) return { ok: false, error: eventError };
+    if (!isRecord(rawLayer)) continue;
+    if (
+      rawLayer.type !== "static" &&
+      rawLayer.type !== "animated" &&
+      rawLayer.type !== "beam" &&
+      rawLayer.type !== "burst" &&
+      rawLayer.type !== "emitter"
+    )
+      continue;
+    if (
+      (strictCurrentFormat || rawLayer.id !== undefined) &&
+      !isSafeVfxId(rawLayer.id)
+    )
+      return { ok: false, error: "A layer has an unsafe identifier." };
+    if (strictCurrentFormat && !isSafeVfxName(rawLayer.name))
+      return {
+        ok: false,
+        error: `Layer names must be between 1 and ${MAX_VFX_NAME_LENGTH} characters.`,
+      };
+    for (const [reference, label] of [
+      [rawLayer.assetId, "image"],
+      [rawLayer.parentId, "parent layer"],
+      [rawLayer.groupId, "effect group"],
+    ] as const) {
+      if (
+        (strictCurrentFormat && reference !== null) ||
+        (!strictCurrentFormat && typeof reference === "string")
+      ) {
+        if (!isSafeVfxId(reference))
+          return {
+            ok: false,
+            error: `A layer contains an unsafe ${label} reference.`,
+          };
+      }
+    }
+    const spawn = isRecord(rawLayer.spawn) ? rawLayer.spawn : null;
+    if (
+      spawn &&
+      spawn.maskAssetId !== undefined &&
+      spawn.maskAssetId !== null &&
+      !isSafeVfxId(spawn.maskAssetId)
+    )
+      return {
+        ok: false,
+        error: "A layer contains an unsafe silhouette-image reference.",
+      };
+    const appearance = isRecord(rawLayer.appearance)
+      ? rawLayer.appearance
+      : null;
+    const effects =
+      appearance && isRecord(appearance.effects) ? appearance.effects : null;
+    const visualMask =
+      effects && isRecord(effects.visualMask) ? effects.visualMask : null;
+    if (
+      visualMask &&
+      visualMask.maskAssetId !== undefined &&
+      visualMask.maskAssetId !== null &&
+      !isSafeVfxId(visualMask.maskAssetId)
+    )
+      return {
+        ok: false,
+        error: "A layer contains an unsafe visual-mask image reference.",
+      };
   }
   const layers = input.layers.map(normalizeLayer);
   if (layers.some((layer) => layer === null)) {
@@ -780,9 +1236,30 @@ export function validateProject(input: unknown): ValidationResult {
       error: "One or more layers are damaged or use an unknown layer type.",
     };
   }
-  const normalizedGroups = Array.isArray(input.groups)
-    ? input.groups.map(normalizeGroup)
-    : [];
+  const rawGroups = Array.isArray(input.groups) ? input.groups : [];
+  const currentGroupIds = new Set<string>();
+  for (const rawGroup of rawGroups) {
+    if (!isRecord(rawGroup)) continue;
+    if (
+      (strictCurrentFormat || rawGroup.id !== undefined) &&
+      !isSafeVfxId(rawGroup.id)
+    )
+      return { ok: false, error: "An effect group has an unsafe identifier." };
+    if (strictCurrentFormat && !isSafeVfxName(rawGroup.name))
+      return {
+        ok: false,
+        error: `Effect-group names must be between 1 and ${MAX_VFX_NAME_LENGTH} characters.`,
+      };
+    if (strictCurrentFormat && isSafeVfxId(rawGroup.id)) {
+      if (currentGroupIds.has(rawGroup.id))
+        return {
+          ok: false,
+          error: "Two effect groups share the same identifier.",
+        };
+      currentGroupIds.add(rawGroup.id);
+    }
+  }
+  const normalizedGroups = rawGroups.map(normalizeGroup);
   if (normalizedGroups.some((group) => group === null))
     return {
       ok: false,
@@ -794,6 +1271,16 @@ export function validateProject(input: unknown): ValidationResult {
       candidates.findIndex((candidate) => candidate.id === group.id) === index,
   );
   const groupIds = new Set(groups.map((group) => group.id));
+  if (
+    strictCurrentFormat &&
+    (layers as VfxLayer[]).some(
+      (layer) => layer.groupId && !groupIds.has(layer.groupId),
+    )
+  )
+    return {
+      ok: false,
+      error: "A layer refers to an effect group that no longer exists.",
+    };
   const normalizedLayers = (layers as VfxLayer[]).map((layer) => ({
     ...layer,
     groupId:
@@ -860,18 +1347,32 @@ export function validateProject(input: unknown): ValidationResult {
       ok: false,
       error: `This project's layer-event chain is deeper than the supported ${MAX_EVENT_DEPTH} steps.`,
     };
-  const metadata = isRecord(input.metadata) ? input.metadata : {};
   const preview = isRecord(input.preview) ? input.preview : {};
   const assets: VfxAsset[] = [];
   const importedAssetIds = new Set<string>();
+  let embeddedImageBytes = 0;
+  let embeddedImagePixels = 0;
   for (const value of input.assets) {
     if (
       !isRecord(value) ||
       typeof value.id !== "string" ||
       typeof value.name !== "string" ||
       typeof value.dataUrl !== "string"
-    )
+    ) {
+      if (strictCurrentFormat)
+        return {
+          ok: false,
+          error: "This project contains a damaged image-library entry.",
+        };
       continue;
+    }
+    if (!isSafeVfxId(value.id))
+      return { ok: false, error: "An image has an unsafe identifier." };
+    if (strictCurrentFormat && !isSafeVfxName(value.name))
+      return {
+        ok: false,
+        error: `Image names must be between 1 and ${MAX_VFX_NAME_LENGTH} characters.`,
+      };
     if (importedAssetIds.has(value.id))
       return {
         ok: false,
@@ -879,35 +1380,123 @@ export function validateProject(input: unknown): ValidationResult {
           "Two images share the same identifier. Remove the duplicate before importing this project.",
       };
     importedAssetIds.add(value.id);
-    const mimeType: VfxAsset["mimeType"] =
-      value.mimeType === "image/webp" || value.mimeType === "image/builtin"
+
+    const canonicalBuiltIn = builtInAssetsById.get(value.id);
+    if (canonicalBuiltIn) {
+      const identityIsCanonical =
+        value.mimeType === canonicalBuiltIn.mimeType &&
+        value.dataUrl === canonicalBuiltIn.dataUrl &&
+        value.builtIn === canonicalBuiltIn.builtIn;
+      const currentOptionalFieldsAreCanonical =
+        !strictCurrentFormat ||
+        (value.transparency === canonicalBuiltIn.transparency &&
+          value.width === undefined &&
+          value.height === undefined &&
+          (value.spriteSheet === undefined || value.spriteSheet === null) &&
+          (value.atlasFrame === undefined || value.atlasFrame === null) &&
+          (value.alphaMask === undefined || value.alphaMask === null));
+      if (!identityIsCanonical || !currentOptionalFieldsAreCanonical)
+        return {
+          ok: false,
+          error: `The built-in image "${canonicalBuiltIn.name}" has been altered and cannot be imported.`,
+        };
+      assets.push({
+        ...canonicalBuiltIn,
+        name: strictCurrentFormat
+          ? value.name
+          : normalizedImportedName(value.name, canonicalBuiltIn.name),
+        spriteSheet: null,
+        atlasFrame: null,
+        alphaMask: null,
+      });
+      continue;
+    }
+
+    if (
+      value.mimeType === "image/builtin" ||
+      value.dataUrl.startsWith("builtin:") ||
+      value.builtIn !== undefined
+    )
+      return {
+        ok: false,
+        error: "This project contains an unknown or mismatched built-in image.",
+      };
+    const expectedMimeType: PortableImageMimeType | undefined =
+      value.mimeType === "image/png" || value.mimeType === "image/webp"
         ? value.mimeType
-        : "image/png";
+        : undefined;
+    if (strictCurrentFormat && !expectedMimeType)
+      return {
+        ok: false,
+        error: "An imported image does not declare PNG or WebP data.",
+      };
+    const inspection = inspectPortableImageDataUrl(
+      value.dataUrl,
+      expectedMimeType,
+    );
+    if (!inspection.ok)
+      return {
+        ok: false,
+        error: `The image "${normalizedImportedName(value.name, "Imported image")}" could not be imported. ${inspection.error}`,
+      };
+    embeddedImageBytes += inspection.byteLength;
+    embeddedImagePixels += inspection.width * inspection.height;
+    if (embeddedImageBytes > MAX_PROJECT_EMBEDDED_IMAGE_BYTES)
+      return {
+        ok: false,
+        error: `Embedded project images are limited to ${Math.floor(MAX_PROJECT_EMBEDDED_IMAGE_BYTES / 1024 / 1024)} MB in total.`,
+      };
+    if (embeddedImagePixels > MAX_PROJECT_IMAGE_PIXELS)
+      return {
+        ok: false,
+        error:
+          "This project's embedded images exceed the supported decoded-pixel budget.",
+      };
+    if (
+      strictCurrentFormat &&
+      (value.width !== inspection.width || value.height !== inspection.height)
+    )
+      return {
+        ok: false,
+        error: `The stored dimensions for "${value.name}" do not match its image data.`,
+      };
+
     const transparency: VfxAsset["transparency"] =
       value.transparency === "no" || value.transparency === "yes"
         ? value.transparency
         : "unknown";
-    const width = Math.max(0, Math.floor(numberOr(value.width, 0)));
-    const height = Math.max(0, Math.floor(numberOr(value.height, 0)));
+    const alphaMask = normalizeAssetAlphaMask(value.alphaMask);
+    if (strictCurrentFormat && value.alphaMask != null && !alphaMask)
+      return {
+        ok: false,
+        error: `The prepared silhouette data for "${value.name}" is damaged.`,
+      };
+    if (
+      strictCurrentFormat &&
+      value.spriteSheet != null &&
+      !isRecord(value.spriteSheet)
+    )
+      return {
+        ok: false,
+        error: `The sprite-sheet settings for "${value.name}" are damaged.`,
+      };
     const asset: VfxAsset = {
       id: value.id,
-      name: value.name,
+      name: strictCurrentFormat
+        ? value.name
+        : normalizedImportedName(value.name, "Imported image"),
       dataUrl: value.dataUrl,
-      mimeType,
-      builtIn: ["flash", "ring", "spark", "cloud"].includes(
-        String(value.builtIn),
-      )
-        ? (value.builtIn as "flash" | "ring" | "spark" | "cloud")
-        : undefined,
+      mimeType: inspection.mimeType,
+      builtIn: undefined,
       transparency,
-      width: width || undefined,
-      height: height || undefined,
+      width: inspection.width,
+      height: inspection.height,
       spriteSheet: null,
       atlasFrame:
         typeof value.atlasFrame === "string" && value.atlasFrame.trim()
           ? value.atlasFrame.trim().slice(0, 160)
           : null,
-      alphaMask: normalizeAssetAlphaMask(value.alphaMask),
+      alphaMask,
     };
     if (isRecord(value.spriteSheet)) {
       asset.spriteSheet = normalizeSpriteSheet(asset, {
@@ -925,14 +1514,21 @@ export function validateProject(input: unknown): ValidationResult {
       assetIds.add(builtIn.id);
     }
   }
+  if (assets.length > MAX_PROJECT_ASSETS)
+    return {
+      ok: false,
+      error: `Projects are limited to ${MAX_PROJECT_ASSETS} images.`,
+    };
   for (const layer of normalizedLayers) {
     const asset = layer.assetId
       ? assets.find((candidate) => candidate.id === layer.assetId)
       : undefined;
-    layer.frameAnimation = normalizeFrameAnimation(
-      layer.frameAnimation,
-      asset?.spriteSheet?.frameCount,
-    );
+    layer.frameAnimation = asset?.spriteSheet
+      ? normalizeFrameAnimation(
+          layer.frameAnimation,
+          asset.spriteSheet.frameCount,
+        )
+      : { ...DEFAULT_FRAME_ANIMATION };
     if (layer.assetId && !assetIds.has(layer.assetId))
       return {
         ok: false,
@@ -957,6 +1553,25 @@ export function validateProject(input: unknown): ValidationResult {
         return {
           ok: false,
           error: `The visual mask used by "${layer.name}" must be a still image, not a sprite sheet.`,
+        };
+    }
+    if (isSpawnLayer(layer) && layer.spawn.maskAssetId) {
+      const retainedMaskAsset = assets.find(
+        (candidate) => candidate.id === layer.spawn.maskAssetId,
+      );
+      if (!retainedMaskAsset)
+        return {
+          ok: false,
+          error: `The layer “${layer.name}” keeps a reference to an image silhouette that is missing from this project.`,
+        };
+      if (
+        retainedMaskAsset.builtIn ||
+        retainedMaskAsset.spriteSheet ||
+        !retainedMaskAsset.alphaMask
+      )
+        return {
+          ok: false,
+          error: `The image silhouette kept by “${layer.name}” has not been prepared from a still PNG or WebP.`,
         };
     }
     if (isSpawnLayer(layer) && layer.spawn.shape === "mask") {
@@ -988,24 +1603,16 @@ export function validateProject(input: unknown): ValidationResult {
         error: `The layer “${layer.name}” is attached to a layer that no longer exists.`,
       };
   }
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const byId = new Map(normalizedLayers.map((layer) => [layer.id, layer]));
-  const hasParentCycle = (layerId: string): boolean => {
-    if (visiting.has(layerId)) return true;
-    if (visited.has(layerId)) return false;
-    visiting.add(layerId);
-    const parentId = byId.get(layerId)?.parentId;
-    const cyclic = parentId ? hasParentCycle(parentId) : false;
-    visiting.delete(layerId);
-    visited.add(layerId);
-    return cyclic;
-  };
-  if (normalizedLayers.some((layer) => hasParentCycle(layer.id)))
+  if (findLayerAttachmentCycle(normalizedLayers))
     return {
       ok: false,
       error:
         "This project contains a circular layer attachment. Detach one of the linked layers and try again.",
+    };
+  if (maximumLayerAttachmentDepth(normalizedLayers) > MAX_ATTACHMENT_DEPTH)
+    return {
+      ok: false,
+      error: `This project's layer-attachment chain is deeper than the supported ${MAX_ATTACHMENT_DEPTH} steps.`,
     };
   const now = new Date().toISOString();
   const previewDuration = clamp(numberOr(preview.duration, 3000), 500, 30_000);
@@ -1013,7 +1620,7 @@ export function validateProject(input: unknown): ValidationResult {
     formatVersion: 17,
     metadata: {
       id: stringOr(metadata.id, `project-${Date.now()}`),
-      name: stringOr(metadata.name, "Imported Vvfx project"),
+      name: normalizedImportedName(metadata.name, "Imported Vvfx project"),
       createdAt: stringOr(metadata.createdAt, now),
       updatedAt: stringOr(metadata.updatedAt, now),
     },
@@ -1039,18 +1646,219 @@ export function validateProject(input: unknown): ValidationResult {
   return { ok: true, project };
 }
 
+/** Validation is a total boundary: malformed caller data never escapes as a raw exception. */
+export function validateProject(input: unknown): ValidationResult {
+  try {
+    return validateProjectUnchecked(input);
+  } catch {
+    return {
+      ok: false,
+      error:
+        "This project contains damaged or unsupported data and could not be opened.",
+    };
+  }
+}
+
+export type ProjectBoundary =
+  | "browser-save"
+  | "recovery-save"
+  | "project-export"
+  | "runtime-export"
+  | "standalone-export"
+  | "preview-export";
+
+export type ProjectIntegrityResult =
+  | { ok: true; project: VfxProject }
+  | { ok: false; error: string; path?: string };
+
+function canonicalBoundaryProject(project: VfxProject): unknown {
+  const timeline = isRecord(project.timeline)
+    ? {
+        ...project.timeline,
+        notes:
+          typeof project.timeline.notes === "string"
+            ? project.timeline.notes.slice(0, 12_000)
+            : project.timeline.notes,
+        markers: Array.isArray(project.timeline.markers)
+          ? project.timeline.markers.map((marker) => {
+              if (!isRecord(marker) || typeof marker.label !== "string")
+                return marker;
+              const label = marker.label.trim();
+              return {
+                ...marker,
+                label: (label || "Timing marker").slice(0, 120),
+              };
+            })
+          : project.timeline.markers,
+      }
+    : project.timeline;
+  return {
+    ...project,
+    assets: Array.isArray(project.assets)
+      ? project.assets.map((asset) => {
+          if (!isRecord(asset)) return asset;
+          return {
+            ...asset,
+            transparency: asset.transparency ?? "unknown",
+            spriteSheet: asset.spriteSheet ?? null,
+            atlasFrame:
+              typeof asset.atlasFrame === "string"
+                ? asset.atlasFrame.trim().slice(0, 160) || null
+                : (asset.atlasFrame ?? null),
+            alphaMask: asset.alphaMask ?? null,
+          };
+        })
+      : project.assets,
+    timeline,
+    groups: Array.isArray(project.groups)
+      ? project.groups.map((group, index) => {
+          if (!isRecord(group) || typeof group.name !== "string") return group;
+          const fallbackName = `Imported group ${index + 1}`;
+          const name = group.name.trim().slice(0, 120);
+          return { ...group, name: name || fallbackName };
+        })
+      : project.groups,
+  };
+}
+
+function definedObjectEntries(value: Record<string, unknown>) {
+  return Object.entries(value)
+    .filter(([, child]) => child !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function firstIntegrityDifference(
+  current: unknown,
+  normalized: unknown,
+  path = "project",
+): string | null {
+  if (Object.is(current, normalized)) return null;
+  if (Array.isArray(current) || Array.isArray(normalized)) {
+    if (!Array.isArray(current) || !Array.isArray(normalized)) return path;
+    if (current.length !== normalized.length) return `${path}.length`;
+    for (let index = 0; index < current.length; index += 1) {
+      const difference = firstIntegrityDifference(
+        current[index],
+        normalized[index],
+        `${path}[${index}]`,
+      );
+      if (difference) return difference;
+    }
+    return null;
+  }
+  if (isRecord(current) || isRecord(normalized)) {
+    if (!isRecord(current) || !isRecord(normalized)) return path;
+    const currentEntries = definedObjectEntries(current);
+    const normalizedEntries = definedObjectEntries(normalized);
+    if (currentEntries.length !== normalizedEntries.length) return path;
+    for (let index = 0; index < currentEntries.length; index += 1) {
+      const [currentKey, currentValue] = currentEntries[index];
+      const [normalizedKey, normalizedValue] = normalizedEntries[index];
+      if (currentKey !== normalizedKey) return `${path}.${currentKey}`;
+      const difference = firstIntegrityDifference(
+        currentValue,
+        normalizedValue,
+        `${path}.${currentKey}`,
+      );
+      if (difference) return difference;
+    }
+    return null;
+  }
+  return path;
+}
+
+/** Strict validation for current editor state at every outbound boundary. */
+export function validateCurrentProject(
+  project: VfxProject,
+): ProjectIntegrityResult {
+  if (!isRecord(project))
+    return {
+      ok: false,
+      error: "This project does not contain valid Vvfx project data.",
+      path: "project",
+    };
+  if (project.formatVersion !== 17)
+    return {
+      ok: false,
+      error:
+        "This project must be opened and upgraded before it can be saved or exported.",
+      path: "project.formatVersion",
+    };
+  const validation = validateProject(project);
+  if (!validation.ok || !validation.project)
+    return {
+      ok: false,
+      error: validation.error ?? "This project contains invalid data.",
+    };
+  const path = firstIntegrityDifference(
+    canonicalBoundaryProject(project),
+    canonicalBoundaryProject(validation.project),
+  );
+  if (path)
+    return {
+      ok: false,
+      error: `This project contains an unsupported or inconsistent value at ${path}. Undo the latest change and try again.`,
+      path,
+    };
+  return { ok: true, project: validation.project };
+}
+
+export function requireCurrentProject(
+  project: VfxProject,
+  boundary: ProjectBoundary,
+): VfxProject {
+  const result = validateCurrentProject(
+    canonicalizeProjectLayerCapabilities(project),
+  );
+  if (result.ok) return result.project;
+  const action =
+    boundary === "browser-save"
+      ? "saved"
+      : boundary === "recovery-save"
+        ? "added to recovery"
+        : boundary === "preview-export"
+          ? "recorded"
+          : "exported";
+  throw new Error(`This project cannot be ${action}. ${result.error}`);
+}
+
 export function serializeProject(project: VfxProject): string {
-  return JSON.stringify(
+  const currentProject = requireCurrentProject(project, "project-export");
+  const serialized = JSON.stringify(
     {
-      ...project,
-      metadata: { ...project.metadata, updatedAt: new Date().toISOString() },
+      ...currentProject,
+      metadata: {
+        ...currentProject.metadata,
+        updatedAt: new Date().toISOString(),
+      },
     },
     null,
     2,
   );
+  if (
+    serialized.length > MAX_PROJECT_FILE_BYTES ||
+    utf8ByteLength(serialized) > MAX_PROJECT_FILE_BYTES
+  )
+    throw new Error(
+      `This project cannot be exported. Project files are limited to ${Math.floor(MAX_PROJECT_FILE_BYTES / 1024 / 1024)} MB.`,
+    );
+  return serialized;
 }
 
 export function deserializeProject(text: string): ValidationResult {
+  if (typeof text !== "string")
+    return {
+      ok: false,
+      error: "This file is not valid JSON. Try exporting it from Vvfx again.",
+    };
+  if (
+    text.length > MAX_PROJECT_FILE_BYTES ||
+    utf8ByteLength(text) > MAX_PROJECT_FILE_BYTES
+  )
+    return {
+      ok: false,
+      error: `This project file is larger than the supported ${Math.floor(MAX_PROJECT_FILE_BYTES / 1024 / 1024)} MB limit.`,
+    };
   try {
     return validateProject(JSON.parse(text) as unknown);
   } catch {

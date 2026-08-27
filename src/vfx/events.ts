@@ -5,6 +5,7 @@ import {
   type CopySpawnDescriptor,
 } from "./instanceEvaluation";
 import { seededRandom } from "./random";
+import { finiteLayerCycleCount } from "./limits";
 import type { LayerActivationContext, VfxLayer, VfxProject } from "./types";
 
 export { emitterSpawnEvents, layerInstanceSeed } from "./instanceEvaluation";
@@ -14,6 +15,7 @@ export const MAX_EVENTS_PER_LAYER = 16;
 export const MAX_EVENT_DEPTH = 12;
 export const MAX_EVENT_ACTIVATIONS = 1000;
 const MAX_QUEUED_EVENT_TRIGGERS = 4000;
+const MAX_COPY_FINISH_CANDIDATE_INSPECTIONS = 4000;
 
 export interface LayerActivation {
   id: string;
@@ -67,7 +69,7 @@ function stringHash(value: string): number {
  */
 function cycleCount(layer: VfxLayer): number {
   if (layer.type === "static" || layer.type === "emitter") return 1;
-  return Math.max(1, layer.timing.repeat + 1);
+  return finiteLayerCycleCount(layer.timing.repeat);
 }
 
 function activationEnd(layer: VfxLayer, start: number): number {
@@ -123,6 +125,7 @@ export function compileLayerActivations(
   const layersById = new Map(project.layers.map((layer) => [layer.id, layer]));
   const queue: PendingLayerEvent[] = [];
   let queuedTriggerCount = 0;
+  let inspectedCopyFinishCandidates = 0;
   let truncated = false;
 
   const enqueue = (event: PendingLayerEvent): boolean => {
@@ -166,6 +169,12 @@ export function compileLayerActivations(
           Math.min(250, Math.floor(event.maxTriggers ?? 32)),
         );
         if (chance <= 0) return;
+        if (
+          inspectedCopyFinishCandidates >= MAX_COPY_FINISH_CANDIDATE_INSPECTIONS
+        ) {
+          truncated = true;
+          return;
+        }
         const chanceSalt = stringHash(event.id);
         for (const copy of copySpawnDescriptors(
           project,
@@ -173,9 +182,16 @@ export function compileLayerActivations(
           activation,
           until,
         )) {
+          if (
+            inspectedCopyFinishCandidates >=
+            MAX_COPY_FINISH_CANDIDATE_INSPECTIONS
+          ) {
+            truncated = true;
+            break;
+          }
+          inspectedCopyFinishCandidates += 1;
           if (copy.deathTime > until) continue;
           if (seededRandom(copy.seed, chanceSalt) >= chance) continue;
-          if (accepted >= maxTriggers) break;
           accepted += 1;
           if (
             !enqueue({
@@ -192,6 +208,7 @@ export function compileLayerActivations(
             })
           )
             break;
+          if (accepted >= maxTriggers) break;
         }
         return;
       }
@@ -209,29 +226,36 @@ export function compileLayerActivations(
           activation,
           until,
         ).slice(1))
-          pushAt(spawn.time);
+          if (!pushAt(spawn.time)) break;
         return;
       }
 
       const duration = Math.max(50, layer.timing.duration);
       const repeatsForever = layer.timing.repeatForever || layer.timing.loop;
+      const elapsedCycles = Math.max(
+        0,
+        Math.floor((until - activation.start) / duration) + 1,
+      );
       const cycles = repeatsForever
-        ? Math.max(0, Math.floor((until - activation.start) / duration) + 1)
-        : cycleCount(layer);
+        ? elapsedCycles
+        : Math.min(cycleCount(layer), elapsedCycles);
 
       if (event.trigger === "percentage") {
         for (let cycle = 0; cycle < cycles; cycle += 1)
-          pushAt(
-            activation.start +
-              cycle * duration +
-              duration * Math.max(0.01, Math.min(0.99, event.percentage)),
-          );
+          if (
+            !pushAt(
+              activation.start +
+                cycle * duration +
+                duration * Math.max(0.01, Math.min(0.99, event.percentage)),
+            )
+          )
+            break;
         return;
       }
 
       if (event.trigger === "repeat") {
         for (let cycle = 1; cycle < cycles; cycle += 1)
-          pushAt(activation.start + cycle * duration);
+          if (!pushAt(activation.start + cycle * duration)) break;
         return;
       }
 
@@ -383,13 +407,21 @@ export function compileLayerActivations(
 }
 
 export function findLayerEventCycle(layers: VfxLayer[]): string[] | null {
-  const layerIds = new Set(layers.map((layer) => layer.id));
+  const enabledLayerIds = new Set(
+    layers.filter((layer) => layer.enabled).map((layer) => layer.id),
+  );
   const edges = new Map(
     layers.map((layer) => [
       layer.id,
-      [...new Set(layer.events.map((event) => event.targetLayerId))].filter(
-        (target) => layerIds.has(target),
-      ),
+      layer.enabled
+        ? [
+            ...new Set(
+              layer.events
+                .filter((event) => event.enabled)
+                .map((event) => event.targetLayerId),
+            ),
+          ].filter((target) => enabledLayerIds.has(target))
+        : [],
     ]),
   );
   const visited = new Set<string>();
@@ -423,15 +455,22 @@ export function findLayerEventCycle(layers: VfxLayer[]): string[] | null {
 
 export function maximumLayerEventDepth(layers: VfxLayer[]): number {
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  const enabledLayerIds = new Set(
+    layers.filter((layer) => layer.enabled).map((layer) => layer.id),
+  );
   const memo = new Map<string, number>();
   const depthFrom = (layerId: string): number => {
     const cached = memo.get(layerId);
     if (cached !== undefined) return cached;
     const layer = byId.get(layerId);
-    if (!layer) return 0;
+    if (!layer?.enabled) return 0;
     const depth = Math.max(
       0,
-      ...layer.events.map((event) => 1 + depthFrom(event.targetLayerId)),
+      ...layer.events
+        .filter(
+          (event) => event.enabled && enabledLayerIds.has(event.targetLayerId),
+        )
+        .map((event) => 1 + depthFrom(event.targetLayerId)),
     );
     memo.set(layerId, depth);
     return depth;

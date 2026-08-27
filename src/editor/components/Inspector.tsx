@@ -20,9 +20,13 @@ import {
   Wand2,
   Wind,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { describeLayer, layerTypeLabel } from "../guidance";
-import { makeId } from "../../vfx/defaults";
+import { DEFAULT_FRAME_ANIMATION, makeId } from "../../vfx/defaults";
+import { canAttachLayer } from "../../vfx/attachments";
+import { enabledIncomingLayerEvents } from "../../vfx/layerLifecycle";
+import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
+import { boundedLayerRepeat, MAX_LAYER_REPEATS } from "../../vfx/limits";
 import type {
   BehaviorEnvelopeSettings,
   VfxAsset,
@@ -212,21 +216,34 @@ function eventTargetWouldCycle(
   sourceId: string,
   targetId: string,
   ignoredEventId?: string,
+  proposedEnabled = true,
 ): boolean {
   if (sourceId === targetId) return true;
+  const enabledLayerIds = new Set(
+    layers.filter((layer) => layer.enabled).map((layer) => layer.id),
+  );
   const links = new Map<string, string[]>();
   for (const candidate of layers) {
     links.set(
       candidate.id,
-      candidate.events
-        .filter(
-          (event) =>
-            !(candidate.id === sourceId && event.id === ignoredEventId),
-        )
-        .map((event) => event.targetLayerId),
+      candidate.enabled
+        ? candidate.events
+            .filter(
+              (event) =>
+                event.enabled &&
+                enabledLayerIds.has(event.targetLayerId) &&
+                !(candidate.id === sourceId && event.id === ignoredEventId),
+            )
+            .map((event) => event.targetLayerId)
+        : [],
     );
   }
-  links.set(sourceId, [...(links.get(sourceId) ?? []), targetId]);
+  if (
+    proposedEnabled &&
+    enabledLayerIds.has(sourceId) &&
+    enabledLayerIds.has(targetId)
+  )
+    links.set(sourceId, [...(links.get(sourceId) ?? []), targetId]);
   const visited = new Set<string>();
   const reachesSource = (id: string): boolean => {
     if (id === sourceId) return true;
@@ -258,6 +275,7 @@ export function Inspector({
   onPaste: () => void;
   canPaste: boolean;
 }) {
+  const fieldIdPrefix = useId();
   if (!layer) {
     return (
       <aside className="panel inspector empty-inspector">
@@ -388,11 +406,7 @@ export function Inspector({
     layer.type === "burst" &&
     Object.values(layer.random).every((value) => value === 0);
   const selectedAsset = assets.find((asset) => asset.id === layer.assetId);
-  const incomingEvents = layers.flatMap((source) =>
-    source.events
-      .filter((event) => event.targetLayerId === layer.id)
-      .map((event) => ({ source, event })),
-  );
+  const incomingEvents = enabledIncomingLayerEvents(layers, layer.id);
   const firstSafeEventTarget = layers.find(
     (candidate) =>
       candidate.id !== layer.id &&
@@ -454,6 +468,7 @@ export function Inspector({
             className="layer-name-input"
             value={layer.name}
             aria-label="Layer name"
+            maxLength={MAX_VFX_NAME_LENGTH}
             onChange={(event) =>
               onChange({ ...layer, name: event.target.value })
             }
@@ -485,15 +500,26 @@ export function Inspector({
             This layer has no image yet. Choose one below to make it visible.
           </div>
         )}
-        <label className="field">
+        <div className="field">
           <span className="field__label">
-            Image{" "}
-            <HelpTip text="The artwork used by this part of the effect. One image can be reused in as many layers as you like." />
+            <label htmlFor={`${fieldIdPrefix}-image`}>Image</label>{" "}
+            <HelpTip
+              label="Image"
+              text="The artwork used by this part of the effect. One image can be reused in as many layers as you like."
+            />
           </span>
           <select
+            id={`${fieldIdPrefix}-image`}
             value={layer.assetId ?? ""}
             onChange={(event) =>
-              onChange({ ...layer, assetId: event.target.value || null })
+              onChange({
+                ...layer,
+                assetId: event.target.value || null,
+                // Frame playback belongs to the selected image's slicing.
+                // A new image starts clean instead of inheriting a compatible
+                // but unrelated range, direction, or random-start setting.
+                frameAnimation: { ...DEFAULT_FRAME_ANIMATION },
+              })
             }
           >
             <option value="">Choose an image…</option>
@@ -503,15 +529,21 @@ export function Inspector({
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
-        <label className="field">
+        <div className="field">
           <span className="field__label">
-            Effect group <Boxes size={13} />{" "}
-            <HelpTip text="A group adds one shared position and timing offset while every member keeps its own settings." />
+            <label htmlFor={`${fieldIdPrefix}-effect-group`}>
+              Effect group
+            </label>{" "}
+            <Boxes size={13} />{" "}
+            <HelpTip
+              label="Effect group"
+              text="A group adds one shared position and timing offset while every member keeps its own settings."
+            />
           </span>
           <select
-            aria-label="Effect group"
+            id={`${fieldIdPrefix}-effect-group`}
             value={layer.groupId ?? ""}
             onChange={(event) =>
               onChange({ ...layer, groupId: event.target.value || null })
@@ -524,7 +556,7 @@ export function Inspector({
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
         {selectedAsset && !selectedAsset.builtIn && (
           <SettingsSection title="Sprite frames" icon={<Film size={15} />}>
@@ -682,14 +714,19 @@ export function Inspector({
               mapped to a preloaded texture atlas in your game. The editor keeps
               using the uploaded preview image.
             </p>
-            <label className="field">
+            <div className="field">
               <span className="field__label">
-                Atlas frame name{" "}
-                <HelpTip text="For example: vfx/spark-01. Map this asset to the atlas texture key when calling the Vvfx runtime." />
+                <label htmlFor={`${fieldIdPrefix}-atlas-frame`}>
+                  Atlas frame name
+                </label>{" "}
+                <HelpTip
+                  label="Atlas frame name"
+                  text="For example: vfx/spark-01. Map this asset to the atlas texture key when calling the Vvfx runtime."
+                />
               </span>
               <input
+                id={`${fieldIdPrefix}-atlas-frame`}
                 type="text"
-                aria-label="Atlas frame name"
                 maxLength={160}
                 value={selectedAsset.atlasFrame ?? ""}
                 placeholder="vfx/spark-01"
@@ -701,7 +738,7 @@ export function Inspector({
                   })
                 }
               />
-            </label>
+            </div>
             {spriteSheet && (
               <p className="context-tip">
                 Turn off sprite-sheet slicing to use one named atlas frame for
@@ -920,7 +957,10 @@ export function Inspector({
             <div className="property-preset-picker">
               <div>
                 <strong>Property curve presets</strong>
-                <HelpTip text="A preset adds size, opacity, and rotation moments to this layer. The same moments appear as diamonds in the main Timeline." />
+                <HelpTip
+                  label="Property curve presets"
+                  text="A preset adds size, opacity, and rotation moments to this layer. The same moments appear as diamonds in the main Timeline."
+                />
               </div>
               <p>
                 Start with a useful shape, then adjust its moments below or on
@@ -1310,7 +1350,10 @@ export function Inspector({
             <div className="trail-preset-picker">
               <div>
                 <strong>Trail presets</strong>
-                <HelpTip text="Presets tune the same deterministic afterimage controls below. Try Energy Bolt for magic, Slash Trail for a quick swing, or Ghost Trail for a dash." />
+                <HelpTip
+                  label="Trail presets"
+                  text="Presets tune the same deterministic afterimage controls below. Try Energy Bolt for magic, Slash Trail for a quick swing, or Ghost Trail for a dash."
+                />
               </div>
               <div className="trail-preset-grid">
                 {TRAIL_PRESETS.map((preset) => (
@@ -1457,7 +1500,7 @@ export function Inspector({
                   value={layer.timing.repeat}
                   defaultValue={0}
                   min={0}
-                  max={20}
+                  max={MAX_LAYER_REPEATS}
                   unit="×"
                   help="How many extra times this layer plays after the first time."
                   onChange={(repeat) => setTiming({ repeat })}
@@ -1507,11 +1550,12 @@ export function Inspector({
                     ? layer.timing.duration * layerEvent.percentage
                     : layerEvent.trigger === "finish"
                       ? layer.timing.duration *
-                        Math.max(1, layer.timing.repeat + 1)
+                        (boundedLayerRepeat(layer.timing.repeat) + 1)
                       : layerEvent.trigger === "repeat"
                         ? layer.timing.duration
                         : 0);
                 const isCopyFinish = layerEvent.trigger === "copy-finish";
+                const eventFieldPrefix = `${fieldIdPrefix}-event-${index}`;
                 return (
                   <article className="layer-event-card" key={layerEvent.id}>
                     <header>
@@ -1541,12 +1585,18 @@ export function Inspector({
                         setEvent(layerEvent.id, { enabled })
                       }
                     />
-                    <label className="field">
+                    <div className="field">
                       <span className="field__label">
-                        When this happens
-                        <HelpTip text="Choose a layer-level moment, or let every authored Burst/Repeating copy trigger from the exact spot where it disappears. Trail afterimages never trigger events." />
+                        <label htmlFor={`${eventFieldPrefix}-trigger`}>
+                          When this happens
+                        </label>
+                        <HelpTip
+                          label={`When this happens for event ${index + 1}`}
+                          text="Choose a layer-level moment, or let every authored Burst/Repeating copy trigger from the exact spot where it disappears. Trail afterimages never trigger events."
+                        />
                       </span>
                       <select
+                        id={`${eventFieldPrefix}-trigger`}
                         value={layerEvent.trigger}
                         onChange={(event) => {
                           const trigger = event.target
@@ -1589,7 +1639,7 @@ export function Inspector({
                           Each copy finishes at its spot
                         </option>
                       </select>
-                    </label>
+                    </div>
                     {layerEvent.trigger === "percentage" && (
                       <RangeField
                         label="Chosen point"
@@ -1654,12 +1704,18 @@ export function Inspector({
                         local offset from that spot.
                       </p>
                     ) : (
-                      <label className="field">
+                      <div className="field">
                         <span className="field__label">
-                          Do this
-                          <HelpTip text="Play waits if the target is already pending or active. Restart immediately begins a fresh activation and clears the old one." />
+                          <label htmlFor={`${eventFieldPrefix}-action`}>
+                            Do this
+                          </label>
+                          <HelpTip
+                            label={`Do this for event ${index + 1}`}
+                            text="Play waits if the target is already pending or active. Restart immediately begins a fresh activation and clears the old one."
+                          />
                         </span>
                         <select
+                          id={`${eventFieldPrefix}-action`}
                           value={layerEvent.action}
                           onChange={(event) =>
                             setEvent(layerEvent.id, {
@@ -1671,14 +1727,20 @@ export function Inspector({
                           <option value="play">Play target if free</option>
                           <option value="restart">Restart target</option>
                         </select>
-                      </label>
+                      </div>
                     )}
-                    <label className="field">
+                    <div className="field">
                       <span className="field__label">
-                        Target layer
-                        <HelpTip text="The layer that should play. Event loops are blocked so one effect cannot recursively trigger forever." />
+                        <label htmlFor={`${eventFieldPrefix}-target`}>
+                          Target layer
+                        </label>
+                        <HelpTip
+                          label={`Target layer for event ${index + 1}`}
+                          text="The layer that should play. Event loops are blocked so one effect cannot recursively trigger forever."
+                        />
                       </span>
                       <select
+                        id={`${eventFieldPrefix}-target`}
                         value={layerEvent.targetLayerId}
                         onChange={(event) =>
                           setEvent(layerEvent.id, {
@@ -1698,6 +1760,7 @@ export function Inspector({
                                   layer.id,
                                   candidate.id,
                                   layerEvent.id,
+                                  layerEvent.enabled,
                                 ) ||
                                 (isCopyFinish &&
                                   !copyFinishTargetIsSafe(candidate))
@@ -1707,7 +1770,7 @@ export function Inspector({
                             </option>
                           ))}
                       </select>
-                    </label>
+                    </div>
                     {target?.startMode === "timeline" && (
                       <p className="inspector-hint inspector-hint--warning">
                         “{target.name}” also starts automatically on its normal
@@ -1793,13 +1856,17 @@ export function Inspector({
         </SettingsSection>
 
         <SettingsSection title="Appearance" icon={<Palette size={15} />}>
-          <label className="field color-field">
+          <div className="field color-field">
             <span className="field__label">
-              Tint color{" "}
-              <HelpTip text="Tint lets the same white image become red, blue, green, purple, or any other color." />
+              <label htmlFor={`${fieldIdPrefix}-tint-color`}>Tint color</label>{" "}
+              <HelpTip
+                label="Tint color"
+                text="Tint lets the same white image become red, blue, green, purple, or any other color."
+              />
             </span>
             <span>
               <input
+                id={`${fieldIdPrefix}-tint-color`}
                 type="color"
                 value={tintPickerValue}
                 onChange={(event) =>
@@ -1808,6 +1875,7 @@ export function Inspector({
               />
               <input
                 type="text"
+                aria-label="Tint color value"
                 value={layer.appearance.tint ?? ""}
                 placeholder="No tint"
                 onChange={(event) =>
@@ -1821,7 +1889,7 @@ export function Inspector({
                 Clear
               </button>
             </span>
-          </label>
+          </div>
           <RangeField
             label="Tint strength"
             value={layer.appearance.tintStrength * 100}
@@ -2770,7 +2838,9 @@ export function Inspector({
           >
             <option value="">Nothing — place freely</option>
             {layers
-              .filter((candidate) => candidate.id !== layer.id)
+              .filter((candidate) =>
+                canAttachLayer(layers, layer.id, candidate.id),
+              )
               .map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
                   {candidate.name}

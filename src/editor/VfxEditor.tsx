@@ -1,21 +1,33 @@
 "use client";
 
-import { Braces, CheckCircle2, Info } from "lucide-react";
+import {
+  Braces,
+  CheckCircle2,
+  CircleX,
+  Info,
+  TriangleAlert,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearRecoveryDraft,
+  deleteInvalidProjectRecord,
+  deleteInvalidRecoveryDraft,
   deleteProject,
-  listProjects,
+  inspectStoredProjects,
+  InvalidRecoveryDraftError,
   loadRecoveryDraft,
   saveRecoveryDraft,
   saveProject,
+  type InvalidStoredProjectRecord,
   type RecoveryDraft,
 } from "../persistence/projects";
 import {
+  deleteInvalidTemplateRecord,
   deleteTemplate,
-  listTemplates,
+  inspectStoredTemplates,
   saveTemplate,
   saveTemplates,
+  type InvalidStoredTemplateRecord,
 } from "../persistence/templates";
 import {
   createEmptyProject,
@@ -25,9 +37,22 @@ import {
 } from "../vfx/defaults";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../vfx/presets";
 import {
-  layersAfterAssetChanged,
-  layersAfterAssetRemoved,
+  analyzeAssetUsage,
+  projectAfterAssetChanged,
+  projectAfterAssetRemoved,
+  sanitizeLayerAssetReferencesWithReport,
 } from "../vfx/assetReferences";
+import { canAttachLayer, findLayerAttachmentCycle } from "../vfx/attachments";
+import {
+  canonicalizeLayerCapabilities,
+  mergeCompatibleLayerSettings,
+  type CopyableLayerSettings,
+} from "../vfx/layerLifecycle";
+import {
+  findLayerEventCycle,
+  MAX_EVENT_DEPTH,
+  maximumLayerEventDepth,
+} from "../vfx/events";
 import {
   activeTimelineEnd,
   copyProject,
@@ -36,7 +61,15 @@ import {
   projectFingerprint,
   type LayerCreationSource,
 } from "../vfx/projectState";
-import { deserializeProject } from "../vfx/serialization";
+import {
+  deserializeProject,
+  requireCurrentProject,
+  validateProject,
+} from "../vfx/serialization";
+import {
+  MAX_PROJECT_FILE_BYTES,
+  MAX_VFX_NAME_LENGTH,
+} from "../vfx/inputLimits";
 import {
   analyzeTemplateSelection,
   createTemplateFromProject,
@@ -55,7 +88,10 @@ import type {
   VfxProject,
   TimelineAuthoringSettings,
 } from "../vfx/types";
-import { AssetPanel } from "./components/AssetPanel";
+import {
+  AssetPanel,
+  type PreparedAssetMetadata,
+} from "./components/AssetPanel";
 import {
   DEFINITION_DRAWER_ID,
   DefinitionDrawer,
@@ -73,6 +109,7 @@ import {
 import { LayerPanel } from "./components/LayerPanel";
 import { PreviewPanel } from "./components/PreviewPanel";
 import {
+  AssetRemovalDialog,
   NewProjectDialog,
   RecoveryDialog,
   SaveAsDialog,
@@ -85,6 +122,7 @@ import {
 } from "./components/TemplateLibraryDialog";
 import { TopBar, type ProjectSaveStatus } from "./components/TopBar";
 import { downloadText } from "./download";
+import { verifyEmbeddedAssetImages } from "./embeddedImageValidation";
 import {
   recordCanvasAsGif,
   recordCanvasAsWebm,
@@ -93,23 +131,85 @@ import {
 } from "./previewRecording";
 import { useHistoryState } from "./useHistoryState";
 
-type LayerSettingsClipboard = Pick<
-  VfxLayer,
-  | "assetId"
-  | "transform"
-  | "timing"
-  | "appearance"
-  | "behavior"
-  | "random"
-  | "frameAnimation"
-  | "trail"
-  | "motionPath"
-  | "keyframes"
-  | "beam"
-  | "parentId"
-> & { spawn: VfxLayer["spawn"] };
-
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const upsertSavedProject = (
+  projects: VfxProject[],
+  project: VfxProject,
+): VfxProject[] =>
+  [
+    project,
+    ...projects.filter(
+      (candidate) => candidate.metadata.id !== project.metadata.id,
+    ),
+  ].sort((left, right) =>
+    right.metadata.updatedAt.localeCompare(left.metadata.updatedAt),
+  );
+
+const upsertSavedTemplate = (
+  templates: VfxTemplate[],
+  template: VfxTemplate,
+): VfxTemplate[] =>
+  [
+    template,
+    ...templates.filter((candidate) => candidate.id !== template.id),
+  ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+const isAbortError = (error: unknown) =>
+  error instanceof Error && error.name === "AbortError";
+
+type NoticeTone = "success" | "info" | "warning" | "error";
+
+interface EditorNotice {
+  message: string;
+  tone: NoticeTone;
+}
+
+function isCoalescedHistoryInput(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (!(target instanceof HTMLInputElement)) return false;
+  return ["number", "range", "text", "search"].includes(target.type);
+}
+
+function shouldHandleEditorShortcut(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented || event.isComposing) return false;
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (
+    target?.closest(
+      "input, textarea, select, [contenteditable='true'], [data-editor-shortcuts='off']",
+    )
+  )
+    return false;
+  if (
+    document.querySelector(
+      "[role='dialog'], [role='alertdialog'], [role='menu']",
+    )
+  )
+    return false;
+  if (
+    target?.closest(
+      "[role='slider'], [role='spinbutton'], [role='menuitem'], [role='tab'], [role='switch']",
+    )
+  )
+    return false;
+  const modifier = event.ctrlKey || event.metaKey;
+  if (!modifier && target?.closest("button, a[href], summary, [role='button']"))
+    return false;
+  return true;
+}
+
+function activeEventGraphIssue(layers: VfxLayer[]): string | null {
+  const cycle = findLayerEventCycle(layers);
+  if (cycle) {
+    const names = new Map(layers.map((layer) => [layer.id, layer.name]));
+    return `That change would create a circular active layer-event chain: ${cycle
+      .map((id) => names.get(id) ?? id)
+      .join(" -> ")}. Disable another event first.`;
+  }
+  if (maximumLayerEventDepth(layers) > MAX_EVENT_DEPTH)
+    return `That change would make the active layer-event chain deeper than the supported ${MAX_EVENT_DEPTH} steps.`;
+  return null;
+}
 
 export function VfxEditor() {
   const initial = useMemo(() => createEmptyProject(), []);
@@ -125,6 +225,7 @@ export function VfxEditor() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [time, setTime] = useState(0);
+  const [previewRestartRevision, setPreviewRestartRevision] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportingPreview, setExportingPreview] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
@@ -133,6 +234,7 @@ export function VfxEditor() {
   const [newProjectRequest, setNewProjectRequest] = useState<
     "toolbar" | "guide" | null
   >(null);
+  const [assetRemovalId, setAssetRemovalId] = useState<string | null>(null);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
   const [learningOpen, setLearningOpen] = useState(false);
@@ -140,6 +242,14 @@ export function VfxEditor() {
   const [guideActionStep, setGuideActionStep] = useState<number | null>(null);
   const [savedProjects, setSavedProjects] = useState<VfxProject[]>([]);
   const [savedTemplates, setSavedTemplates] = useState<VfxTemplate[]>([]);
+  const [invalidStoredProjects, setInvalidStoredProjects] = useState<
+    InvalidStoredProjectRecord[]
+  >([]);
+  const [invalidStoredTemplates, setInvalidStoredTemplates] = useState<
+    InvalidStoredTemplateRecord[]
+  >([]);
+  const [excessStoredProjects, setExcessStoredProjects] = useState(0);
+  const [excessStoredTemplates, setExcessStoredTemplates] = useState(0);
   const [savedFingerprint, setSavedFingerprint] = useState<string | null>(null);
   const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(
     null,
@@ -148,12 +258,29 @@ export function VfxEditor() {
   const [recoveryStatus, setRecoveryStatus] = useState<
     "idle" | "saving" | "protected" | "error"
   >("idle");
+  const [recoveryStorageBlocked, setRecoveryStorageBlocked] = useState(false);
+  const [renderedProjectGeneration, setRenderedProjectGeneration] = useState(0);
   const recoveryGeneration = useRef(0);
+  const recoveryStorageCheckedRef = useRef(false);
+  const recoveryStorageBlockedRef = useRef(false);
+  const projectGeneration = useRef(0);
+  const projectImportRequest = useRef(0);
+  const projectImageValidation = useRef<AbortController | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const guideContinueRef = useRef<HTMLButtonElement>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<EditorNotice | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const [settingsClipboard, setSettingsClipboard] =
-    useState<LayerSettingsClipboard | null>(null);
+    useState<CopyableLayerSettings | null>(null);
+  useEffect(
+    () => () => {
+      projectImageValidation.current?.abort();
+      projectImageValidation.current = null;
+      if (toastTimerRef.current !== null)
+        window.clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
   const selectedGroup =
     project.groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedLayer = selectedGroup
@@ -161,6 +288,22 @@ export function VfxEditor() {
     : (project.layers.find((layer) => layer.id === selectedId) ??
       project.layers[0] ??
       null);
+  const effectiveSelectedAssetId =
+    project.assets.find((asset) => asset.id === selectedAssetId)?.id ??
+    project.assets[0]?.id ??
+    null;
+  const pendingRemovalAsset = assetRemovalId
+    ? (project.assets.find(
+        (asset) => asset.id === assetRemovalId && !asset.builtIn,
+      ) ?? null)
+    : null;
+  const pendingRemovalUsage = useMemo(
+    () =>
+      pendingRemovalAsset
+        ? analyzeAssetUsage(project, pendingRemovalAsset.id)
+        : null,
+    [pendingRemovalAsset, project],
+  );
   const templateSaveSummaries = useMemo(
     () => ({
       effect: analyzeTemplateSelection(project, undefined, "effect"),
@@ -222,22 +365,64 @@ export function VfxEditor() {
     templatesOpen ||
     saveAsOpen ||
     newProjectRequest !== null ||
+    pendingRemovalAsset !== null ||
     learningOpen ||
     onboardingStep !== null ||
     guideStep !== null ||
     recoveryDraft !== null;
+  const restartPreview = useCallback(() => {
+    setPreviewRestartRevision((revision) => revision + 1);
+    setTime(0);
+    setPlaying(true);
+  }, []);
+
   useEffect(() => {
     if (guideStep === 0 && guideActionStep === 0)
       guideContinueRef.current?.focus({ preventScroll: true });
   }, [guideActionStep, guideStep]);
   const latestProjectRef = useRef(project);
+  const savedFingerprintRef = useRef(savedFingerprint);
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const activeSaveFingerprintRef = useRef<string | null>(null);
+  const queuedSaveProjectRef = useRef<VfxProject | null>(null);
   useEffect(() => {
     latestProjectRef.current = project;
   }, [project]);
+  useEffect(() => {
+    const activeValidation = projectImageValidation.current;
+    if (!activeValidation) return;
+    activeValidation.abort();
+    projectImageValidation.current = null;
+  }, [currentFingerprint]);
+  useEffect(() => {
+    savedFingerprintRef.current = savedFingerprint;
+  }, [savedFingerprint]);
 
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(null), 2600);
+  const notify = useCallback((message: string, tone: NoticeTone) => {
+    if (toastTimerRef.current !== null)
+      window.clearTimeout(toastTimerRef.current);
+    setToast({ message, tone });
+    toastTimerRef.current = window.setTimeout(
+      () => {
+        toastTimerRef.current = null;
+        setToast(null);
+      },
+      tone === "error" || tone === "warning" ? 4200 : 2600,
+    );
+  }, []);
+  const refreshStoredProjects = useCallback(async () => {
+    const inspection = await inspectStoredProjects();
+    setSavedProjects(inspection.projects);
+    setInvalidStoredProjects(inspection.invalidRecords);
+    setExcessStoredProjects(inspection.excessRecords);
+    return inspection.projects;
+  }, []);
+  const refreshStoredTemplates = useCallback(async () => {
+    const inspection = await inspectStoredTemplates();
+    setSavedTemplates(inspection.templates);
+    setInvalidStoredTemplates(inspection.invalidRecords);
+    setExcessStoredTemplates(inspection.excessRecords);
+    return inspection.templates;
   }, []);
   const handlePreviewCanvasReady = useCallback(
     (canvas: HTMLCanvasElement | null) => {
@@ -251,18 +436,33 @@ export function VfxEditor() {
     void loadRecoveryDraft()
       .then((draft) => {
         if (cancelled) return;
+        recoveryStorageCheckedRef.current = true;
         setRecoveryDraft(draft);
         setRecoveryChecked(true);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return;
+        const invalidDraft =
+          error instanceof InvalidRecoveryDraftError ||
+          (error instanceof Error &&
+            error.name === "InvalidRecoveryDraftError");
+        recoveryStorageBlockedRef.current = invalidDraft;
+        setRecoveryStorageBlocked(invalidDraft);
         setRecoveryStatus("error");
         setRecoveryChecked(true);
+        notify(
+          invalidDraft
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "Recovery autosave could not be checked.",
+          invalidDraft ? "warning" : "error",
+        );
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     if (!recoveryChecked || recoveryDraft) return;
@@ -275,7 +475,13 @@ export function VfxEditor() {
   }, [recoveryChecked, recoveryDraft]);
 
   useEffect(() => {
-    if (!recoveryChecked || recoveryDraft) return;
+    if (
+      !recoveryChecked ||
+      !recoveryStorageCheckedRef.current ||
+      recoveryDraft ||
+      recoveryStorageBlockedRef.current
+    )
+      return;
     const generation = ++recoveryGeneration.current;
     if (!hasUnsavedChanges) {
       void clearRecoveryDraft()
@@ -305,7 +511,13 @@ export function VfxEditor() {
       window.clearTimeout(statusTimer);
       window.clearTimeout(timer);
     };
-  }, [currentFingerprint, hasUnsavedChanges, recoveryChecked, recoveryDraft]);
+  }, [
+    currentFingerprint,
+    hasUnsavedChanges,
+    recoveryChecked,
+    recoveryDraft,
+    recoveryStorageBlocked,
+  ]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -356,6 +568,7 @@ export function VfxEditor() {
       request: PreviewRecordingRequest,
       onProgress: (progress: number) => void,
     ) => {
+      requireCurrentProject(project, "preview-export");
       const canvas = previewCanvasRef.current;
       if (!canvas)
         throw new Error(
@@ -387,12 +600,12 @@ export function VfxEditor() {
         setPlaying(wasPlaying);
       }
     },
-    [activePlaybackEnd, playing, time],
+    [activePlaybackEnd, playing, project, time],
   );
 
   const updateProject = useCallback(
     (next: VfxProject) =>
-      history.set({
+      history.setCoalesced({
         ...next,
         metadata: { ...next.metadata, updatedAt: new Date().toISOString() },
       }),
@@ -400,29 +613,84 @@ export function VfxEditor() {
   );
   const updateLayer = useCallback(
     (nextLayer: VfxLayer) => {
-      history.set((current) => ({
-        ...current,
-        layers: current.layers.map((layer) =>
-          layer.id === nextLayer.id ? nextLayer : layer,
-        ),
-        metadata: { ...current.metadata, updatedAt: new Date().toISOString() },
-      }));
+      const canonicalLayer = canonicalizeLayerCapabilities(nextLayer);
+      if (!project.layers.some((layer) => layer.id === canonicalLayer.id)) {
+        notify("That layer is no longer in this project.", "error");
+        return;
+      }
+      if (
+        !canAttachLayer(
+          project.layers,
+          canonicalLayer.id,
+          canonicalLayer.parentId,
+        )
+      ) {
+        notify(
+          "That attachment would create a circular layer chain.",
+          "warning",
+        );
+        return;
+      }
+      const nextLayers = project.layers.map((layer) =>
+        layer.id === canonicalLayer.id ? canonicalLayer : layer,
+      );
+      const eventIssue = activeEventGraphIssue(nextLayers);
+      if (eventIssue) {
+        notify(eventIssue, "warning");
+        return;
+      }
+      history.setCoalesced((current) => {
+        if (
+          !current.layers.some((layer) => layer.id === canonicalLayer.id) ||
+          !canAttachLayer(
+            current.layers,
+            canonicalLayer.id,
+            canonicalLayer.parentId,
+          )
+        )
+          return current;
+        const currentLayers = current.layers.map((layer) =>
+          layer.id === canonicalLayer.id ? canonicalLayer : layer,
+        );
+        if (activeEventGraphIssue(currentLayers)) return current;
+        return {
+          ...current,
+          layers: currentLayers,
+          metadata: {
+            ...current.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
     },
-    [history],
+    [history, notify, project.layers],
   );
   const updateLayers = useCallback(
     (nextLayers: VfxLayer[]) => {
-      history.set((current) => ({
+      const canonicalLayers = nextLayers.map(canonicalizeLayerCapabilities);
+      if (findLayerAttachmentCycle(canonicalLayers)) {
+        notify(
+          "That change would create a circular layer attachment.",
+          "warning",
+        );
+        return;
+      }
+      const eventIssue = activeEventGraphIssue(canonicalLayers);
+      if (eventIssue) {
+        notify(eventIssue, "warning");
+        return;
+      }
+      history.setCoalesced((current) => ({
         ...current,
-        layers: nextLayers,
+        layers: canonicalLayers,
         metadata: { ...current.metadata, updatedAt: new Date().toISOString() },
       }));
     },
-    [history],
+    [history, notify],
   );
   const updateTimeline = useCallback(
     (timeline: TimelineAuthoringSettings, duration?: number) => {
-      history.set((current) => ({
+      history.setCoalesced((current) => ({
         ...current,
         timeline,
         preview:
@@ -436,7 +704,7 @@ export function VfxEditor() {
   );
   const updateGroup = useCallback(
     (nextGroup: VfxGroup) => {
-      history.set((current) => ({
+      history.setCoalesced((current) => ({
         ...current,
         groups: current.groups.map((group) =>
           group.id === nextGroup.id ? nextGroup : group,
@@ -475,6 +743,7 @@ export function VfxEditor() {
       effectiveSelectedId
         ? "Group created with the selected layer."
         : "Empty effect group created.",
+      "success",
     );
   }, [effectiveSelectedId, history, notify, project.groups.length]);
   const deleteGroupById = useCallback(
@@ -498,25 +767,157 @@ export function VfxEditor() {
         metadata: { ...current.metadata, updatedAt: new Date().toISOString() },
       }));
       setSelectedGroupId(null);
-      notify(`Deleted “${group.name}”; its layers were kept.`);
+      notify(`Deleted “${group.name}”; its layers were kept.`, "success");
     },
     [history, notify, project.groups],
   );
   const patchLayer = useCallback(
     (id: string, patch: Partial<VfxLayer>) => {
-      history.set((current) => ({
-        ...current,
-        layers: current.layers.map((layer) =>
-          layer.id === id ? ({ ...layer, ...patch } as VfxLayer) : layer,
-        ),
-      }));
+      const currentLayer = project.layers.find((layer) => layer.id === id);
+      if (!currentLayer) return;
+      const nextLayer = { ...currentLayer, ...patch } as VfxLayer;
+      if (!canAttachLayer(project.layers, id, nextLayer.parentId)) {
+        notify(
+          "That attachment would create a circular layer chain.",
+          "warning",
+        );
+        return;
+      }
+      const nextLayers = project.layers.map((layer) =>
+        layer.id === id ? nextLayer : layer,
+      );
+      const eventIssue = activeEventGraphIssue(nextLayers);
+      if (eventIssue) {
+        notify(eventIssue, "warning");
+        return;
+      }
+      history.setCoalesced((current) => {
+        const currentLayer = current.layers.find((layer) => layer.id === id);
+        if (!currentLayer) return current;
+        const currentNext = { ...currentLayer, ...patch } as VfxLayer;
+        if (!canAttachLayer(current.layers, id, currentNext.parentId))
+          return current;
+        const currentLayers = current.layers.map((layer) =>
+          layer.id === id ? currentNext : layer,
+        );
+        if (activeEventGraphIssue(currentLayers)) return current;
+        return {
+          ...current,
+          layers: currentLayers,
+        };
+      });
+    },
+    [history, notify, project.layers],
+  );
+
+  const updateAsset = useCallback(
+    (nextAsset: VfxAsset) => {
+      if (
+        !latestProjectRef.current.assets.some(
+          (asset) => asset.id === nextAsset.id,
+        )
+      ) {
+        notify(
+          `The image “${nextAsset.name}” is no longer in this project.`,
+          "error",
+        );
+        return;
+      }
+      history.setCoalesced((current) => {
+        if (!current.assets.some((asset) => asset.id === nextAsset.id))
+          return current;
+        return {
+          ...projectAfterAssetChanged(current, nextAsset),
+          metadata: {
+            ...current.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
+    },
+    [history, notify],
+  );
+  const prepareAsset = useCallback(
+    (
+      assetId: string,
+      metadata: PreparedAssetMetadata,
+      sourceProjectGeneration: number,
+    ): boolean => {
+      if (
+        sourceProjectGeneration !== projectGeneration.current ||
+        !latestProjectRef.current.assets.some((asset) => asset.id === assetId)
+      )
+        return false;
+      history.set((current) => {
+        if (sourceProjectGeneration !== projectGeneration.current)
+          return current;
+        const currentAsset = current.assets.find(
+          (asset) => asset.id === assetId,
+        );
+        if (!currentAsset) return current;
+        return {
+          ...projectAfterAssetChanged(current, {
+            ...currentAsset,
+            ...metadata,
+          }),
+          metadata: {
+            ...current.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
+      return true;
     },
     [history],
+  );
+  const uploadAssets = useCallback(
+    (assets: VfxAsset[], sourceProjectGeneration: number): boolean => {
+      const currentProject = latestProjectRef.current;
+      if (sourceProjectGeneration !== projectGeneration.current) return false;
+      const existingIds = new Set(
+        currentProject.assets.map((asset) => asset.id),
+      );
+      if (
+        assets.some(
+          (asset, index) =>
+            existingIds.has(asset.id) ||
+            assets.findIndex((candidate) => candidate.id === asset.id) !==
+              index,
+        )
+      ) {
+        notify("One or more imported images reuse an existing ID.", "error");
+        return false;
+      }
+      const candidate = validateProject({
+        ...currentProject,
+        assets: [...currentProject.assets, ...assets],
+        metadata: {
+          ...currentProject.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+      if (!candidate.ok || !candidate.project) {
+        notify(
+          candidate.error ?? "Those images do not fit in this project.",
+          "error",
+        );
+        return false;
+      }
+      if (sourceProjectGeneration !== projectGeneration.current) return false;
+      history.set(candidate.project);
+      setSelectedAssetId(assets[0]?.id ?? null);
+      notify(
+        `${assets.length} image${assets.length === 1 ? "" : "s"} added.`,
+        "success",
+      );
+      return true;
+    },
+    [history, notify],
   );
   const addLayer = useCallback(
     (
       type: LayerType,
-      assetId = selectedAssetId,
+      assetId = effectiveSelectedAssetId,
       source: LayerCreationSource = "manual",
     ) => {
       const layer = createLayer(
@@ -533,7 +934,7 @@ export function VfxEditor() {
       setTime(0);
       setPlaying(true);
     },
-    [history, project.assets, selectedAssetId],
+    [effectiveSelectedAssetId, history, project.assets],
   );
   const addPreset = useCallback(
     (presetId: string) => {
@@ -557,11 +958,12 @@ export function VfxEditor() {
         history.set(inserted.project);
         setSelectedId(firstLayer?.id ?? null);
         setSelectedGroupId(null);
-        setSelectedAssetId(firstLayer?.assetId ?? selectedAssetId);
+        setSelectedAssetId(firstLayer?.assetId ?? effectiveSelectedAssetId);
         setTime(time);
         setPlaying(true);
         notify(
           `${composition.name} inserted at ${Math.round(time)} ms — ${composition.description}`,
+          "success",
         );
         return;
       }
@@ -569,7 +971,7 @@ export function VfxEditor() {
         (candidate) => candidate.id === presetId,
       );
       if (!preset) return;
-      const layer = preset.create(selectedAssetId ?? undefined);
+      const layer = preset.create(effectiveSelectedAssetId ?? undefined);
       history.set((current) => ({
         ...current,
         layers: [...current.layers, layer],
@@ -578,9 +980,9 @@ export function VfxEditor() {
       setSelectedGroupId(null);
       setTime(0);
       setPlaying(true);
-      notify(`${preset.name} added — ${preset.description}`);
+      notify(`${preset.name} added — ${preset.description}`, "success");
     },
-    [history, notify, project, selectedAssetId, time],
+    [effectiveSelectedAssetId, history, notify, project, time],
   );
   const duplicateLayer = useCallback(
     (id: string) => {
@@ -625,6 +1027,7 @@ export function VfxEditor() {
       if (removedLinks > 0)
         notify(
           `Layer deleted. Removed ${removedLinks} event link${removedLinks === 1 ? "" : "s"} that targeted it.`,
+          "warning",
         );
     },
     [history, notify, project],
@@ -642,16 +1045,26 @@ export function VfxEditor() {
   const activateProject = useCallback(
     (next: VfxProject, manuallySaved: boolean, preserveRecovery = false) => {
       recoveryGeneration.current += 1;
+      projectGeneration.current += 1;
+      projectImportRequest.current += 1;
+      projectImageValidation.current?.abort();
+      projectImageValidation.current = null;
+      setRenderedProjectGeneration(projectGeneration.current);
       history.replace(next);
       setSelectedId(next.layers[0]?.id ?? null);
       setSelectedGroupId(null);
       setSelectedAssetId(next.assets[0]?.id ?? null);
+      setAssetRemovalId(null);
       setTime(0);
       setPlaying(false);
       setSavedFingerprint(manuallySaved ? projectFingerprint(next) : null);
       setRecoveryStatus("idle");
       setRecoveryDraft(null);
-      if (!preserveRecovery)
+      if (
+        !preserveRecovery &&
+        recoveryStorageCheckedRef.current &&
+        !recoveryStorageBlockedRef.current
+      )
         void clearRecoveryDraft().catch(() => setRecoveryStatus("error"));
     },
     [history],
@@ -660,7 +1073,7 @@ export function VfxEditor() {
   const createNewProject = useCallback(() => {
     const next = createEmptyProject();
     activateProject(next, false);
-    notify("New empty project ready.");
+    notify("New empty project ready.", "success");
   }, [activateProject, notify]);
 
   const completeNewProject = useCallback(
@@ -682,73 +1095,187 @@ export function VfxEditor() {
     [completeNewProject, hasUnsavedChanges],
   );
 
-  const save = useCallback(async () => {
-    const projectToSave = project;
-    const savedVersion = projectFingerprint(projectToSave);
-    try {
-      await saveProject(projectToSave);
-      recoveryGeneration.current += 1;
-      setSavedFingerprint(savedVersion);
-      if (projectFingerprint(latestProjectRef.current) === savedVersion) {
-        await clearRecoveryDraft();
-        setRecoveryStatus("idle");
-      }
-      setSavedProjects(await listProjects());
-      notify("Project saved in this browser.");
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "This project could not be saved.",
-      );
-    }
-  }, [notify, project]);
-
-  const saveAs = useCallback(
-    async (name: string) => {
-      const copy = copyProject(project, name);
+  const persistProjectSnapshot = useCallback(
+    async (projectToSave: VfxProject) => {
+      const sourceVersion = projectFingerprint(projectToSave);
+      let storedProject: VfxProject;
       try {
-        const storedCopy = await saveProject(copy);
-        activateProject(storedCopy, true);
-        setSavedProjects(await listProjects());
-        setSaveAsOpen(false);
-        notify(`Saved as “${storedCopy.metadata.name}”.`);
+        storedProject = await saveProject(projectToSave);
       } catch (error) {
         notify(
           error instanceof Error
             ? error.message
-            : "This copy could not be saved.",
+            : "This project could not be saved.",
+          "error",
         );
+        return;
       }
+
+      const savedVersion = projectFingerprint(storedProject);
+      recoveryGeneration.current += 1;
+      history.setTransient((current) => {
+        if (projectFingerprint(current) !== sourceVersion) return current;
+        return {
+          ...storedProject,
+          preview: {
+            ...storedProject.preview,
+            background: current.preview.background,
+            customColor: current.preview.customColor,
+            showGrid: current.preview.showGrid,
+            zoom: current.preview.zoom,
+            loop: current.preview.loop,
+          },
+        };
+      });
+      setSavedFingerprint(savedVersion);
+      setSavedProjects((current) => upsertSavedProject(current, storedProject));
+
+      let recoveryCleanupFailed = false;
+      if (
+        recoveryStorageCheckedRef.current &&
+        !recoveryStorageBlockedRef.current &&
+        projectFingerprint(latestProjectRef.current) === sourceVersion
+      ) {
+        try {
+          await clearRecoveryDraft();
+          setRecoveryStatus("idle");
+        } catch {
+          recoveryCleanupFailed = true;
+          setRecoveryStatus("error");
+        }
+      }
+
+      let projectRefreshFailed = false;
+      try {
+        await refreshStoredProjects();
+      } catch {
+        projectRefreshFailed = true;
+      }
+
+      const followUpWarnings = [
+        ...(recoveryStorageBlocked
+          ? [
+              "unreadable recovery data remains preserved until you remove it from Load",
+            ]
+          : []),
+        ...(recoveryCleanupFailed
+          ? ["its previous recovery draft could not be cleared"]
+          : []),
+        ...(projectRefreshFailed
+          ? ["the saved-project list could not be refreshed yet"]
+          : []),
+      ];
+      notify(
+        followUpWarnings.length > 0
+          ? `Project saved, but ${followUpWarnings.join(" and ")}.`
+          : "Project saved in this browser.",
+        followUpWarnings.length > 0 ? "warning" : "success",
+      );
     },
-    [activateProject, notify, project],
+    [history, notify, recoveryStorageBlocked, refreshStoredProjects],
+  );
+
+  const save = useCallback((): Promise<void> => {
+    const requestedProject = latestProjectRef.current;
+    const requestedFingerprint = projectFingerprint(requestedProject);
+    const inFlight = saveInFlightRef.current;
+    if (inFlight) {
+      const queuedFingerprint = queuedSaveProjectRef.current
+        ? projectFingerprint(queuedSaveProjectRef.current)
+        : activeSaveFingerprintRef.current;
+      if (queuedFingerprint !== requestedFingerprint) {
+        queuedSaveProjectRef.current = requestedProject;
+        notify(
+          "A project save is already in progress. Your latest changes will save next.",
+          "info",
+        );
+      } else {
+        notify("This project version is already being saved.", "info");
+      }
+      return inFlight;
+    }
+
+    notify("Saving project...", "info");
+    const run = async () => {
+      let nextProject: VfxProject | null = requestedProject;
+      while (nextProject) {
+        activeSaveFingerprintRef.current = projectFingerprint(nextProject);
+        try {
+          await persistProjectSnapshot(nextProject);
+        } catch (error) {
+          notify(
+            error instanceof Error
+              ? error.message
+              : "This project could not be saved.",
+            "error",
+          );
+        }
+        nextProject = queuedSaveProjectRef.current;
+        queuedSaveProjectRef.current = null;
+      }
+    };
+    const pending = run().finally(() => {
+      if (saveInFlightRef.current !== pending) return;
+      saveInFlightRef.current = null;
+      activeSaveFingerprintRef.current = null;
+      queuedSaveProjectRef.current = null;
+    });
+    saveInFlightRef.current = pending;
+    return pending;
+  }, [notify, persistProjectSnapshot]);
+
+  const saveAs = useCallback(
+    async (name: string) => {
+      const copy = copyProject(project, name);
+      let storedCopy: VfxProject;
+      try {
+        storedCopy = await saveProject(copy);
+      } catch (error) {
+        throw error instanceof Error
+          ? error
+          : new Error("This copy could not be saved.");
+      }
+      activateProject(storedCopy, true);
+      setSavedProjects((current) => upsertSavedProject(current, storedCopy));
+      setSaveAsOpen(false);
+      notify(`Saved as “${storedCopy.metadata.name}”.`, "success");
+      void refreshStoredProjects().catch(() =>
+        notify(
+          `Saved as “${storedCopy.metadata.name}”, but the saved-project list could not be refreshed yet.`,
+          "warning",
+        ),
+      );
+    },
+    [activateProject, notify, project, refreshStoredProjects],
   );
 
   const openProjects = useCallback(async () => {
     try {
-      setSavedProjects(await listProjects());
+      await refreshStoredProjects();
       setProjectsOpen(true);
     } catch (error) {
       notify(
         error instanceof Error
           ? error.message
           : "Saved projects could not be opened.",
+        "error",
       );
     }
-  }, [notify]);
+  }, [notify, refreshStoredProjects]);
 
   const openTemplateLibrary = useCallback(async () => {
     try {
-      setSavedTemplates(await listTemplates());
+      await refreshStoredTemplates();
       setTemplatesOpen(true);
     } catch (error) {
       notify(
         error instanceof Error
           ? error.message
           : "The template library could not be opened.",
+        "error",
       );
     }
-  }, [notify]);
+  }, [notify, refreshStoredTemplates]);
 
   const saveCurrentTemplate = useCallback(
     async (name: string, description: string, scope: TemplateSaveScope) => {
@@ -767,74 +1294,126 @@ export function VfxEditor() {
         layerIds,
         scope,
       );
-      await saveTemplate(template);
-      setSavedTemplates(await listTemplates());
-      notify(`Saved “${template.name}” as a reusable template.`);
+      const storedTemplate = await saveTemplate(template);
+      setSavedTemplates((current) =>
+        upsertSavedTemplate(current, storedTemplate),
+      );
+      try {
+        await refreshStoredTemplates();
+        notify(
+          `Saved “${storedTemplate.name}” as a reusable template.`,
+          "success",
+        );
+      } catch {
+        notify(
+          `Saved “${storedTemplate.name}” as a reusable template, but the template list could not be refreshed yet.`,
+          "warning",
+        );
+      }
     },
-    [notify, project, selectedGroup, selectedLayer],
+    [notify, project, refreshStoredTemplates, selectedGroup, selectedLayer],
   );
 
   const insertSavedTemplate = useCallback(
-    (template: VfxTemplate) => {
-      const inserted = insertTemplateIntoProject(project, template, time);
-      const firstLayer = inserted.project.layers.find(
-        (layer) => layer.id === inserted.insertedLayerIds[0],
-      );
-      history.set({
-        ...inserted.project,
-        metadata: {
-          ...inserted.project.metadata,
-          updatedAt: new Date().toISOString(),
-        },
-      });
-      setSelectedId(firstLayer?.id ?? null);
-      setSelectedGroupId(null);
-      setSelectedAssetId(firstLayer?.assetId ?? selectedAssetId);
-      setTime(time);
-      setPlaying(true);
-      setTemplatesOpen(false);
-      notify(
-        `Inserted “${template.name}” as ${inserted.insertedLayerIds.length} new layer${inserted.insertedLayerIds.length === 1 ? "" : "s"}.`,
-      );
+    async (template: VfxTemplate) => {
+      const sourceFingerprint = projectFingerprint(project);
+      projectImageValidation.current?.abort();
+      const controller = new AbortController();
+      projectImageValidation.current = controller;
+      try {
+        await verifyEmbeddedAssetImages(template.assets, controller.signal);
+        if (
+          projectImageValidation.current !== controller ||
+          projectFingerprint(latestProjectRef.current) !== sourceFingerprint
+        )
+          return;
+        const inserted = insertTemplateIntoProject(project, template, time);
+        const firstLayer = inserted.project.layers.find(
+          (layer) => layer.id === inserted.insertedLayerIds[0],
+        );
+        history.set({
+          ...inserted.project,
+          metadata: {
+            ...inserted.project.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+        setSelectedId(firstLayer?.id ?? null);
+        setSelectedGroupId(null);
+        setSelectedAssetId(firstLayer?.assetId ?? effectiveSelectedAssetId);
+        setTime(time);
+        setPlaying(true);
+        setTemplatesOpen(false);
+        notify(
+          `Inserted “${template.name}” as ${inserted.insertedLayerIds.length} new layer${inserted.insertedLayerIds.length === 1 ? "" : "s"}.`,
+          "success",
+        );
+      } catch (error) {
+        if (!isAbortError(error))
+          notify(
+            error instanceof Error
+              ? error.message
+              : "This template's images could not be checked.",
+            "error",
+          );
+      } finally {
+        if (projectImageValidation.current === controller)
+          projectImageValidation.current = null;
+      }
     },
-    [history, notify, project, selectedAssetId, time],
+    [effectiveSelectedAssetId, history, notify, project, time],
   );
 
-  const importTemplateFile = useCallback(async (file: File) => {
-    if (file.size > MAX_TEMPLATE_FILE_BYTES)
-      throw new Error(
-        "This template file is larger than the supported 24 MB limit.",
-      );
-    const result = deserializeTemplatePack(await file.text());
-    if (!result.ok || !result.pack)
-      throw new Error(
-        result.error ?? "This template or pack could not be imported.",
-      );
-    const summary = await saveTemplates(result.pack.templates);
-    setSavedTemplates(await listTemplates());
-    return summary;
-  }, []);
+  const importTemplateFile = useCallback(
+    async (file: File) => {
+      projectImageValidation.current?.abort();
+      const controller = new AbortController();
+      projectImageValidation.current = controller;
+      try {
+        if (file.size > MAX_TEMPLATE_FILE_BYTES)
+          throw new Error(
+            "This template file is larger than the supported 24 MB limit.",
+          );
+        const result = deserializeTemplatePack(await file.text());
+        if (!result.ok || !result.pack)
+          throw new Error(
+            result.error ?? "This template or pack could not be imported.",
+          );
+        await verifyEmbeddedAssetImages(
+          result.pack.templates.flatMap((template) => template.assets),
+          controller.signal,
+        );
+        const importResult = await saveTemplates(result.pack.templates);
+        setSavedTemplates((current) =>
+          importResult.committedTemplates.reduce(upsertSavedTemplate, current),
+        );
+        try {
+          await refreshStoredTemplates();
+        } catch {
+          notify(
+            "Template import completed and its changes are saved. The template list could not be refreshed yet; no retry is needed.",
+            "warning",
+          );
+        }
+        return importResult;
+      } finally {
+        if (projectImageValidation.current === controller)
+          projectImageValidation.current = null;
+      }
+    },
+    [notify, refreshStoredTemplates],
+  );
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (editorModalOpen) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']"))
-        return;
+      if (!shouldHandleEditorShortcut(event)) return;
       const modifier = event.ctrlKey || event.metaKey;
-      if (
-        !modifier &&
-        target?.closest(
-          "button, a[href], summary, [role='button'], [role='menuitem'], [role='tab']",
-        )
-      )
-        return;
       if (event.code === "Space") {
         event.preventDefault();
         setPlaying((value) => !value);
       } else if (event.key.toLowerCase() === "r" && !modifier) {
-        setTime(0);
-        setPlaying(true);
+        restartPreview();
       } else if (event.key === "Delete" && effectiveSelectedGroupId)
         deleteGroupById(effectiveSelectedGroupId);
       else if (event.key === "Delete" && effectiveSelectedId)
@@ -881,6 +1460,7 @@ export function VfxEditor() {
     effectiveSelectedId,
     effectiveSelectedGroupId,
     history,
+    restartPreview,
     save,
   ]);
 
@@ -942,14 +1522,26 @@ export function VfxEditor() {
   };
 
   return (
-    <div className={`vvfx-app ${learningClass}`}>
+    <div
+      className={`vvfx-app ${learningClass}`}
+      onFocusCapture={(event) => {
+        if (isCoalescedHistoryInput(event.target)) history.beginInteraction();
+        else history.endInteraction();
+      }}
+      onBlurCapture={(event) => {
+        if (isCoalescedHistoryInput(event.target)) history.endInteraction();
+      }}
+    >
       <TopBar
         projectName={project.metadata.name}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
         saveStatus={saveStatus}
         onNameChange={(name) =>
-          history.set({ ...project, metadata: { ...project.metadata, name } })
+          history.setCoalesced({
+            ...project,
+            metadata: { ...project.metadata, name },
+          })
         }
         onUndo={history.undo}
         onRedo={history.redo}
@@ -968,19 +1560,87 @@ export function VfxEditor() {
         }}
         onLearn={() => setLearningOpen(true)}
         onImport={(file) => {
-          void file
-            .text()
-            .then((text) => {
-              const result = deserializeProject(text);
-              if (!result.ok || !result.project)
-                return notify(
-                  result.error ?? "This project could not be opened.",
+          const request = ++projectImportRequest.current;
+          const sourceProjectGeneration = projectGeneration.current;
+          projectImageValidation.current?.abort();
+          projectImageValidation.current = null;
+          if (file.size > MAX_PROJECT_FILE_BYTES) {
+            notify(
+              `This project file is larger than the supported ${Math.floor(MAX_PROJECT_FILE_BYTES / 1024 / 1024)} MB limit.`,
+              "error",
+            );
+            return;
+          }
+          void (async () => {
+            let text: string;
+            try {
+              text = await file.text();
+            } catch {
+              if (
+                request === projectImportRequest.current &&
+                sourceProjectGeneration === projectGeneration.current
+              )
+                notify("This file could not be read.", "error");
+              return;
+            }
+            if (
+              request !== projectImportRequest.current ||
+              sourceProjectGeneration !== projectGeneration.current
+            )
+              return;
+            const result = deserializeProject(text);
+            if (!result.ok || !result.project) {
+              notify(
+                result.error ?? "This project could not be opened.",
+                "error",
+              );
+              return;
+            }
+            const controller = new AbortController();
+            projectImageValidation.current = controller;
+            try {
+              await verifyEmbeddedAssetImages(
+                result.project.assets,
+                controller.signal,
+              );
+            } catch (error) {
+              if (
+                request === projectImportRequest.current &&
+                sourceProjectGeneration === projectGeneration.current &&
+                !isAbortError(error)
+              )
+                notify(
+                  error instanceof Error
+                    ? error.message
+                    : "This project's images could not be checked.",
+                  "error",
                 );
-              if (!confirmProjectReplacement("Importing this project")) return;
-              activateProject(result.project, false);
-              notify("Project imported successfully.");
-            })
-            .catch(() => notify("This file could not be read."));
+              return;
+            } finally {
+              if (projectImageValidation.current === controller)
+                projectImageValidation.current = null;
+            }
+            if (
+              request !== projectImportRequest.current ||
+              sourceProjectGeneration !== projectGeneration.current
+            )
+              return;
+            const currentProject = latestProjectRef.current;
+            const currentFingerprint = projectFingerprint(currentProject);
+            const currentHasUnsavedChanges =
+              hasMeaningfulProjectWork(currentProject) &&
+              (savedFingerprintRef.current === null ||
+                currentFingerprint !== savedFingerprintRef.current);
+            if (
+              currentHasUnsavedChanges &&
+              !window.confirm(
+                "You have unsaved changes. Importing this project will replace them in the editor. Continue?",
+              )
+            )
+              return;
+            activateProject(result.project, false);
+            notify("Project imported successfully.", "success");
+          })();
         }}
         onExport={() => setExportOpen(true)}
       />
@@ -989,45 +1649,39 @@ export function VfxEditor() {
         <div className="left-rail">
           <AssetPanel
             assets={project.assets}
-            selectedId={selectedAssetId}
+            projectGeneration={renderedProjectGeneration}
+            selectedId={effectiveSelectedAssetId}
             onSelect={setSelectedAssetId}
-            onUpload={(assets: VfxAsset[]) => {
-              history.set({
-                ...project,
-                assets: [...project.assets, ...assets],
-              });
-              setSelectedAssetId(assets[0]?.id ?? null);
-              notify(
-                `${assets.length} image${assets.length === 1 ? "" : "s"} added.`,
-              );
-            }}
+            onUpload={uploadAssets}
             onRename={(id, name) =>
-              history.set({
-                ...project,
-                assets: project.assets.map((asset) =>
+              history.setCoalesced((current) => ({
+                ...current,
+                assets: current.assets.map((asset) =>
                   asset.id === id ? { ...asset, name } : asset,
                 ),
-              })
+                metadata: {
+                  ...current.metadata,
+                  updatedAt: new Date().toISOString(),
+                },
+              }))
             }
-            onChangeAsset={(nextAsset) => {
-              history.set({
-                ...project,
-                assets: project.assets.map((asset) =>
-                  asset.id === nextAsset.id ? nextAsset : asset,
-                ),
-                layers: layersAfterAssetChanged(project.layers, nextAsset),
-              });
-            }}
+            onChangeAsset={updateAsset}
+            onPrepareAsset={prepareAsset}
             onRemove={(id) => {
-              history.set({
-                ...project,
-                assets: project.assets.filter((asset) => asset.id !== id),
-                layers: layersAfterAssetRemoved(project.layers, id),
-              });
-              if (selectedAssetId === id) setSelectedAssetId(null);
+              const currentAsset = latestProjectRef.current.assets.find(
+                (asset) => asset.id === id,
+              );
+              if (!currentAsset || currentAsset.builtIn) {
+                notify("That image is no longer available to remove.", "error");
+                return;
+              }
+              setAssetRemovalId(id);
             }}
             onCreateLayer={(assetId) => addLayer("animated", assetId, "asset")}
-            onError={notify}
+            onError={() => {
+              // AssetPanel already exposes its local failure as the single
+              // assertive live alert, avoiding duplicate screen-reader output.
+            }}
           />
           <LayerPanel
             layers={project.layers}
@@ -1040,7 +1694,7 @@ export function VfxEditor() {
             }}
             onSelectGroup={(id) => setSelectedGroupId(id)}
             onCreateGroup={addGroup}
-            onAdd={(type) => addLayer(type, selectedAssetId, "manual")}
+            onAdd={(type) => addLayer(type, effectiveSelectedAssetId, "manual")}
             onAddPreset={addPreset}
             onUpdate={patchLayer}
             onDuplicate={duplicateLayer}
@@ -1157,10 +1811,8 @@ export function VfxEditor() {
             });
           }}
           onPlayToggle={() => setPlaying((value) => !value)}
-          onRestart={() => {
-            setTime(0);
-            setPlaying(true);
-          }}
+          onRestart={restartPreview}
+          restartRevision={previewRestartRevision}
           onSpeedChange={setSpeed}
         />
 
@@ -1179,14 +1831,7 @@ export function VfxEditor() {
             groups={project.groups}
             layers={project.layers}
             onChange={updateLayer}
-            onAssetChange={(nextAsset) =>
-              history.set({
-                ...project,
-                assets: project.assets.map((asset) =>
-                  asset.id === nextAsset.id ? nextAsset : asset,
-                ),
-              })
-            }
+            onAssetChange={updateAsset}
             onCopy={() => {
               if (!selectedLayer) return;
               setSettingsClipboard(
@@ -1206,24 +1851,36 @@ export function VfxEditor() {
                   parentId: selectedLayer.parentId,
                 }),
               );
-              notify("Layer settings copied.");
+              notify("Layer settings copied.", "success");
             }}
             onPaste={() => {
               if (!selectedLayer || !settingsClipboard) return;
               const copied = clone(settingsClipboard);
-              updateLayer({
-                ...selectedLayer,
-                ...copied,
-                spawn:
-                  selectedLayer.spawn && copied.spawn
-                    ? copied.spawn
-                    : selectedLayer.spawn,
-                beam:
-                  selectedLayer.beam && copied.beam
-                    ? copied.beam
-                    : selectedLayer.beam,
-              } as VfxLayer);
-              notify("Settings pasted.");
+              const parentId = canAttachLayer(
+                project.layers,
+                selectedLayer.id,
+                copied.parentId,
+              )
+                ? copied.parentId
+                : selectedLayer.parentId;
+              const sanitized = sanitizeLayerAssetReferencesWithReport(
+                mergeCompatibleLayerSettings(selectedLayer, {
+                  ...copied,
+                  parentId,
+                }),
+                project.assets,
+              );
+              updateLayer(sanitized.layer);
+              const repairs = [
+                ...(parentId === copied.parentId ? [] : ["unsafe attachment"]),
+                ...sanitized.repairs,
+              ];
+              notify(
+                repairs.length === 0
+                  ? "Settings pasted."
+                  : `Settings pasted; repaired ${repairs.join(", ")}.`,
+                repairs.length === 0 ? "success" : "warning",
+              );
             }}
             canPaste={settingsClipboard !== null}
           />
@@ -1302,6 +1959,75 @@ export function VfxEditor() {
           }}
         />
       )}
+      {pendingRemovalAsset !== null && pendingRemovalUsage !== null && (
+        <AssetRemovalDialog
+          assetName={pendingRemovalAsset.name}
+          usage={pendingRemovalUsage}
+          onClose={() => setAssetRemovalId(null)}
+          onConfirm={() => {
+            const assetId = pendingRemovalAsset.id;
+            const current = latestProjectRef.current;
+            const targetIndex = current.assets.findIndex(
+              (asset) => asset.id === assetId && !asset.builtIn,
+            );
+            if (targetIndex < 0) {
+              setAssetRemovalId(null);
+              notify("That image is no longer available to remove.", "error");
+              return;
+            }
+            const usage = analyzeAssetUsage(current, assetId);
+            const remainingAssets = current.assets.filter(
+              (asset) => asset.id !== assetId,
+            );
+            const fallbackAssetId =
+              remainingAssets[Math.min(targetIndex, remainingAssets.length - 1)]
+                ?.id ?? null;
+            try {
+              const next = projectAfterAssetRemoved(current, assetId);
+              history.set({
+                ...next,
+                metadata: {
+                  ...next.metadata,
+                  updatedAt: new Date().toISOString(),
+                },
+              });
+            } catch (error) {
+              setAssetRemovalId(null);
+              notify(
+                error instanceof Error
+                  ? error.message
+                  : "That image could not be removed.",
+                "error",
+              );
+              return;
+            }
+            setAssetRemovalId(null);
+            setSelectedAssetId((selected) =>
+              selected === assetId ? fallbackAssetId : selected,
+            );
+            window.requestAnimationFrame(() => {
+              const nextAsset = Array.from(
+                document.querySelectorAll<HTMLButtonElement>(
+                  "[data-asset-select]",
+                ),
+              ).find(
+                (button) => button.dataset.assetSelect === fallbackAssetId,
+              );
+              const upload = document.querySelector<HTMLButtonElement>(
+                "[data-asset-dropzone]",
+              );
+              (nextAsset ?? upload)?.focus({ preventScroll: true });
+            });
+            const affected = usage.counts.affectedLayers;
+            notify(
+              affected > 0
+                ? `Removed “${pendingRemovalAsset.name}” and updated ${affected} dependent layer${affected === 1 ? "" : "s"}. Undo restores both.`
+                : `Removed “${pendingRemovalAsset.name}”. Undo restores it.`,
+              affected > 0 ? "warning" : "success",
+            );
+          }}
+        />
+      )}
       {exportOpen && (
         <ExportDialog
           project={project}
@@ -1313,24 +2039,80 @@ export function VfxEditor() {
       {projectsOpen && (
         <ProjectsDialog
           projects={savedProjects}
-          onClose={() => setProjectsOpen(false)}
+          invalidSavedCount={
+            invalidStoredProjects.length + (recoveryStorageBlocked ? 1 : 0)
+          }
+          excessSavedCount={excessStoredProjects}
+          onClose={() => {
+            projectImportRequest.current += 1;
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
+            setProjectsOpen(false);
+          }}
           onLoad={(next) => {
             if (!confirmProjectReplacement("Loading another project")) return;
-            activateProject(next, true);
-            setProjectsOpen(false);
-            notify("Saved project loaded.");
-          }}
-          onDuplicate={(source) => {
-            const copy = copyProject(source);
-            void saveProject(copy)
-              .then(() => listProjects())
-              .then((projects) => {
-                setSavedProjects(projects);
-                notify(`Duplicated “${source.metadata.name}”.`);
+            const request = ++projectImportRequest.current;
+            const sourceProjectGeneration = projectGeneration.current;
+            projectImageValidation.current?.abort();
+            const controller = new AbortController();
+            projectImageValidation.current = controller;
+            void verifyEmbeddedAssetImages(next.assets, controller.signal)
+              .then(() => {
+                if (
+                  request !== projectImportRequest.current ||
+                  sourceProjectGeneration !== projectGeneration.current
+                )
+                  return;
+                activateProject(next, true);
+                setProjectsOpen(false);
+                notify("Saved project loaded.", "success");
               })
-              .catch(() => notify("The project could not be duplicated."));
+              .catch((error: unknown) => {
+                if (
+                  request === projectImportRequest.current &&
+                  sourceProjectGeneration === projectGeneration.current &&
+                  !isAbortError(error)
+                )
+                  notify(
+                    error instanceof Error
+                      ? error.message
+                      : "This project's images could not be checked.",
+                    "error",
+                  );
+              })
+              .finally(() => {
+                if (projectImageValidation.current === controller)
+                  projectImageValidation.current = null;
+              });
           }}
-          onDelete={(id) => {
+          onDuplicate={async (source) => {
+            projectImportRequest.current += 1;
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
+            const copy = copyProject(source);
+            let storedCopy: VfxProject;
+            try {
+              storedCopy = await saveProject(copy);
+            } catch {
+              throw new Error("The project could not be duplicated.");
+            }
+            setSavedProjects((current) =>
+              upsertSavedProject(current, storedCopy),
+            );
+            try {
+              await refreshStoredProjects();
+              notify(`Duplicated “${source.metadata.name}”.`, "success");
+            } catch {
+              notify(
+                `Duplicated “${source.metadata.name}”, but the saved-project list could not be refreshed yet.`,
+                "warning",
+              );
+            }
+          }}
+          onDelete={async (id) => {
+            projectImportRequest.current += 1;
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
             const target = savedProjects.find(
               (candidate) => candidate.metadata.id === id,
             );
@@ -1341,14 +2123,66 @@ export function VfxEditor() {
               )
             )
               return;
-            void deleteProject(id)
-              .then(() => listProjects())
-              .then((projects) => {
-                setSavedProjects(projects);
-                if (id === project.metadata.id) setSavedFingerprint(null);
-                notify(`Deleted “${target.metadata.name}”.`);
-              })
-              .catch(() => notify("The saved project could not be removed."));
+            try {
+              await deleteProject(id);
+            } catch {
+              throw new Error("The saved project could not be removed.");
+            }
+            setSavedProjects((current) =>
+              current.filter((candidate) => candidate.metadata.id !== id),
+            );
+            setExcessStoredProjects((current) => Math.max(0, current - 1));
+            if (id === project.metadata.id) setSavedFingerprint(null);
+            try {
+              await refreshStoredProjects();
+              notify(`Deleted “${target.metadata.name}”.`, "success");
+            } catch {
+              notify(
+                `Deleted “${target.metadata.name}”, but the saved-project list could not be refreshed yet.`,
+                "warning",
+              );
+            }
+          }}
+          onRemoveInvalidSaved={async () => {
+            projectImportRequest.current += 1;
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
+            const invalidRecords = invalidStoredProjects;
+            const removeRecoveryDraft = recoveryStorageBlocked;
+            const count = invalidRecords.length + (removeRecoveryDraft ? 1 : 0);
+            if (
+              !window.confirm(
+                `Remove ${count} unreadable project ${count === 1 ? "save" : "saves"} from this browser? The stored data cannot be recovered afterward.`,
+              )
+            )
+              return;
+
+            for (const record of invalidRecords) {
+              await deleteInvalidProjectRecord(record.key);
+              setInvalidStoredProjects((current) =>
+                current.filter((candidate) => candidate.key !== record.key),
+              );
+              setExcessStoredProjects((current) => Math.max(0, current - 1));
+            }
+            if (removeRecoveryDraft) {
+              await deleteInvalidRecoveryDraft();
+              recoveryStorageCheckedRef.current = true;
+              recoveryStorageBlockedRef.current = false;
+              setRecoveryStorageBlocked(false);
+              setRecoveryStatus("idle");
+            }
+            try {
+              await refreshStoredProjects();
+              notify(
+                `Removed ${count} unreadable project ${count === 1 ? "save" : "saves"}.`,
+                "success",
+              );
+            } catch {
+              notify(
+                `Removed ${count} unreadable project ${count === 1 ? "save" : "saves"}, but the saved-project list could not be refreshed yet.`,
+                "warning",
+              );
+            }
           }}
         />
       )}
@@ -1364,33 +2198,55 @@ export function VfxEditor() {
           }
           canSaveCurrent={project.layers.length > 0}
           templates={savedTemplates}
+          invalidSavedCount={invalidStoredTemplates.length}
+          excessSavedCount={excessStoredTemplates}
           saveSummaries={templateSaveSummaries}
           onSaveCurrent={saveCurrentTemplate}
           onInsert={insertSavedTemplate}
           onInsertBuiltIn={(presetId) => {
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
             addPreset(presetId);
             setTemplatesOpen(false);
           }}
           onRename={async (template, name) => {
-            await saveTemplate({
+            const storedTemplate = await saveTemplate({
               ...template,
               name,
               updatedAt: new Date().toISOString(),
             });
-            setSavedTemplates(await listTemplates());
-            notify(`Renamed template to “${name}”.`);
+            setSavedTemplates((current) =>
+              upsertSavedTemplate(current, storedTemplate),
+            );
+            try {
+              await refreshStoredTemplates();
+              notify(`Renamed template to “${name}”.`, "success");
+            } catch {
+              notify(
+                `Renamed template to “${name}”, but the template list could not be refreshed yet.`,
+                "warning",
+              );
+            }
           }}
           onDuplicate={async (template) => {
             const now = new Date().toISOString();
             const copy = await saveTemplate({
               ...clone(template),
               id: makeId("template"),
-              name: `${template.name} copy`,
+              name: `${template.name.slice(0, MAX_VFX_NAME_LENGTH - 5).trimEnd()} copy`,
               createdAt: now,
               updatedAt: now,
             });
-            setSavedTemplates(await listTemplates());
-            notify(`Duplicated “${copy.name}”.`);
+            setSavedTemplates((current) => upsertSavedTemplate(current, copy));
+            try {
+              await refreshStoredTemplates();
+              notify(`Duplicated “${copy.name}”.`, "success");
+            } catch {
+              notify(
+                `Duplicated “${copy.name}”, but the template list could not be refreshed yet.`,
+                "warning",
+              );
+            }
           }}
           onExportOne={(template) => {
             downloadText(
@@ -1398,12 +2254,71 @@ export function VfxEditor() {
               serializeTemplate(template),
               "application/json",
             );
-            notify(`Exported “${template.name}”.`);
+            notify(`Exported “${template.name}”.`, "success");
           }}
           onDelete={async (template) => {
             await deleteTemplate(template.id);
-            setSavedTemplates(await listTemplates());
-            notify(`Deleted “${template.name}”.`);
+            setSavedTemplates((current) =>
+              current.filter((candidate) => candidate.id !== template.id),
+            );
+            setExcessStoredTemplates((current) => Math.max(0, current - 1));
+            try {
+              await refreshStoredTemplates();
+              notify(`Deleted “${template.name}”.`, "success");
+            } catch {
+              notify(
+                `Deleted “${template.name}”, but the template list could not be refreshed yet.`,
+                "warning",
+              );
+            }
+          }}
+          onRemoveInvalidSaved={async () => {
+            const invalidRecords = invalidStoredTemplates;
+            const count = invalidRecords.length;
+            if (
+              !window.confirm(
+                `Remove ${count} unreadable ${count === 1 ? "template" : "templates"} from this browser? The stored data cannot be recovered afterward.`,
+              )
+            )
+              return;
+            let removed = 0;
+            for (const record of invalidRecords) {
+              try {
+                await deleteInvalidTemplateRecord(record.key);
+              } catch (error) {
+                const remaining = count - removed;
+                if (removed === 0)
+                  throw error instanceof Error
+                    ? error
+                    : new Error(
+                        "The unreadable templates could not be removed.",
+                      );
+                throw new Error(
+                  `Removed ${removed} unreadable ${removed === 1 ? "template" : "templates"} before cleanup stopped. ${remaining} ${remaining === 1 ? "template remains" : "templates remain"} unreadable. ${
+                    error instanceof Error
+                      ? error.message
+                      : "The remaining stored data could not be removed."
+                  }`,
+                );
+              }
+              removed += 1;
+              setInvalidStoredTemplates((current) =>
+                current.filter((candidate) => candidate !== record),
+              );
+              setExcessStoredTemplates((current) => Math.max(0, current - 1));
+            }
+            try {
+              await refreshStoredTemplates();
+              notify(
+                `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}.`,
+                "success",
+              );
+            } catch {
+              notify(
+                `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}, but the template list could not be refreshed yet.`,
+                "warning",
+              );
+            }
           }}
           onImport={importTemplateFile}
           onExport={() => {
@@ -1414,34 +2329,73 @@ export function VfxEditor() {
             );
             notify(
               `Exported ${savedTemplates.length} template${savedTemplates.length === 1 ? "" : "s"}.`,
+              "success",
             );
           }}
-          onClose={() => setTemplatesOpen(false)}
+          onClose={() => {
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
+            setTemplatesOpen(false);
+          }}
         />
       )}
       {saveAsOpen && (
         <SaveAsDialog
           suggestedName={`${project.metadata.name} copy`}
           onClose={() => setSaveAsOpen(false)}
-          onSave={(name) => {
-            void saveAs(name);
-          }}
+          onSave={saveAs}
         />
       )}
       {recoveryDraft && (
         <RecoveryDialog
           draft={recoveryDraft}
           onRestore={() => {
-            activateProject(recoveryDraft.project, false, true);
-            setRecoveryStatus("protected");
-            notify("Unsaved session restored.");
+            const request = ++projectImportRequest.current;
+            const sourceProjectGeneration = projectGeneration.current;
+            projectImageValidation.current?.abort();
+            const controller = new AbortController();
+            projectImageValidation.current = controller;
+            void verifyEmbeddedAssetImages(
+              recoveryDraft.project.assets,
+              controller.signal,
+            )
+              .then(() => {
+                if (
+                  request !== projectImportRequest.current ||
+                  sourceProjectGeneration !== projectGeneration.current
+                )
+                  return;
+                activateProject(recoveryDraft.project, false, true);
+                setRecoveryStatus("protected");
+                notify("Unsaved session restored.", "success");
+              })
+              .catch((error: unknown) => {
+                if (
+                  request === projectImportRequest.current &&
+                  sourceProjectGeneration === projectGeneration.current &&
+                  !isAbortError(error)
+                )
+                  notify(
+                    error instanceof Error
+                      ? error.message
+                      : "The recovery images could not be checked.",
+                    "error",
+                  );
+              })
+              .finally(() => {
+                if (projectImageValidation.current === controller)
+                  projectImageValidation.current = null;
+              });
           }}
           onDiscard={() => {
             recoveryGeneration.current += 1;
+            projectImportRequest.current += 1;
+            projectImageValidation.current?.abort();
+            projectImageValidation.current = null;
             setRecoveryDraft(null);
             setRecoveryStatus("idle");
             void clearRecoveryDraft().catch(() =>
-              notify("Recovery data could not be cleared."),
+              notify("Recovery data could not be cleared.", "error"),
             );
           }}
         />
@@ -1491,9 +2445,22 @@ export function VfxEditor() {
         />
       )}
       {toast && (
-        <div className="toast" role="status">
-          <CheckCircle2 size={16} />
-          {toast}
+        <div
+          className={`toast toast--${toast.tone}`}
+          data-modal-live-region
+          role={toast.tone === "error" ? "alert" : "status"}
+          aria-live={toast.tone === "error" ? "assertive" : "polite"}
+        >
+          {toast.tone === "success" ? (
+            <CheckCircle2 size={16} />
+          ) : toast.tone === "warning" ? (
+            <TriangleAlert size={16} />
+          ) : toast.tone === "error" ? (
+            <CircleX size={16} />
+          ) : (
+            <Info size={16} />
+          )}
+          {toast.message}
         </div>
       )}
     </div>

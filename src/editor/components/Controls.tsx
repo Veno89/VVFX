@@ -1,29 +1,54 @@
 "use client";
 
 import { ChevronDown, CircleHelp, RotateCcw } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
-export function HelpTip({
-  text,
-  dismissOnLeave = false,
-}: {
-  text: string;
-  dismissOnLeave?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
+export function HelpTip({ label, text }: { label: string; text: string }) {
+  const tooltipId = useId();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const visible = (hovered || focused) && !dismissed;
+
+  useEffect(() => {
+    if (!visible) return;
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setDismissed(true);
+    };
+    window.addEventListener("keydown", dismissOnEscape, true);
+    return () => window.removeEventListener("keydown", dismissOnEscape, true);
+  }, [visible]);
+
   return (
     <button
       type="button"
       className="help-tip"
-      aria-label={`Help: ${text}`}
-      onPointerEnter={dismissOnLeave ? () => setOpen(true) : undefined}
-      onPointerLeave={dismissOnLeave ? () => setOpen(false) : undefined}
-      onFocus={dismissOnLeave ? () => setOpen(true) : undefined}
-      onBlur={dismissOnLeave ? () => setOpen(false) : undefined}
+      data-focus-region-escape-owner={visible ? "" : undefined}
+      aria-label={`Help for ${label}`}
+      aria-describedby={visible ? tooltipId : undefined}
+      onPointerEnter={() => {
+        setDismissed(false);
+        setHovered(true);
+      }}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => {
+        setDismissed(false);
+        setFocused(true);
+      }}
+      onBlur={() => setFocused(false)}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDismissed(true);
+      }}
     >
       <CircleHelp size={13} aria-hidden="true" />
-      {(!dismissOnLeave || open) && (
-        <span className="help-tip__bubble" role="tooltip">
+      {visible && (
+        <span id={tooltipId} className="help-tip__bubble" role="tooltip">
           {text}
         </span>
       )}
@@ -60,7 +85,7 @@ export function RangeField({
     <div className="field range-field">
       <span className="field__label">
         {label}
-        {help && <HelpTip text={help} />}
+        {help && <HelpTip label={label} text={help} />}
         {defaultValue !== undefined && (
           <button
             type="button"
@@ -116,20 +141,21 @@ export function SelectField({
   children: ReactNode;
   onChange: (value: string) => void;
 }) {
+  const fieldId = useId();
   return (
-    <label className="field">
+    <div className="field">
       <span className="field__label">
-        {label}
-        {help && <HelpTip text={help} />}
+        <label htmlFor={fieldId}>{label}</label>
+        {help && <HelpTip label={label} text={help} />}
       </span>
       <select
-        aria-label={label}
+        id={fieldId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
         {children}
       </select>
-    </label>
+    </div>
   );
 }
 
@@ -144,18 +170,20 @@ export function TextField({
   help?: string;
   onChange: (value: string) => void;
 }) {
+  const fieldId = useId();
   return (
-    <label className="field">
+    <div className="field">
       <span className="field__label">
-        {label}
-        {help && <HelpTip text={help} />}
+        <label htmlFor={fieldId}>{label}</label>
+        {help && <HelpTip label={label} text={help} />}
       </span>
       <input
+        id={fieldId}
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -170,20 +198,26 @@ export function Toggle({
   help?: string;
   onChange: (checked: boolean) => void;
 }) {
+  const switchId = useId();
+  const labelId = useId();
   return (
-    <label className="toggle-row">
+    <div className="toggle-row">
       <button
+        id={switchId}
         type="button"
         className={`switch ${checked ? "is-on" : ""}`}
         role="switch"
         aria-checked={checked}
+        aria-labelledby={labelId}
         onClick={() => onChange(!checked)}
       >
         <span />
       </button>
-      <span>{label}</span>
-      {help && <HelpTip text={help} />}
-    </label>
+      <label id={labelId} htmlFor={switchId}>
+        {label}
+      </label>
+      {help && <HelpTip label={label} text={help} />}
+    </div>
   );
 }
 

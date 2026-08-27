@@ -2,12 +2,107 @@ import type Phaser from "phaser";
 import { tintNumber } from "../../../src/vfx/color";
 import { evaluateProject } from "../../../src/vfx/engine";
 import {
+  isSupportedVfxNumber,
+  VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+} from "../../../src/vfx/inputLimits";
+import {
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
 } from "../../../src/vfx/renderingEffects";
 import type { BeamEndpoints, VfxProject } from "../../../src/vfx/types";
 import { runtimeDefinitionToProject } from "./definition";
 import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
+
+const ownValue = <T>(
+  record: Record<string, T> | undefined,
+  key: string,
+): T | undefined => {
+  if (!record) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  return descriptor && "value" in descriptor
+    ? (descriptor.value as T)
+    : undefined;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const finiteOr = (value: unknown, fallback: number) =>
+  isSupportedVfxNumber(value) ? value : fallback;
+
+const hasControlCharacters = (value: string) =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+
+const isSafeTextureKey = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length <= 256 &&
+  value.trim().length > 0 &&
+  value !== VVFX_INTERNAL_MISSING_TEXTURE_KEY &&
+  !hasControlCharacters(value);
+
+const isSafeFrame = (value: unknown): value is string | number =>
+  (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+  (typeof value === "string" &&
+    value.length <= 160 &&
+    value.trim().length > 0 &&
+    !hasControlCharacters(value));
+
+function sanitizeAssetKeys(
+  value: unknown,
+  assetIds: readonly string[],
+): Record<string, string> {
+  const result = Object.create(null) as Record<string, string>;
+  if (!isRecord(value)) return result;
+  for (const assetId of assetIds) {
+    const candidate = ownValue(value, assetId);
+    if (candidate === undefined) continue;
+    if (!isSafeTextureKey(candidate))
+      throw new Error(
+        `The mapped Phaser texture key for "${assetId}" is invalid.`,
+      );
+    result[assetId] = candidate;
+  }
+  return result;
+}
+
+function sanitizeAssetFrames(
+  value: unknown,
+  assetIds: readonly string[],
+): Record<string, string | number> {
+  const result = Object.create(null) as Record<string, string | number>;
+  if (!isRecord(value)) return result;
+  for (const assetId of assetIds) {
+    const candidate = ownValue(value, assetId);
+    if (candidate === undefined) continue;
+    if (!isSafeFrame(candidate))
+      throw new Error(`The mapped Phaser frame for "${assetId}" is invalid.`);
+    result[assetId] = candidate;
+  }
+  return result;
+}
+
+function finiteBeamEndpoints(value: unknown): BeamEndpoints | null {
+  if (!isRecord(value)) return null;
+  const startX = ownValue(value, "startX");
+  const startY = ownValue(value, "startY");
+  const endX = ownValue(value, "endX");
+  const endY = ownValue(value, "endY");
+  if (
+    ![startX, startY, endX, endY].every((coordinate) =>
+      isSupportedVfxNumber(coordinate),
+    )
+  )
+    return null;
+  return {
+    startX: startX as number,
+    startY: startY as number,
+    endX: endX as number,
+    endY: endY as number,
+  };
+}
 
 export function resolveRuntimeRenderingAssetFrame(
   scene: Phaser.Scene,
@@ -16,9 +111,16 @@ export function resolveRuntimeRenderingAssetFrame(
   assetFrames: Record<string, string | number>,
 ): Phaser.Textures.Frame | null {
   if (!asset || asset.spriteSheet) return null;
-  const textureKey = assetKeys[asset.id] ?? asset.id;
+  const mappedTextureKey = ownValue(assetKeys, asset.id);
+  const textureKey = isSafeTextureKey(mappedTextureKey)
+    ? mappedTextureKey
+    : asset.id;
   if (!scene.textures.exists(textureKey)) return null;
-  const requestedFrame = assetFrames[asset.id] ?? asset.atlasFrame ?? "__BASE";
+  const mappedFrame = ownValue(assetFrames, asset.id);
+  const requestedFrame =
+    (isSafeFrame(mappedFrame) ? mappedFrame : undefined) ??
+    asset.atlasFrame ??
+    "__BASE";
   const texture = scene.textures.get(textureKey);
   return texture.has(String(requestedFrame))
     ? texture.get(requestedFrame)
@@ -44,40 +146,65 @@ export class VvfxEffect {
   private readonly beamEndpoints = new Map<string, BeamEndpoints>();
   private readonly onComplete?: () => void;
   private readonly onWarning?: (message: string) => void;
+  private releaseAssets: (() => void) | null;
 
   constructor(
     private readonly scene: Phaser.Scene,
     definition: VvfxRuntimeDefinition,
     options: VvfxEffectOptions = {},
+    releaseAssets?: () => void,
   ) {
+    this.releaseAssets = releaseAssets ?? null;
     this.project = runtimeDefinitionToProject(definition);
-    definition.layers.forEach((layer) =>
-      this.layerDepths.set(layer.id, layer.depth),
+    const safeOptions = isRecord(options) ? options : {};
+    this.project.layers.forEach((layer, depth) =>
+      this.layerDepths.set(layer.id, depth),
     );
-    this.originX = options.originX ?? 0;
-    this.originY = options.originY ?? 0;
-    this.baseDepth = options.baseDepth ?? 0;
-    this.loop = options.loop ?? false;
-    this.autoDestroy = options.autoDestroy ?? true;
-    this.assetKeys = options.assetKeys ?? {};
-    this.assetFrames = options.assetFrames ?? {};
+    this.originX = finiteOr(ownValue(safeOptions, "originX"), 0);
+    this.originY = finiteOr(ownValue(safeOptions, "originY"), 0);
+    this.baseDepth = finiteOr(ownValue(safeOptions, "baseDepth"), 0);
+    this.loop = ownValue(safeOptions, "loop") === true;
+    this.autoDestroy = ownValue(safeOptions, "autoDestroy") !== false;
+    const assetIds = this.project.assets.map((asset) => asset.id);
+    this.assetKeys = sanitizeAssetKeys(
+      ownValue(safeOptions, "assetKeys"),
+      assetIds,
+    );
+    this.assetFrames = sanitizeAssetFrames(
+      ownValue(safeOptions, "assetFrames"),
+      assetIds,
+    );
     this.assetsById = new Map(
       this.project.assets.map((asset) => [asset.id, asset]),
     );
-    definition.assets.forEach((asset) => {
+    this.project.assets.forEach((asset) => {
       if (asset.atlasFrame)
         this.defaultAssetFrames.set(asset.id, asset.atlasFrame);
     });
-    if (options.beamEndpoints) {
+    const initialBeamEndpoints = finiteBeamEndpoints(
+      ownValue(safeOptions, "beamEndpoints"),
+    );
+    if (initialBeamEndpoints) {
       for (const layer of this.project.layers)
         if (layer.type === "beam")
-          this.beamEndpoints.set(layer.id, { ...options.beamEndpoints });
+          this.beamEndpoints.set(layer.id, { ...initialBeamEndpoints });
     }
-    this.onComplete = options.onComplete;
-    this.onWarning = options.onWarning;
+    const onComplete = ownValue(safeOptions, "onComplete");
+    const onWarning = ownValue(safeOptions, "onWarning");
+    this.onComplete =
+      typeof onComplete === "function" ? (onComplete as () => void) : undefined;
+    this.onWarning =
+      typeof onWarning === "function"
+        ? (onWarning as (message: string) => void)
+        : undefined;
     scene.events.on("update", this.handleSceneUpdate);
     scene.events.once("shutdown", this.handleSceneShutdown);
-    if (options.autoplay !== false) this.play();
+    try {
+      if (ownValue(safeOptions, "autoplay") !== false) this.play();
+    } catch (error) {
+      this.destroy();
+      throw error;
+    }
   }
 
   get isPlaying() {
@@ -108,6 +235,10 @@ export class VvfxEffect {
     if (this.destroyed) return this;
     this.elapsed = 0;
     this.playing = true;
+    // Restart is a lifecycle boundary, not just a seek. Rebuild every Phaser
+    // object from canonical evaluator output so no controller, input state, or
+    // other transient attached to a reused sprite can survive the restart.
+    this.clearSprites();
     this.renderFrame();
     return this;
   }
@@ -120,6 +251,7 @@ export class VvfxEffect {
   }
 
   setPosition(x: number, y: number) {
+    if (!isSupportedVfxNumber(x) || !isSupportedVfxNumber(y)) return this;
     this.originX = x;
     this.originY = y;
     if (!this.destroyed) this.renderFrame();
@@ -137,7 +269,7 @@ export class VvfxEffect {
     endY: number,
     layerId?: string,
   ) {
-    if (![startX, startY, endX, endY].every(Number.isFinite)) return this;
+    if (![startX, startY, endX, endY].every(isSupportedVfxNumber)) return this;
     const endpoints = { startX, startY, endX, endY };
     const targetIds = layerId
       ? [layerId]
@@ -165,6 +297,7 @@ export class VvfxEffect {
 
   update(delta: number) {
     if (!this.playing || this.destroyed) return;
+    if (!isSupportedVfxNumber(delta)) return;
     this.elapsed += Math.max(0, delta);
     const duration = Math.max(1, this.project.preview.duration);
     if (this.elapsed >= duration) {
@@ -172,9 +305,14 @@ export class VvfxEffect {
         this.elapsed %= duration;
       } else {
         this.playing = false;
-        this.clearSprites();
-        this.onComplete?.();
-        if (this.autoDestroy) this.destroy();
+        try {
+          this.clearSprites();
+          this.onComplete?.();
+        } finally {
+          // Host callbacks are not allowed to defeat the runtime's cleanup
+          // guarantee. Their exception still propagates after destroy runs.
+          if (this.autoDestroy) this.destroy();
+        }
         return;
       }
     }
@@ -185,9 +323,26 @@ export class VvfxEffect {
     if (this.destroyed) return;
     this.destroyed = true;
     this.playing = false;
-    this.clearSprites();
     this.scene.events.off("update", this.handleSceneUpdate);
     this.scene.events.off("shutdown", this.handleSceneShutdown);
+    let cleanupError: unknown;
+    try {
+      this.clearSprites();
+    } catch (error) {
+      cleanupError = error;
+    }
+    this.layerDepths.clear();
+    this.defaultAssetFrames.clear();
+    this.beamEndpoints.clear();
+    this.assetsById.clear();
+    const releaseAssets = this.releaseAssets;
+    this.releaseAssets = null;
+    try {
+      releaseAssets?.();
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (cleanupError) throw cleanupError;
   }
 
   private readonly handleSceneUpdate = (_time: number, delta: number) => {
@@ -234,15 +389,18 @@ export class VvfxEffect {
     }
 
     for (const instance of instances) {
+      const mappedTextureKey = instance.assetId
+        ? ownValue(this.assetKeys, instance.assetId)
+        : undefined;
       const textureKey = instance.assetId
-        ? (this.assetKeys[instance.assetId] ?? instance.assetId)
-        : "vvfx-missing";
+        ? (mappedTextureKey ?? instance.assetId)
+        : VVFX_INTERNAL_MISSING_TEXTURE_KEY;
       const availableTexture = this.scene.textures.exists(textureKey)
         ? textureKey
-        : "vvfx-missing";
+        : VVFX_INTERNAL_MISSING_TEXTURE_KEY;
       const requestedFrame = instance.assetId
         ? (instance.frame ??
-          this.assetFrames[instance.assetId] ??
+          ownValue(this.assetFrames, instance.assetId) ??
           this.defaultAssetFrames.get(instance.assetId) ??
           "__BASE")
         : "__BASE";
@@ -287,7 +445,15 @@ export class VvfxEffect {
   }
 
   private clearSprites() {
-    for (const sprite of this.sprites.values()) sprite.destroy();
+    let cleanupError: unknown;
+    for (const sprite of this.sprites.values()) {
+      try {
+        sprite.destroy();
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
     this.sprites.clear();
+    if (cleanupError) throw cleanupError;
   }
 }

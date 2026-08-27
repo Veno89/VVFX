@@ -12,6 +12,7 @@ import {
   DEFAULT_FRAME_ANIMATION,
   DEFAULT_MOTION_PATH,
 } from "../src/vfx/defaults";
+import { validPngDataUrl } from "./fixtures/portableImages";
 
 describe("seeded random values", () => {
   it("replays the same random version for the same seed", () => {
@@ -38,7 +39,7 @@ describe("sprite-sheet playback", () => {
     id: "sheet",
     name: "Sheet",
     mimeType: "image/png" as const,
-    dataUrl: "data:image/png;base64,abc",
+    dataUrl: validPngDataUrl(128, 32),
     width: 128,
     height: 32,
     spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 4 },

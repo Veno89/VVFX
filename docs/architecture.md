@@ -16,8 +16,8 @@ VFX model + deterministic evaluator ---- serialization / exports
 Phaser preview bridge and @vvfx/phaser-runtime
 ```
 
-Project files currently use format version 16. Clean game-facing runtime
-definitions use format version 14, and the local `@vvfx/phaser-runtime` package
+Project files currently use format version 17. Clean game-facing runtime
+definitions use format version 15, and the local `@vvfx/phaser-runtime` package
 is version 0.14.0.
 
 ## Main modules
@@ -72,7 +72,7 @@ This directory has no React dependency.
 - `presets.ts` contains guided single-layer presets and complete-effect
   compositions used by both the layer menu and learning material.
 - `serialization.ts` treats project imports as untrusted, validates references,
-  rejects attachment/event cycles, clamps unsafe values, and fills safe v16
+  rejects attachment/event cycles, clamps unsafe values, and fills safe v17
   defaults.
 - `templates.ts` owns template/pack v2 creation, v1 migration, project-version
   gating, dependency summaries, bounded embedded-asset validation, raw single
@@ -139,11 +139,15 @@ keyboard controls, and persistence. UI is split by responsibility:
   guidance, recipes, glossary, and contextual layer summaries;
 - save/load, effect-template, and export dialogs;
 - native WebM/GIF capture controls and recording progress;
-- shared accessible controls with resettable slider/number pairs.
+- shared accessible controls with resettable slider/number pairs;
+- responsive project actions, typed live notices, modal background isolation,
+  and shared dialog/popup focus routing.
 
-`alphaMaskImport.ts` decodes an explicitly uploaded PNG/WebP once, downsamples
-its alpha channel to at most 64 x 64 cells, and stores those bytes on the asset.
-The runtime never performs CORS-sensitive or per-frame image readback.
+`alphaMaskImport.ts` owns bounded browser decoding for local PNG/WebP data URLs.
+Uploads use the decoded image once to downsample alpha to at most 64 x 64 cells;
+project/template activation uses the same decoder without allocating a canvas
+to reject damaged compressed payloads. The runtime never performs
+CORS-sensitive or per-frame image readback.
 
 `guidance.ts` centralizes beginner-facing layer names, pure contextual
 descriptions, the Vvfx-vs-image-editor boundary, glossary terms, and asset-prep
@@ -154,7 +158,17 @@ URLs are included, so asset operations can also be undone. Preview-only choices
 such as zoom, background, grid, selection, and playback looping are
 synchronized across history snapshots instead of creating undo steps.
 Authoring changes such as layer position, timing, appearance, behavior, seed,
-and project duration remain undoable.
+and project duration remain undoable. Consecutive values emitted while one
+text, number, or range control remains focused are grouped into one authoring
+interaction, so Undo restores the value from before that edit instead of
+stepping through every keystroke or slider sample.
+
+`useFocusRegion.ts` coordinates stacked overlays, traps modal focus, restores
+the opener, makes the page behind the top modal inert, and gives nonmodal menus
+and popovers consistent Escape/outside-dismissal behavior. `assetReferences.ts`
+also reports every artwork, visual-mask, and spawn-silhouette dependency before
+a custom image is removed. The editor presents that report first and then
+commits image removal plus all reference repairs as one undoable project value.
 
 ### `packages/phaser-runtime`
 
@@ -183,7 +197,11 @@ have their own IndexedDB store keyed by template ID. Batch import validates and
 plans every entry before one write transaction: identical content is skipped,
 an ID conflict is assigned a fresh ID/name, and no different local template is
 silently overwritten. This handles embedded image data more reliably than
-localStorage. There is no server-side storage.
+localStorage. Malformed records and recovery drafts are preserved and surfaced
+for explicit removal instead of being silently deleted. Oversized libraries
+report their exact record count while validating only a bounded repair window;
+complete export is disabled until all records can be included. There is no
+server-side storage.
 
 ## Playback and determinism
 
@@ -224,14 +242,99 @@ delay into ordinary layer values. Asset data remains embedded for portability,
 while games can provide `assetKeys` and `assetFrames` mappings for preloaded
 textures.
 
+## Optional-feature lifecycle
+
+The editable `VfxProject` is the single source of truth. React controls commit
+new immutable project values; the evaluator, preview bridge, Runtime JSON, and
+generated Phaser integration derive their state from those values. Evaluated
+scale, opacity, tint, position, frame, and procedural offsets must never be
+written back into authored layer settings.
+
+Vvfx uses three distinct lifecycle operations:
+
+- **Disabled** means the configuration remains authored but contributes
+  nothing. An `enabled: false` trail, behavior, event, keyframe track, motion
+  path, or Experimental rendering effect keeps its tuned values so enabling it
+  again restores the same result. Numeric and nullable features use their
+  neutral authored value, such as zero gravity/slowdown, `tint: null`, or
+  `blendMode: "normal"`.
+- **Removed** means authored membership or a reference is gone. Events,
+  waypoints, color stops, layers, assets, attachments, masks, and sprite-sheet
+  definitions use empty arrays or `null` where the schema supports absence.
+  Optional configuration blocks required by the current schema are replaced
+  with their canonical disabled defaults. Removing a sprite-sheet definition,
+  removing its primary image, or choosing another image also resets per-layer
+  frame playback settings. Adding them again therefore starts from defaults
+  rather than hidden old settings.
+- **Reset** changes only the named control or feature scope to its canonical
+  defaults. It does not disable the feature or reset adjacent authored data
+  unless the control explicitly says so. For example, resetting a glow value
+  cannot change tint, and resetting property moments cannot change movement.
+
+History stores those authored transitions, so Undo restores configuration and
+enabled state together and Redo removes or disables them again. Project import,
+save/load, templates, Runtime JSON, and the runtime-backed Phaser TypeScript
+path preserve the same distinction. Runtime JSON intentionally retains
+disabled configuration with `enabled: false`; removed list entries and
+references are absent, while required blocks contain canonical defaults.
+
+Transient cleanup belongs to the system that created the transient state.
+`PhaserPreview.tsx` and `VvfxEffect` must reconcile sprites, trail samples,
+timers, listeners, controllers, masks, and cached references whenever authored
+state changes, playback restarts, a layer/project is removed, or the owning
+scene/component is destroyed. The rendering adapter clears or rebuilds managed
+PreFX controllers when its enabled signature changes. Event schedules and
+deterministic procedural samples are rebuilt from current project data rather
+than retained as a second authored state. Repeated enable/disable cycles must
+therefore return live object and registration counts to their baseline.
+
 ## Performance and validation boundaries
 
+- Project and Runtime JSON are limited to 40 MiB before parsing. Projects are
+  limited to 500 layers, 128 assets, 250 groups, 100 Timeline markers, and an
+  attachment depth of 32; nested keyframe, color-stop, motion-point, event,
+  alpha-mask, spawn, repeat, and sprite-sheet collections keep their smaller
+  feature-specific ceilings.
+- IDs use a bounded 128-character ASCII grammar and reject JavaScript
+  prototype-reserved names. Human-facing project, layer, group, and asset names
+  are limited to 120 characters. Duplicate structural IDs and broken current-v17
+  entries are rejected instead of silently discarded.
+- Uploaded and embedded images must be canonical base64 PNG or WebP data URLs
+  whose declared MIME type matches their bytes. Static PNG/WebP container
+  structure is checked completely; PNG CRC/method/chunk ordering and WebP
+  feature flags/payload dimensions must be consistent, and animated containers
+  are rejected. Each image is limited to 8 MiB, 4096 by 4096 pixels, and
+  16,777,216 pixels; a project is limited to 24 MiB of embedded image bytes and
+  33,554,432 decoded pixels. Upload batches contain at most 16 files and are
+  structurally preflighted before full browser decode.
+- Browser image activation is cancellable and has a ten-second per-image
+  timeout. The browser may still finish a decode that was already submitted;
+  Vvfx clears its candidate source where possible, rejects every late callback,
+  and never installs or activates that result. Successful activation reconciles
+  decoded dimensions with the inspected header and samples at most a 64 by 64
+  alpha grid when a mask is prepared. Imported and stored image collections use
+  two concurrent decoders with a 30-second aggregate deadline. Project
+  replacement, project edits, dialog closure, and component teardown abort
+  outstanding activation work.
+- Phaser runtime validation applies the same semantic numeric ceilings before
+  evaluation and rejects any non-finite derived sprite state as a final safety
+  net. Embedded texture startup uses at most four concurrent decoders under one
+  ten-second deadline, is cancelled by scene shutdown or an optional caller
+  signal, and rechecks lifecycle state before installing textures or creating
+  an effect.
+- Browser persistence reports exact counts while inspecting at most 101 records
+  from libraries of no more than 100 saved projects or templates. Invalid data
+  is preserved for explicit repair. Template export and storage use the same
+  validation and image budgets as import, and complete export is unavailable
+  while excess records remain outside the bounded inspection window.
 - Imported burst counts are clamped to 250.
 - Emitter maximum-alive values are clamped to 500.
 - One emitter event creates at most 25 copies.
 - Originals and motion-trail afterimages share a 500-sprite evaluator limit;
   originals take priority when the limit is reached.
-- Event graphs reject cycles and retain runtime depth/activation ceilings.
+- Active event graphs reject cycles and retain runtime depth/activation
+  ceilings. Disabled links are inert stored configuration; re-enabling an event
+  or layer revalidates the graph before committing the edit.
 - Copy-finish event chance is seeded, per-event maximum plays are clamped, and
   child instances remain inside the shared activation and sprite ceilings.
   Authoring recommends finite, unattached Triggered Animated image or Burst
@@ -239,6 +342,11 @@ textures.
   import stays flexible. Trail samples never emit events.
 - Stress preview state is never serialized and stops at a separate 2,000-sprite
   editor rendering budget.
+- The Performance Inspector's opt-in Lifecycle diagnostic derives the selected
+  layer's active modifiers and event links from the authored model and reports
+  measured live/trail sprites from the current Phaser preview. Disabled layers
+  and features must read as inactive instead of exposing preserved settings as
+  live behavior.
 - Minimum intervals and durations prevent zero-time spawn loops.
 - Behavior values, color stops, spawn distribution, tint, duplicate IDs,
   missing assets/parents/event targets, and attachment/event cycles are
@@ -259,6 +367,16 @@ textures.
 Authoring limits are enforced by validation and UI controls. Evaluator, event,
 and stress budgets are enforced again at execution or display time, so
 hand-edited project files cannot bypass the relevant safeguard.
+
+## Release validation
+
+Release validation is split into deterministic source/package gates and a real
+Chromium workflow suite. GitHub Actions runs formatting, lint, TypeScript,
+Vitest, dependency auditing, production builds, generated-declaration drift,
+an isolated packed-runtime consumer, and Playwright coverage for the critical
+responsive, focus, unsaved-work, template-dialog, WebGL restart,
+repeated-toggle, 50-copy stress, and forced-GC heap-growth paths. See
+[`release.md`](release.md) for the supported release sequence.
 
 ## Extension points and rendering boundary
 

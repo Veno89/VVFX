@@ -87,6 +87,9 @@ describe("timeline precision helpers", () => {
     expect(migrated.project?.timeline).toEqual({ markers: [], notes: "" });
 
     const current = createEmptyProject() as unknown as Record<string, unknown>;
+    // Duplicate markers were historically repaired; current v17 files reject
+    // them so collision evidence is never silently discarded.
+    current.formatVersion = 16;
     current.timeline = {
       notes: "Critical hit timing",
       markers: [

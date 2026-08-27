@@ -1,7 +1,7 @@
 "use client";
 
 import { Boxes, Clock3, Flag, Plus, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { makeId } from "../../vfx/defaults";
 import { groupTimelineRange } from "../../vfx/groups";
 import { insertKeyframeAt, moveKeyframe } from "../../vfx/keyframes";
@@ -18,6 +18,10 @@ import type {
   VfxGroup,
   VfxLayer,
 } from "../../vfx/types";
+import { useFocusRegion } from "../useFocusRegion";
+
+const TIMING_PLAN_ID = "vvfx-timing-plan";
+const TIMING_PLAN_TITLE_ID = "vvfx-timing-plan-title";
 
 const percent = (value: number, duration: number) =>
   `${Math.max(0, Math.min(100, (value / duration) * 100))}%`;
@@ -221,6 +225,24 @@ export function Timeline({
     notesEditor.source === timeline.notes ? notesEditor.draft : timeline.notes;
   const setNotesDraft = (draft: string) =>
     setNotesEditor({ source: timeline.notes, draft });
+  const timingPlanTriggerRef = useRef<HTMLButtonElement>(null);
+  const timingPlanNotesRef = useRef<HTMLTextAreaElement>(null);
+  const closeTimingPlan = useCallback(() => {
+    if (notesDraft !== timeline.notes) {
+      setNotesEditor({ source: notesDraft, draft: notesDraft });
+      onTimelineChange?.({ ...timeline, notes: notesDraft });
+    }
+    setTimingPlanOpen(false);
+  }, [notesDraft, onTimelineChange, timeline]);
+  const timingPlanRef = useFocusRegion<HTMLDivElement>({
+    active: timingPlanOpen,
+    trapFocus: false,
+    initialFocusRef: timingPlanNotesRef,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: timingPlanTriggerRef,
+    onEscape: closeTimingPlan,
+  });
 
   const selectedTimingLayers = layers.filter((layer) =>
     effectiveTimingIds.includes(layer.id),
@@ -811,6 +833,7 @@ export function Timeline({
       30_000,
       Math.max(duration, ...drafts.map((draft) => draft.time)),
     );
+    setNotesEditor({ source: notesDraft, draft: notesDraft });
     onTimelineChange?.(
       {
         notes: notesDraft,
@@ -822,12 +845,6 @@ export function Timeline({
     );
     setTimingPlanOpen(false);
   };
-  const closeTimingPlan = () => {
-    if (notesDraft !== timeline.notes)
-      onTimelineChange?.({ ...timeline, notes: notesDraft });
-    setTimingPlanOpen(false);
-  };
-
   const ticks = Array.from({ length: 7 }, (_, index) => (index * duration) / 6);
   const selectedStart = selectedTimingLayer
     ? groupDelayForLayer(selectedTimingLayer, groups) +
@@ -892,12 +909,16 @@ export function Timeline({
           <Flag size={12} /> Add marker at {Math.round(time)} ms
         </button>
         <button
+          ref={timingPlanTriggerRef}
           type="button"
           className={timingPlanOpen ? "is-active" : ""}
           onClick={() => {
             if (timingPlanOpen) closeTimingPlan();
             else setTimingPlanOpen(true);
           }}
+          aria-controls={TIMING_PLAN_ID}
+          aria-expanded={timingPlanOpen}
+          aria-haspopup="dialog"
         >
           Timing plan
         </button>
@@ -910,10 +931,20 @@ export function Timeline({
         </small>
       </div>
       {timingPlanOpen && (
-        <div className="timing-plan-popover">
+        <div
+          ref={timingPlanRef}
+          id={TIMING_PLAN_ID}
+          className="timing-plan-popover"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={TIMING_PLAN_TITLE_ID}
+          data-editor-shortcuts="off"
+        >
           <header>
             <div>
-              <strong>Turn feedback into timing markers</strong>
+              <strong id={TIMING_PLAN_TITLE_ID}>
+                Turn feedback into timing markers
+              </strong>
               <small>
                 Paste lines such as “40–120 ms ring expands and vanishes.”
               </small>
@@ -927,7 +958,9 @@ export function Timeline({
             </button>
           </header>
           <textarea
+            ref={timingPlanNotesRef}
             aria-label="Timing plan notes"
+            maxLength={12_000}
             value={notesDraft}
             placeholder={
               "0 ms CRIT happens\n0–40 ms flash and splatter expand\n40–120 ms ring vanishes\n120–250 ms splatter settles\n250–700 ms blood fades"
@@ -1081,6 +1114,7 @@ export function Timeline({
               <input
                 key={`${selectedMarker.id}-${selectedMarker.label}`}
                 aria-label="Marker label"
+                maxLength={120}
                 defaultValue={selectedMarker.label}
                 onBlur={(event) =>
                   updateMarker(selectedMarker.id, {

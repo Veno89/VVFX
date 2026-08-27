@@ -8,7 +8,9 @@ import {
 import { evaluateProject } from "../src/vfx/engine";
 import {
   compileLayerActivations,
+  MAX_EVENT_DEPTH,
   MAX_EVENT_ACTIVATIONS,
+  maximumLayerEventDepth,
 } from "../src/vfx/events";
 import {
   createRuntimeDefinition,
@@ -312,6 +314,26 @@ describe("deterministic layer events", () => {
     ).toHaveLength(0);
   });
 
+  it("bounds rejected copy-finish candidates across an event compilation", () => {
+    const project = createEmptyProject("Bounded copy inspection");
+    const source = createLayer("burst", "Endless sparks", "builtin-spark");
+    source.spawn.count = 250;
+    source.timing.duration = 50;
+    source.timing.repeatForever = true;
+    const target = createLayer("animated", "Rare pop", "builtin-flash");
+    target.startMode = "triggered";
+    const rare = event("rare-pop", target, "copy-finish");
+    rare.chance = Number.MIN_VALUE;
+    rare.maxTriggers = 250;
+    source.events = [rare];
+    project.layers.push(source, target);
+
+    const schedule = compileLayerActivations(project, 30_000);
+
+    expect(schedule.truncated).toBe(true);
+    expect(schedule.byLayer.get(target.id) ?? []).toHaveLength(0);
+  });
+
   it("stops spatial fan-out at the shared activation safety cap", () => {
     const project = createEmptyProject("Globally bounded spatial fan-out");
     const target = createLayer("animated", "Tiny pop", "builtin-flash");
@@ -468,6 +490,55 @@ describe("event validation and portability", () => {
     expect(validateProject(stillProject).error).toMatch(
       /no animated copy ending/i,
     );
+  });
+
+  it("keeps disabled event links out of active cycle validation", () => {
+    const project = createEmptyProject("Disabled event cycle");
+    const first = createLayer("animated", "First", "builtin-ring");
+    const second = createLayer("animated", "Second", "builtin-flash");
+    first.events = [event("first-to-second", second, "finish")];
+    second.events = [
+      {
+        ...event("second-to-first", first, "finish"),
+        enabled: false,
+      },
+    ];
+    project.layers.push(first, second);
+
+    expect(validateProject(project)).toMatchObject({ ok: true });
+    expect(
+      compileLayerActivations(project, project.preview.duration).byLayer.get(
+        first.id,
+      ),
+    ).toHaveLength(1);
+
+    second.events[0].enabled = true;
+    expect(validateProject(project).error).toMatch(/circular layer event/i);
+  });
+
+  it("keeps disabled event links out of the active depth limit", () => {
+    const project = createEmptyProject("Disabled event depth");
+    const layers = Array.from({ length: MAX_EVENT_DEPTH + 2 }, (_, index) =>
+      createLayer("animated", `Depth ${index + 1}`, "builtin-ring"),
+    );
+    for (let index = 0; index < layers.length - 1; index += 1)
+      layers[index].events = [
+        event(`depth-${index}`, layers[index + 1], "finish"),
+      ];
+    const suspendedLink = layers[Math.floor(layers.length / 2)].events[0];
+    suspendedLink.enabled = false;
+    project.layers.push(...layers);
+
+    expect(maximumLayerEventDepth(project.layers)).toBeLessThanOrEqual(
+      MAX_EVENT_DEPTH,
+    );
+    expect(validateProject(project)).toMatchObject({ ok: true });
+
+    suspendedLink.enabled = true;
+    expect(maximumLayerEventDepth(project.layers)).toBeGreaterThan(
+      MAX_EVENT_DEPTH,
+    );
+    expect(validateProject(project).error).toMatch(/deeper than/i);
   });
 
   it("round-trips events through the current Runtime JSON", () => {

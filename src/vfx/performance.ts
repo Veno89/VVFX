@@ -1,5 +1,10 @@
 import { MAX_EFFECT_INSTANCES } from "./engine";
-import { renderingEffectPassCost } from "./renderingEffects";
+import { finiteLayerCycleCount } from "./limits";
+import {
+  enabledRenderingEffects,
+  renderingEffectPassCost,
+  type RenderingEffectName,
+} from "./renderingEffects";
 import type { EvaluatedInstance, VfxLayer, VfxProject } from "./types";
 
 export { MAX_EFFECT_INSTANCES };
@@ -49,10 +54,19 @@ export interface ProjectPerformanceEstimate {
 export interface PreviewPerformanceSample {
   liveSprites: number;
   baseSprites: number;
+  trailSprites: number;
   newSpritesPerSecond: number;
   requestedCopies: number;
   effectiveCopies: number;
   stressLimited: boolean;
+}
+
+export interface LayerLifecycleDiagnostic {
+  layerId: string;
+  layerName: string;
+  active: boolean;
+  activeModifiers: string[];
+  activeEventLinks: number;
 }
 
 export interface StressReplicationResult {
@@ -74,6 +88,93 @@ const activeLayers = (project: VfxProject): VfxLayer[] => {
   );
 };
 
+const RENDERING_EFFECT_LABELS: Record<RenderingEffectName, string> = {
+  "visual-mask": "Visual mask",
+  blur: "Blur",
+  "outer-glow": "Outer glow",
+  "brightness-exposure": "Brightness / exposure",
+  "animated-shine": "Animated shine",
+  "spatial-gradient": "Spatial gradient",
+  "directional-dissolve": "Dissolve / erosion",
+  "sprite-warp": "Sprite warp",
+};
+
+/**
+ * Reports only behavior that can affect the selected layer right now. Disabled
+ * configuration deliberately stays out of this list even when its tuned values
+ * are preserved for a later re-enable.
+ */
+export function analyzeLayerLifecycle(
+  project: VfxProject,
+  layerId: string | null,
+): LayerLifecycleDiagnostic | null {
+  const layer = project.layers.find((candidate) => candidate.id === layerId);
+  if (!layer) return null;
+  const activeIds = new Set(
+    activeLayers(project).map((candidate) => candidate.id),
+  );
+  const active = activeIds.has(layer.id);
+  const modifiers: string[] = [];
+
+  if (active) {
+    if (layer.appearance.tint && layer.appearance.tintStrength > 0)
+      modifiers.push("Tint");
+    if (layer.appearance.blendMode === "add") modifiers.push("Additive blend");
+    if (layer.appearance.colorOverLifetime.enabled)
+      modifiers.push("Color over lifetime");
+    modifiers.push(
+      ...enabledRenderingEffects(layer.appearance.effects).map(
+        (effect) => RENDERING_EFFECT_LABELS[effect],
+      ),
+    );
+    if (layer.behavior.pulse.enabled) modifiers.push("Pulse");
+    if (layer.behavior.flicker.enabled) modifiers.push("Flicker");
+    if (layer.behavior.wobble.enabled)
+      modifiers.push(
+        layer.behavior.wobble.style === "organic"
+          ? "Organic movement"
+          : "Wobble",
+      );
+    if (layer.behavior.physics.gravity !== 0) modifiers.push("Gravity");
+    if (layer.behavior.physics.drag !== 0) modifiers.push("Slowdown / drag");
+    if (Object.values(layer.random).some((value) => value !== 0))
+      modifiers.push("Spawn variation");
+    if (layer.motionPath.enabled) modifiers.push("Motion path");
+    if (layer.trail.enabled) modifiers.push("Motion trail");
+    if (layer.keyframes.enabled && layer.keyframes.frames.length > 0)
+      modifiers.push("Property moments");
+    if (
+      layer.assetId &&
+      project.assets.some(
+        (asset) => asset.id === layer.assetId && asset.spriteSheet,
+      )
+    )
+      modifiers.push("Flipbook");
+    if (
+      layer.timing.repeat > 0 ||
+      layer.timing.repeatForever ||
+      layer.timing.loop ||
+      layer.timing.yoyo
+    )
+      modifiers.push("Repeat / loop");
+    if (layer.parentId && activeIds.has(layer.parentId))
+      modifiers.push("Attachment");
+    if (layer.spawn?.maskAssetId) modifiers.push("Silhouette spawning");
+  }
+
+  return {
+    layerId: layer.id,
+    layerName: layer.name.trim() || "Unnamed layer",
+    active,
+    activeModifiers: modifiers,
+    activeEventLinks: active
+      ? layer.events.filter(
+          (event) => event.enabled && activeIds.has(event.targetLayerId),
+        ).length
+      : 0,
+  };
+}
+
 const trailSampleCount = (layer: VfxLayer): number => {
   if (!layer.trail.enabled) return 0;
   const count = Math.max(1, Math.min(16, Math.floor(layer.trail.count)));
@@ -94,7 +195,9 @@ function layerEstimate(
   const trailSamples = trailSampleCount(layer);
   const runsIndefinitely =
     layer.type === "emitter" || layer.timing.repeatForever || layer.timing.loop;
-  const cycles = runsIndefinitely ? 1 : Math.max(1, layer.timing.repeat + 1);
+  const cycles = runsIndefinitely
+    ? 1
+    : finiteLayerCycleCount(layer.timing.repeat);
   const trailTail = layer.trail.enabled
     ? Math.max(layer.trail.lifetime, layer.trail.count * layer.trail.spacing)
     : 0;

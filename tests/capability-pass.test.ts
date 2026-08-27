@@ -411,6 +411,7 @@ describe("runtime-backed export boundary", () => {
     };
     layer.behavior.pulse.enabled = true;
     layer.behavior.wobble.enabled = true;
+    layer.spawn.shape = "circle";
     layer.spawn.distribution = "even";
     project.layers.push(layer);
 

@@ -7,6 +7,7 @@ import {
 } from "../src/vfx/exporters";
 import { deserializeProject, serializeProject } from "../src/vfx/serialization";
 import { runtimeDefinitionToProject } from "../packages/phaser-runtime/src/definition";
+import { validPngDataUrl } from "./fixtures/portableImages";
 
 describe("Beam layers", () => {
   it("fits tightly cropped artwork between authored endpoints", () => {
@@ -15,7 +16,7 @@ describe("Beam layers", () => {
       id: "bolt-strip",
       name: "Bolt strip",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,Ym9sdA==",
+      dataUrl: validPngDataUrl(200, 32),
       transparency: "yes",
       width: 200,
       height: 32,

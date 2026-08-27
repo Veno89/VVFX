@@ -25,6 +25,14 @@ decision-deferrals below, not left looking like a queued phase.
       and collision-safe import that never silently overwrites local work.
 - [x] Authoring-only undo/redo that ignores zoom, playback, selection, and
       other workspace-only choices.
+- [x] Interaction-coalesced text, number, and slider edits, so one focused edit
+      is one understandable Undo step rather than one step per emitted value.
+- [x] Dependency-aware custom-image removal with a consequence preflight and
+      one-step restoration of the image, artwork, visual-mask, and spawn-mask
+      references.
+- [x] Responsive project actions, modal background isolation, shared
+      dialog/popup keyboard routing, and typed success, information, warning,
+      and error notices.
 - [x] Layer rename, automatic asset-based names, duplicate, reorder, attach,
       group, visibility, Solo, and enable/disable controls.
 - [x] Stable preview dragging plus draggable Timeline timing bars, handles,
@@ -205,6 +213,8 @@ Any future capability proposal continues to use these release questions:
 3. Does WebM/GIF capture match the preview?
 4. How are GPU resources released when an effect is destroyed?
 5. Can a beginner understand the control without knowing shader vocabulary?
+6. Does disable/remove return preview, evaluation, runtime, and export to the
+   correct baseline without stale objects, callbacks, or authored values?
 
 ## Asset-side responsibilities and non-goals
 
@@ -233,6 +243,24 @@ Vvfx should remain excellent at composing understandable 2D image behavior.
 When a richer result is best achieved by preparing a better asset, the app and
 documentation should say so plainly.
 
+## Lifecycle hardening follow-through
+
+- [x] Centralize Disabled, Removed, and Reset semantics across editor mutation,
+      normalization, evaluation, preview, export, and runtime playback.
+- [x] Reconcile sprites, trails, effects, textures, event links, attachments,
+      flipbooks, and restart state without zombie objects or revived settings.
+- [x] Add an opt-in Performance Inspector diagnostic for active modifiers,
+      event links, live sprites, and trail sprites.
+- [x] Exercise 50-copy stress, 100 trail state transitions, repeated preview
+      restart, WebGL effect startup, and forced-GC JavaScript heap comparison in
+      the production Chromium suite.
+- [x] Reuse the runtime's internally normalized definition across asset loading
+      and effect construction while keeping every public entry point fully
+      validated.
+- [ ] Repeat the representative visual scenarios on target desktop and mobile
+      GPUs before a user-facing release. Automated Chromium verifies lifecycle
+      and WebGL invariants, but it does not replace human visual judgment.
+
 ## Quality gates for every future capability
 
 - A beginner-facing name, short help text, and at least one recipe or preset.
@@ -244,3 +272,12 @@ documentation should say so plainly.
 - Performance limits that cannot be bypassed by hand-edited imports.
 - Manual browser inspection on representative impact, ooze, aura, and
   projectile effects.
+- Lifecycle coverage for add, enable, configure, disable, re-enable, reset,
+  remove, Undo, Redo, save/load, Runtime JSON, and generated Phaser TypeScript.
+  Shared helpers may cover repeated behavior, but every optional feature must
+  prove that disabled state contributes nothing, removed state has no obsolete
+  references, and re-enabling restores only intentionally preserved settings.
+- Cleanup ownership for every sprite, trail sample, Graphics object, PreFX
+  controller, texture, timer, tween, listener, subscription, and cache the
+  capability creates. Repeated toggle and preview-restart tests must return
+  currently live objects and registrations to baseline.

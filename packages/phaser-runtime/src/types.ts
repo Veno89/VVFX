@@ -77,6 +77,8 @@ export interface VvfxEffectOptions {
   autoDestroy?: boolean;
   assetKeys?: Record<string, string>;
   assetFrames?: Record<string, string | number>;
+  /** Cancels asynchronous image loading before the effect is constructed. */
+  signal?: AbortSignal;
   /** World-space endpoints applied to every Beam layer at startup. */
   beamEndpoints?: BeamEndpoints;
   onComplete?: () => void;

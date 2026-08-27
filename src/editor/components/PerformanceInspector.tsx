@@ -5,6 +5,7 @@ import { useMemo, type Ref } from "react";
 import {
   MAX_STRESS_INSTANCES,
   STRESS_COPY_OPTIONS,
+  analyzeLayerLifecycle,
   analyzeProjectPerformance,
   type PreviewPerformanceSample,
   type StressCopyCount,
@@ -17,6 +18,7 @@ const millisecondsLabel = (milliseconds: number) =>
 
 export function PerformanceInspector({
   project,
+  selectedLayerId,
   sample,
   peakSprites,
   requestedCopies,
@@ -27,6 +29,7 @@ export function PerformanceInspector({
   dialogId,
 }: {
   project: VfxProject;
+  selectedLayerId: string | null;
   sample: PreviewPerformanceSample;
   peakSprites: number;
   requestedCopies: StressCopyCount;
@@ -37,6 +40,10 @@ export function PerformanceInspector({
   dialogId?: string;
 }) {
   const estimate = useMemo(() => analyzeProjectPerformance(project), [project]);
+  const lifecycle = useMemo(
+    () => analyzeLayerLifecycle(project, selectedLayerId),
+    [project, selectedLayerId],
+  );
   const displayedEffectiveCopies =
     sample.requestedCopies === requestedCopies
       ? sample.effectiveCopies
@@ -66,11 +73,23 @@ export function PerformanceInspector({
       <div className="performance-stat-grid">
         <article>
           <small>Measured</small>
-          <strong>{sample.liveSprites}</strong>
+          <strong data-testid="performance-live-sprites">
+            {sample.liveSprites}
+          </strong>
           <span>
             Sprites alive now{" "}
-            <HelpTip text="The image objects currently drawn in this preview, including stress-test copies and trails." />
+            <HelpTip
+              label="Sprites alive now"
+              text="The image objects currently drawn in this preview, including stress-test copies and trails."
+            />
           </span>
+        </article>
+        <article>
+          <small>Measured</small>
+          <strong data-testid="performance-trail-sprites">
+            {sample.trailSprites}
+          </strong>
+          <span>Trail sprites now</span>
         </article>
         <article>
           <small>Measured</small>
@@ -114,7 +133,10 @@ export function PerformanceInspector({
             <strong>Stress test</strong>
             <span>Preview several effect copies at once.</span>
           </div>
-          <HelpTip text="This is a rough check on this browser and computer. It does not predict exact game performance." />
+          <HelpTip
+            label="Stress test"
+            text="This is a rough check on this browser and computer. It does not predict exact game performance."
+          />
         </div>
         <div className="stress-test__options" aria-label="Stress test copies">
           {STRESS_COPY_OPTIONS.map((copies) => (
@@ -147,6 +169,46 @@ export function PerformanceInspector({
           saved project.
         </p>
       </div>
+
+      <details className="performance-lifecycle">
+        <summary>Lifecycle diagnostic</summary>
+        <p>
+          Model-derived state for checking that disabled features and removed
+          objects are really inactive.
+        </p>
+        {lifecycle ? (
+          <dl>
+            <div>
+              <dt>Selected layer</dt>
+              <dd>
+                {lifecycle.layerName} ·{" "}
+                {lifecycle.active ? "active" : "inactive"}
+              </dd>
+            </div>
+            <div>
+              <dt>Active modifiers</dt>
+              <dd data-testid="performance-active-modifiers">
+                {lifecycle.activeModifiers.length > 0
+                  ? lifecycle.activeModifiers.join(", ")
+                  : "None"}
+              </dd>
+            </div>
+            <div>
+              <dt>Transient preview objects</dt>
+              <dd>
+                {sample.liveSprites} sprites · {sample.trailSprites} trail
+                sprites
+              </dd>
+            </div>
+            <div>
+              <dt>Active event links</dt>
+              <dd>{lifecycle.activeEventLinks}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p>Select a layer to inspect its active modifiers.</p>
+        )}
+      </details>
 
       {estimate.warnings.length > 0 && (
         <div className="performance-warnings">

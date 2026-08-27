@@ -13,6 +13,7 @@ import {
   generateStandalonePhaserCode,
 } from "../src/vfx/exporters";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../src/vfx/presets";
+import { TINY_PNG_DATA_URL } from "./fixtures/portableImages";
 
 describe("creative presets", () => {
   it("ships every promised single-layer starting point", () => {
@@ -357,6 +358,79 @@ describe("game exports", () => {
     );
   });
 
+  it("keeps disabled and dormant features out of standalone export decisions", () => {
+    const project = createEmptyProject("Lifecycle-safe standalone export");
+    const visible = createLayer("animated", "Visible core", "builtin-ring");
+    const disabledBeam = createLayer("beam", "Disabled beam", "builtin-spark");
+    disabledBeam.enabled = false;
+    disabledBeam.appearance.effects.outerGlow.enabled = true;
+    const dormant = createLayer(
+      "animated",
+      "Dormant triggered layer",
+      "builtin-cloud",
+    );
+    dormant.startMode = "triggered";
+    dormant.appearance.effects.outerGlow.enabled = true;
+    const disconnectedSource = createLayer(
+      "animated",
+      "Disconnected event source",
+      "builtin-spark",
+    );
+    disconnectedSource.startMode = "triggered";
+    const disconnectedTarget = createLayer(
+      "animated",
+      "Disconnected event target",
+      "builtin-flash",
+    );
+    disconnectedTarget.startMode = "triggered";
+    disconnectedSource.events = [
+      {
+        id: "disconnected-link",
+        enabled: true,
+        trigger: "finish",
+        percentage: 0.5,
+        action: "play",
+        targetLayerId: disconnectedTarget.id,
+        chance: 1,
+        maxTriggers: 1,
+      },
+    ];
+    visible.events = [
+      {
+        id: "disabled-link",
+        enabled: false,
+        trigger: "finish",
+        percentage: 0.5,
+        action: "play",
+        targetLayerId: dormant.id,
+        chance: 1,
+        maxTriggers: 1,
+      },
+    ];
+    project.layers = [
+      visible,
+      disabledBeam,
+      dormant,
+      disconnectedSource,
+      disconnectedTarget,
+    ];
+
+    const code = generateStandalonePhaserCode(project);
+
+    expect(code).toContain("Visible core");
+    expect(code).not.toContain("Disabled beam");
+    expect(code).not.toContain("Dormant triggered layer");
+    expect(code).not.toContain("Disconnected event source");
+    expect(code).not.toContain("Disconnected event target");
+    expect(code).not.toContain('"builtin-spark"');
+    expect(code).not.toContain('"builtin-cloud"');
+
+    visible.events[0].enabled = true;
+    expect(() => generateStandalonePhaserCode(project)).toThrow(
+      /does not support layer events/i,
+    );
+  });
+
   it("keeps the standalone approximation free of duplicate identifiers", () => {
     const project = createEmptyProject("Duplicate names");
     project.layers.push(
@@ -375,7 +449,9 @@ describe("game exports", () => {
       id: "atlas-flash",
       name: "Atlas flash",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       atlasFrame: "vfx/flash-01",
     });
     project.layers.push(createLayer("animated", "Atlas flash", "atlas-flash"));

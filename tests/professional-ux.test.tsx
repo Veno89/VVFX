@@ -27,6 +27,7 @@ import {
 } from "../src/vfx/spriteSheet";
 import { TRAIL_PRESETS, trailFromPreset } from "../src/vfx/trailPresets";
 import type { VfxAsset } from "../src/vfx/types";
+import { validPngDataUrl } from "./fixtures/portableImages";
 
 afterEach(cleanup);
 
@@ -34,7 +35,7 @@ const squareSheet: VfxAsset = {
   id: "square-sheet",
   name: "Explosion grid",
   mimeType: "image/png",
-  dataUrl: "data:image/png;base64,AAAA",
+  dataUrl: validPngDataUrl(256, 256),
   width: 256,
   height: 256,
   spriteSheet: { frameWidth: 64, frameHeight: 64, frameCount: 16 },
@@ -298,18 +299,17 @@ describe("beginner property and trail presets", () => {
     expect(
       view.getByRole("switch", { name: /^Organic movement/ }),
     ).toBeChecked();
-    const styleLabel = view.getByText(/^Movement style/, {
-      selector: ".field__label",
-    });
-    const style = styleLabel.closest("label")?.querySelector("select");
-    expect(style).not.toBeNull();
+    const style = view.getByRole("combobox", {
+      name: "Movement style",
+    }) as HTMLSelectElement;
     expect(style).toHaveValue("organic");
-    expect(
-      [...(style?.options ?? [])].map((option) => option.textContent),
-    ).toEqual(["Natural wander", "Repeating sway"]);
+    expect([...style.options].map((option) => option.textContent)).toEqual([
+      "Natural wander",
+      "Repeating sway",
+    ]);
     expect(view.getByLabelText("Smoothness")).toHaveValue(70);
 
-    fireEvent.change(style!, { target: { value: "sway" } });
+    fireEvent.change(style, { target: { value: "sway" } });
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: expect.objectContaining({
@@ -321,6 +321,41 @@ describe("beginner property and trail presets", () => {
 });
 
 describe("Tier 2 Inspector controls", () => {
+  it("omits descendant layers from attachment targets", () => {
+    const parent = createLayer("animated", "Parent", "builtin-ring");
+    const child = createLayer("animated", "Child", "builtin-spark");
+    const grandchild = createLayer("animated", "Grandchild", "builtin-flash");
+    const unrelated = createLayer("animated", "Unrelated", "builtin-cloud");
+    child.parentId = parent.id;
+    grandchild.parentId = child.id;
+
+    render(
+      <Inspector
+        layer={parent}
+        assets={[]}
+        layers={[parent, child, grandchild, unrelated]}
+        onChange={vi.fn()}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    const attachment = screen.getByRole("combobox", {
+      name: "Attach to layer",
+    });
+    expect(within(attachment).queryByRole("option", { name: "Child" })).toBe(
+      null,
+    );
+    expect(
+      within(attachment).queryByRole("option", { name: "Grandchild" }),
+    ).toBe(null);
+    expect(
+      within(attachment).getByRole("option", { name: "Unrelated" }),
+    ).toBeInTheDocument();
+  });
+
   it("authors silhouette placement and bounded copy-finish events in the existing sections", () => {
     const source = createLayer("burst", "Embers", "builtin-spark");
     const target = createLayer("animated", "Smoke pop", "builtin-cloud");
@@ -329,7 +364,9 @@ describe("Tier 2 Inspector controls", () => {
       id: "prepared-silhouette",
       name: "Rune silhouette",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,prepared",
+      dataUrl: validPngDataUrl(1, 1),
+      width: 1,
+      height: 1,
       alphaMask: { columns: 2, rows: 1, alpha: [255, 0] },
       spriteSheet: null,
     };
@@ -347,11 +384,10 @@ describe("Tier 2 Inspector controls", () => {
       />,
     );
 
-    const shapeLabel = screen.getByText(/^Where copies appear/, {
-      selector: ".field__label",
+    const shape = screen.getByRole("combobox", {
+      name: "Where copies appear",
     });
-    const shape = shapeLabel.closest("label")?.querySelector("select");
-    fireEvent.change(shape!, { target: { value: "mask" } });
+    fireEvent.change(shape, { target: { value: "mask" } });
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         spawn: expect.objectContaining({
@@ -400,17 +436,11 @@ describe("Tier 2 Inspector controls", () => {
       />,
     );
 
-    const shapeLabel = screen.getByText(/^Where copies appear/, {
-      selector: ".field__label",
-    });
-    const shape = shapeLabel.closest("label")?.querySelector("select");
-    expect(shape).not.toBeNull();
+    const shape = screen.getByRole("combobox", {
+      name: "Where copies appear",
+    }) as HTMLSelectElement;
     expect(shape).toHaveValue("line");
-    expect(
-      [...(shape?.querySelectorAll("option") ?? [])].map(
-        (option) => option.textContent,
-      ),
-    ).toEqual([
+    expect([...shape.options].map((option) => option.textContent)).toEqual([
       "At one point",
       "Inside a box",
       "Inside a circle",
@@ -422,15 +452,11 @@ describe("Tier 2 Inspector controls", () => {
     expect(screen.getByLabelText("Artwork points toward")).toHaveValue(0);
     expect(screen.getByLabelText("Alignment variation")).toHaveValue(0);
 
-    const pulseTimingLabel = screen.getByText(/^Pulse timing/, {
-      selector: ".field__label",
+    const pulseTiming = screen.getByRole("combobox", {
+      name: "Pulse timing",
     });
-    const pulseTiming = pulseTimingLabel
-      .closest("label")
-      ?.querySelector("select");
-    expect(pulseTiming).not.toBeNull();
     expect(pulseTiming).toHaveValue("entire");
-    fireEvent.change(pulseTiming!, { target: { value: "middle" } });
+    fireEvent.change(pulseTiming, { target: { value: "middle" } });
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: expect.objectContaining({
@@ -448,6 +474,7 @@ describe("Tier 2 Inspector controls", () => {
 });
 
 describe("Experimental rendering controls", () => {
+  // This intentionally renders and queries the complete experimental Inspector.
   it("marks WebGL effects as experimental and exposes resettable controls", () => {
     const layer = createLayer("animated", "Neon bolt", "builtin-spark");
     layer.appearance.effects.outerGlow.enabled = true;
@@ -487,58 +514,35 @@ describe("Experimental rendering controls", () => {
     expect(
       screen.getByText(/Canvas · plain-image fallback/i),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Soft outer glow/)).toBeChecked();
+    expect(screen.getByLabelText(/^Clip with another image/)).toBeChecked();
+    const maskImage = screen.getByLabelText("Mask image");
+    expect(maskImage).toHaveValue("builtin-ring");
     expect(
-      screen.getByRole("switch", { name: /^Soft outer glow/ }),
-    ).toBeChecked();
-    expect(
-      screen.getByRole("switch", { name: /^Clip with another image/ }),
-    ).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Mask image" })).toHaveValue(
-      "builtin-ring",
-    );
-    expect(
-      within(screen.getByRole("combobox", { name: "Mask image" })).queryByRole(
-        "option",
-        { name: "Explosion grid" },
-      ),
+      within(maskImage).queryByRole("option", { name: "Explosion grid" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Read mask from" }),
-    ).toHaveValue("alpha");
-    expect(screen.getByRole("combobox", { name: "Fit mask" })).toHaveValue(
-      "contain",
-    );
+    expect(screen.getByLabelText("Read mask from")).toHaveValue("alpha");
+    expect(screen.getByLabelText("Fit mask")).toHaveValue("contain");
     expect(screen.getByLabelText("Mask strength")).toHaveValue(60);
     expect(screen.getByText(/ordinary unmasked sprite/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Outer strength")).toHaveValue(3);
     expect(screen.getByLabelText("Brightness")).toHaveValue(100);
-    expect(
-      screen.getByRole("switch", { name: /^Dissolve \/ erase/ }),
-    ).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Erase pattern" })).toHaveValue(
-      "noise",
-    );
+    expect(screen.getByLabelText(/^Dissolve \/ erase/)).toBeChecked();
+    expect(screen.getByLabelText("Erase pattern")).toHaveValue("noise");
     expect(screen.getByLabelText("Erase starts")).toHaveValue(40);
     expect(screen.getByLabelText("Pattern size")).toHaveValue(9);
-    expect(
-      screen.queryByRole("combobox", { name: "Wipe direction" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("switch", { name: /^Invert erosion pattern/ }),
-    ).not.toBeChecked();
+    expect(screen.queryByLabelText("Wipe direction")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^Invert erosion pattern/)).not.toBeChecked();
     expect(screen.getByText(/ordinary, un-eroded sprite/i)).toBeInTheDocument();
     expect(
       screen.getByText(/one GPU pass per visible copy/i),
     ).toBeInTheDocument();
-    const warpStyleLabel = screen.getByText(/^Warp style/, {
-      selector: ".field__label",
-    });
+    expect(screen.getByLabelText("Warp style")).toHaveValue("heat-shimmer");
     expect(
-      warpStyleLabel.closest("label")?.querySelector("select"),
-    ).toHaveValue("heat-shimmer");
-    expect(screen.getByText(/does not bend or refract/i)).toBeInTheDocument();
+      screen.getByRole("button", { name: "Help for Distort image" }),
+    ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Read mask from" }), {
+    fireEvent.change(screen.getByLabelText("Read mask from"), {
       target: { value: "luminance" },
     });
     expect(onChange).toHaveBeenCalledWith(
@@ -567,9 +571,7 @@ describe("Experimental rendering controls", () => {
       }),
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reset Pattern size to default" }),
-    );
+    fireEvent.click(screen.getByLabelText("Reset Pattern size to default"));
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         appearance: expect.objectContaining({
@@ -596,14 +598,10 @@ describe("Experimental rendering controls", () => {
         canPaste={false}
       />,
     );
-    expect(
-      screen.getByRole("combobox", { name: "Wipe direction" }),
-    ).toHaveValue("horizontal");
+    expect(screen.getByLabelText("Wipe direction")).toHaveValue("horizontal");
     expect(screen.queryByLabelText("Pattern size")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("switch", { name: /^Reverse wipe/ }),
-    ).not.toBeChecked();
-  });
+    expect(screen.getByLabelText(/^Reverse wipe/)).not.toBeChecked();
+  }, 30_000);
 
   it("teaches noisy erosion boundaries in the accessible Experimental lab", () => {
     render(

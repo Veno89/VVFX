@@ -2,13 +2,24 @@ import type Phaser from "phaser";
 import { describe, expect, it, vi } from "vitest";
 import {
   loadVvfxAssets,
+  playVvfx,
   validateRuntimeDefinition,
   VvfxEffect,
 } from "../packages/phaser-runtime/src";
 import { resolveRuntimeRenderingAssetFrame } from "../packages/phaser-runtime/src/VvfxEffect";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
+import { evaluateProject } from "../src/vfx/engine";
+import {
+  IMAGE_DECODE_TIMEOUT_MS,
+  MAX_PROJECT_ASSETS,
+  MAX_PROJECT_LAYERS,
+  VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+} from "../src/vfx/inputLimits";
 import { createRuntimeDefinition } from "../src/vfx/exporters";
+import { applySpriteSheetFrames } from "../src/vfx/phaserFrames";
+import { validateProject } from "../src/vfx/serialization";
 import type { VfxAsset } from "../src/vfx/types";
+import { TINY_PNG_DATA_URL, validPngDataUrl } from "./fixtures/portableImages";
 
 class FakeEvents {
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -37,6 +48,10 @@ class FakeEvents {
     for (const listener of [...(this.listeners.get(event) ?? [])])
       listener(...args);
   }
+
+  listenerCount(event: string) {
+    return this.listeners.get(event)?.size ?? 0;
+  }
 }
 
 class FakeSprite {
@@ -49,6 +64,7 @@ class FakeSprite {
   scaleY = 1;
   alpha = 1;
   angle = 0;
+  depth = 0;
 
   constructor(key: string, frame: string | number = "__BASE") {
     this.texture = { key };
@@ -81,7 +97,8 @@ class FakeSprite {
   setBlendMode() {
     return this;
   }
-  setDepth() {
+  setDepth(depth: number) {
+    this.depth = depth;
     return this;
   }
   setTint() {
@@ -179,6 +196,16 @@ function createFakeScene(initialTextureKeys: string[] = []) {
         addTexture(key);
         textureEvents.emit("onload", key, { key });
       },
+      addImage: (key: string) => {
+        addTexture(key);
+        return textures.get(key);
+      },
+      remove: (key: string) => {
+        const texture = textures.get(key);
+        textureKeys.delete(key);
+        textures.delete(key);
+        return texture;
+      },
     },
     add: {
       graphics: () => graphics,
@@ -198,7 +225,68 @@ function createFakeScene(initialTextureKeys: string[] = []) {
   };
 }
 
+async function withDecodedImage(
+  width: number,
+  height: number,
+  action: () => Promise<void>,
+) {
+  const OriginalImage = globalThis.Image;
+  class DecodedImage {
+    decoding = "auto";
+    naturalWidth = width;
+    naturalHeight = height;
+    onerror: OnErrorEventHandler | null = null;
+    onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null =
+      null;
+    private source = "";
+
+    get src() {
+      return this.source;
+    }
+
+    set src(value: string) {
+      this.source = value;
+      if (value)
+        queueMicrotask(() =>
+          this.onload?.call(this as never, new Event("load")),
+        );
+    }
+  }
+
+  vi.stubGlobal("Image", DecodedImage);
+  try {
+    await action();
+  } finally {
+    vi.stubGlobal("Image", OriginalImage);
+  }
+}
+
 describe("Phaser runtime package", () => {
+  it("removes numeric Phaser frames when sprite-sheet treatment is disabled", () => {
+    const frames: Record<string, unknown> = { __BASE: {} };
+    const texture = {
+      frames,
+      add: (name: number | string) => {
+        frames[String(name)] = {};
+      },
+      remove: (name: string) => delete frames[name],
+      has: (name: string) => name in frames,
+    };
+
+    applySpriteSheetFrames(
+      texture,
+      {
+        width: 64,
+        spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 2 },
+      },
+      true,
+    );
+    expect(Object.keys(frames)).toEqual(["0", "1", "__BASE"].sort());
+
+    applySpriteSheetFrames(texture, { width: 64, spriteSheet: null }, true);
+    expect(Object.keys(frames)).toEqual(["__BASE"]);
+  });
+
   it("updates Beam layers from world-space endpoints", () => {
     const project = createEmptyProject("Runtime beam");
     project.preview.duration = 500;
@@ -209,7 +297,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(beam);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -241,7 +329,9 @@ describe("Phaser runtime package", () => {
       id: "runtime-mask",
       name: "Runtime mask",
       mimeType: "image/png" as const,
-      dataUrl: "data:image/png;base64,bWFzaw==",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       spriteSheet: null,
       atlasFrame: "definition-mask-frame",
       alphaMask: { columns: 1, rows: 1, alpha: [0] },
@@ -389,6 +479,278 @@ describe("Phaser runtime package", () => {
     ).toBe(false);
   });
 
+  it("does not trust mutable definitions returned by the public validator", () => {
+    const project = createEmptyProject("Mutable validated runtime");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const validated = validateRuntimeDefinition(
+      createRuntimeDefinition(project),
+    );
+    expect(validated.ok).toBe(true);
+    expect(validated.definition).toBeDefined();
+
+    validated.definition!.layers[0].timing.duration = Number.POSITIVE_INFINITY;
+
+    expect(validateRuntimeDefinition(validated.definition).ok).toBe(false);
+    const fake = createFakeScene();
+    expect(
+      () =>
+        new VvfxEffect(fake.scene, validated.definition!, { autoplay: false }),
+    ).toThrow(/outside the supported range/i);
+  });
+
+  it("bounds direct runtime input and rejects unsafe or non-finite values", () => {
+    const project = createEmptyProject("Runtime boundary");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const definition = createRuntimeDefinition(project);
+
+    expect(
+      validateRuntimeDefinition({ ...definition, seed: Infinity }).ok,
+    ).toBe(false);
+    const extreme = JSON.parse(JSON.stringify(definition)) as typeof definition;
+    extreme.layers[0].random.startScale = Number.MAX_VALUE;
+    expect(validateRuntimeDefinition(extreme)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/outside the supported range/i),
+    });
+    expect(
+      validateRuntimeDefinition({
+        ...definition,
+        layers: Array.from(
+          { length: MAX_PROJECT_LAYERS + 1 },
+          () => definition.layers[0],
+        ),
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateRuntimeDefinition({
+        ...definition,
+        assets: Array.from(
+          { length: MAX_PROJECT_ASSETS + 1 },
+          () => definition.assets[0],
+        ),
+      }).ok,
+    ).toBe(false);
+
+    const unsafe = JSON.parse(JSON.stringify(definition)) as typeof definition;
+    unsafe.layers[0].id = "__proto__";
+    expect(validateRuntimeDefinition(unsafe).ok).toBe(false);
+
+    const circular = { ...definition } as typeof definition & {
+      circular?: unknown;
+    };
+    circular.circular = circular;
+    expect(validateRuntimeDefinition(circular).ok).toBe(false);
+  });
+
+  it("does not invoke hostile direct-object array methods or accessors", () => {
+    const project = createEmptyProject("Hostile runtime object");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const iterator = vi.fn(() => {
+      throw new Error("hostile iterator ran");
+    });
+    const accessor = vi.fn(() => {
+      throw new Error("hostile accessor ran");
+    });
+    const withIterator = JSON.parse(
+      JSON.stringify(createRuntimeDefinition(project)),
+    ) as ReturnType<typeof createRuntimeDefinition>;
+    Object.defineProperty(withIterator.layers, Symbol.iterator, {
+      configurable: true,
+      value: iterator,
+    });
+
+    expect(validateRuntimeDefinition(withIterator).ok).toBe(false);
+    expect(iterator).not.toHaveBeenCalled();
+
+    const withAccessor = JSON.parse(
+      JSON.stringify(createRuntimeDefinition(project)),
+    ) as ReturnType<typeof createRuntimeDefinition>;
+    Object.defineProperty(withAccessor.layers[0].transform, "x", {
+      configurable: true,
+      enumerable: false,
+      get: accessor,
+    });
+
+    expect(validateRuntimeDefinition(withAccessor).ok).toBe(false);
+    expect(accessor).not.toHaveBeenCalled();
+  });
+
+  it("normalizes authored numeric domains and suppresses unsafe evaluated output", () => {
+    const project = createEmptyProject("Semantic numeric bounds");
+    const layer = createLayer("burst", "Extreme", "builtin-spark");
+    layer.transform.x = 500_000;
+    layer.transform.startScale = 500_000;
+    layer.transform.startOpacity = 500_000;
+    layer.transform.rotationDuring = 500_000;
+    layer.transform.movementX = 500_000;
+    layer.random.startScale = 500_000;
+    layer.random.opacity = 500_000;
+    layer.timing.duration = 500_000;
+    layer.spawn.width = 500_000;
+    layer.spawn.directionAngle = 500_000;
+    layer.keyframes.frames[0].scaleX = 500_000;
+    layer.keyframes.frames[0].opacity = 500_000;
+    layer.keyframes.frames[0].rotation = 500_000;
+    project.layers.push(layer);
+
+    const normalized = validateProject(project).project?.layers[0];
+    expect(normalized?.transform).toMatchObject({
+      x: 5_000,
+      startScale: 4,
+      startOpacity: 1,
+      rotationDuring: 1_080,
+      movementX: 5_000,
+    });
+    expect(normalized?.random).toMatchObject({ startScale: 4, opacity: 1 });
+    expect(normalized?.timing.duration).toBe(30_000);
+    expect(normalized?.spawn).toMatchObject({
+      width: 1_000,
+      directionAngle: 360,
+    });
+    expect(normalized?.keyframes.frames[0]).toMatchObject({
+      scaleX: 4,
+      opacity: 1,
+      rotation: 1_080,
+    });
+
+    const unsafeProject = createEmptyProject("Unsafe evaluator output");
+    const unsafeLayer = createLayer("animated", "Unsafe", "builtin-flash");
+    unsafeLayer.transform.startScale = Number.MAX_VALUE;
+    unsafeLayer.transform.endScale = Number.MAX_VALUE;
+    unsafeProject.layers.push(unsafeLayer);
+    expect(evaluateProject(unsafeProject, 0, null)).toEqual([]);
+  });
+
+  it("accepts renamed canonical built-ins but rejects identity spoofing", () => {
+    const definition = createRuntimeDefinition(
+      createEmptyProject("Canonical built-ins"),
+    );
+    const renamed = JSON.parse(JSON.stringify(definition)) as typeof definition;
+    renamed.assets[0].name = "My flash";
+    const renamedResult = validateRuntimeDefinition(renamed);
+
+    expect(renamedResult.ok).toBe(true);
+    expect(
+      renamedResult.definition?.assets.find(
+        (asset) => asset.id === renamed.assets[0].id,
+      )?.name,
+    ).toBe("My flash");
+
+    const spoofed = JSON.parse(JSON.stringify(definition)) as typeof definition;
+    spoofed.assets[0].source = "builtin:ring";
+    expect(validateRuntimeDefinition(spoofed).ok).toBe(false);
+
+    const customSpoof = JSON.parse(
+      JSON.stringify(definition),
+    ) as typeof definition;
+    delete customSpoof.assets[0].builtIn;
+    customSpoof.assets[0].source = TINY_PNG_DATA_URL;
+    customSpoof.assets[0].width = 1;
+    customSpoof.assets[0].height = 1;
+    expect(validateRuntimeDefinition(customSpoof).ok).toBe(false);
+  });
+
+  it("checks portable image contents, dimensions, and aggregate pixels", () => {
+    const definition = createRuntimeDefinition(
+      createEmptyProject("Portable runtime images"),
+    );
+    const malformed = JSON.parse(
+      JSON.stringify(definition),
+    ) as typeof definition;
+    malformed.assets.push({
+      id: "bad-image",
+      name: "Bad image",
+      source: "data:image/png;base64,AAAA",
+    });
+    expect(validateRuntimeDefinition(malformed).ok).toBe(false);
+
+    const mismatched = JSON.parse(
+      JSON.stringify(definition),
+    ) as typeof definition;
+    mismatched.assets.push({
+      id: "wrong-size",
+      name: "Wrong size",
+      source: TINY_PNG_DATA_URL,
+      width: 2,
+      height: 1,
+    });
+    expect(validateRuntimeDefinition(mismatched).ok).toBe(false);
+
+    const pixelHeavy = JSON.parse(
+      JSON.stringify(definition),
+    ) as typeof definition;
+    for (let index = 0; index < 3; index += 1)
+      pixelHeavy.assets.push({
+        id: `large-image-${index}`,
+        name: `Large image ${index}`,
+        source: validPngDataUrl(4096, 4096),
+        width: 4096,
+        height: 4096,
+      });
+    expect(validateRuntimeDefinition(pixelHeavy).ok).toBe(false);
+  });
+
+  it("uses normalized ordering and ignores inherited host mappings", async () => {
+    const project = createEmptyProject("Runtime ordering");
+    const flash = createLayer("animated", "Flash", "builtin-flash");
+    const ring = createLayer("animated", "Ring", "builtin-ring");
+    project.layers.push(flash, ring);
+    const definition = createRuntimeDefinition(project);
+    definition.layers[0].depth = 10;
+    definition.layers[1].depth = 0;
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const inheritedMappings = Object.create({
+      "builtin-flash": "missing-host-texture",
+    }) as Record<string, string>;
+
+    await loadVvfxAssets(fake.scene, definition, inheritedMappings);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      assetKeys: inheritedMappings,
+      autoDestroy: false,
+    });
+
+    expect(
+      fake.sprites.find((sprite) => sprite.texture.key === "builtin-ring")
+        ?.depth,
+    ).toBe(0);
+    expect(
+      fake.sprites.find((sprite) => sprite.texture.key === "builtin-flash")
+        ?.depth,
+    ).toBe(1);
+    effect.destroy();
+  });
+
+  it("keeps playback finite for prototype-named beams and invalid deltas", () => {
+    const project = createEmptyProject("Finite runtime playback");
+    const beam = createLayer("beam", "Beam", "builtin-spark");
+    beam.id = "toString";
+    project.layers.push(beam);
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      originX: Infinity,
+      originY: Number.NaN,
+      baseDepth: Infinity,
+      autoDestroy: false,
+    });
+
+    effect.update(Number.NaN);
+    effect.update(Infinity);
+    effect.setPosition(Infinity, 10);
+
+    expect(effect.currentTime).toBe(0);
+    expect(fake.sprites[0]?.x).toSatisfy(Number.isFinite);
+    expect(fake.sprites[0]?.y).toSatisfy(Number.isFinite);
+    expect(fake.sprites[0]?.depth).toSatisfy(Number.isFinite);
+    effect.destroy();
+  });
+
   it("preserves effects in current runtime JSON and warns once on Canvas fallback", () => {
     const project = createEmptyProject("Canvas glow");
     const glow = createLayer("animated", "Glow", "builtin-ring");
@@ -396,7 +758,7 @@ describe("Phaser runtime package", () => {
     project.layers = [glow];
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const onWarning = vi.fn();
@@ -447,7 +809,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(source, target);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -473,7 +835,7 @@ describe("Phaser runtime package", () => {
       id: "flame-sheet",
       name: "Flame sheet",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: validPngDataUrl(128, 32),
       width: 128,
       height: 32,
       spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 4 },
@@ -484,13 +846,15 @@ describe("Phaser runtime package", () => {
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene();
 
-    await loadVvfxAssets(fake.scene, definition);
-    const effect = new VvfxEffect(fake.scene, definition, {
-      autoDestroy: false,
-    });
-    effect.update(120);
+    await withDecodedImage(128, 32, async () => {
+      await loadVvfxAssets(fake.scene, definition);
+      const effect = new VvfxEffect(fake.scene, definition, {
+        autoDestroy: false,
+      });
+      effect.update(120);
 
-    expect(fake.sprites[0]?.frame.name).toBe(1);
+      expect(fake.sprites[0]?.frame.name).toBe(1);
+    });
   });
 
   it("uses named frames from a preloaded Phaser texture atlas", () => {
@@ -499,12 +863,17 @@ describe("Phaser runtime package", () => {
       id: "atlas-spark",
       name: "Atlas spark",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       atlasFrame: "vfx/spark-01",
     });
     project.layers.push(createLayer("animated", "Atlas spark", "atlas-spark"));
     const definition = createRuntimeDefinition(project);
-    const fake = createFakeScene(["vvfx-missing", "game-vfx"]);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      "game-vfx",
+    ]);
     fake.addTextureFrame("game-vfx", "vfx/spark-01");
 
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -532,7 +901,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(comet);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -560,7 +929,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(orb);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -586,7 +955,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(flash);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -615,7 +984,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(pulse);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -636,17 +1005,305 @@ describe("Phaser runtime package", () => {
       id: "uploaded-spark",
       name: "Uploaded spark",
       mimeType: "image/png",
-      dataUrl: "data:image/png;base64,AAAA",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
       transparency: "yes",
     });
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene();
 
-    await loadVvfxAssets(fake.scene, definition);
+    await withDecodedImage(1, 1, async () => {
+      await loadVvfxAssets(fake.scene, definition);
 
-    expect(fake.textureKeys.has("builtin-ring")).toBe(true);
-    expect(fake.textureKeys.has("uploaded-spark")).toBe(true);
-    expect(fake.textureKeys.has("vvfx-missing")).toBe(true);
+      expect(fake.textureKeys.has("builtin-ring")).toBe(true);
+      expect(fake.textureKeys.has("uploaded-spark")).toBe(true);
+      expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
+        true,
+      );
+    });
+  });
+
+  it("keeps the legacy vvfx-missing asset distinct from the internal fallback", async () => {
+    const project = createEmptyProject("Legacy missing-key image");
+    const asset: VfxAsset = {
+      id: "vvfx-missing",
+      name: "Legacy missing-key image",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    project.assets.push(asset);
+    project.layers.push(createLayer("animated", "Legacy image", asset.id));
+    const fake = createFakeScene();
+
+    await withDecodedImage(1, 1, async () => {
+      const effect = await playVvfx(
+        fake.scene,
+        createRuntimeDefinition(project),
+        { autoDestroy: false },
+      );
+
+      expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
+        true,
+      );
+      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      expect(fake.sprites[0]?.texture.key).toBe(asset.id);
+
+      effect.destroy();
+      expect(fake.textureKeys.has(asset.id)).toBe(false);
+      expect(fake.textureKeys.has(VVFX_INTERNAL_MISSING_TEXTURE_KEY)).toBe(
+        true,
+      );
+    });
+  });
+
+  it("rejects explicit mappings to the internal missing-texture key", async () => {
+    const definition = createRuntimeDefinition(
+      createEmptyProject("Reserved runtime texture mapping"),
+    );
+    const fake = createFakeScene([VVFX_INTERNAL_MISSING_TEXTURE_KEY]);
+    const assetKeys = {
+      "builtin-ring": VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+    };
+
+    await expect(
+      loadVvfxAssets(fake.scene, definition, assetKeys),
+    ).rejects.toThrow(/mapped Phaser texture key.*invalid/i);
+    expect(
+      () =>
+        new VvfxEffect(fake.scene, definition, {
+          assetKeys,
+          autoDestroy: false,
+        }),
+    ).toThrow(/mapped Phaser texture key.*invalid/i);
+    await expect(
+      playVvfx(fake.scene, definition, { assetKeys }),
+    ).rejects.toThrow(/mapped Phaser texture key.*invalid/i);
+    expect(fake.sprites).toHaveLength(0);
+    expect([...fake.textureKeys]).toEqual([VVFX_INTERNAL_MISSING_TEXTURE_KEY]);
+  });
+
+  it("does not install an embedded image after its decode times out", async () => {
+    const project = createEmptyProject("Late texture decode");
+    project.assets.push({
+      id: "late-texture",
+      name: "Late texture",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+    });
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+    const OriginalImage = globalThis.Image;
+    let lateOnload: (() => void) | null = null;
+    class LateImage {
+      decoding = "auto";
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onerror: OnErrorEventHandler | null = null;
+      onload: (() => void) | null = null;
+      private source = "";
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+        if (value) lateOnload = this.onload;
+      }
+    }
+
+    vi.useFakeTimers();
+    vi.stubGlobal("Image", LateImage);
+    try {
+      const loading = loadVvfxAssets(fake.scene, definition);
+      const rejection = expect(loading).rejects.toThrow(
+        /timed out while decoding/i,
+      );
+      await vi.advanceTimersByTimeAsync(IMAGE_DECODE_TIMEOUT_MS);
+      await rejection;
+
+      (lateOnload as (() => void) | null)?.();
+      await Promise.resolve();
+      expect(fake.textureKeys.has("late-texture")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", OriginalImage);
+    }
+  });
+
+  it("cancels decode and skips effect construction when the scene shuts down", async () => {
+    const project = createEmptyProject("Shutdown texture decode");
+    project.assets.push({
+      id: "shutdown-texture",
+      name: "Shutdown texture",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+    });
+    project.layers.push(
+      createLayer("animated", "Shutdown sprite", "shutdown-texture"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+    const OriginalImage = globalThis.Image;
+    const callbacks: { lateOnload?: () => void } = {};
+    const images: Array<{ src: string }> = [];
+    class HangingImage {
+      decoding = "auto";
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onerror: OnErrorEventHandler | null = null;
+      onload: (() => void) | null = null;
+      private source = "";
+
+      constructor() {
+        images.push(this);
+      }
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+        if (value && this.onload) callbacks.lateOnload = this.onload;
+      }
+    }
+
+    vi.stubGlobal("Image", HangingImage);
+    try {
+      const loading = playVvfx(fake.scene, definition, {
+        autoDestroy: false,
+      });
+      const rejection = expect(loading).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      fake.sceneEvents.emit("shutdown");
+      await rejection;
+
+      expect(images).toHaveLength(1);
+      expect(images[0].src).toBe("");
+      callbacks.lateOnload?.();
+      await Promise.resolve();
+      expect(fake.textureKeys.has("shutdown-texture")).toBe(false);
+      expect(fake.sprites).toHaveLength(0);
+    } finally {
+      vi.stubGlobal("Image", OriginalImage);
+    }
+  });
+
+  it("honors a caller AbortSignal before playback mutates the scene", async () => {
+    const project = createEmptyProject("Cancelled playback");
+    project.assets.push({
+      id: "cancelled-texture",
+      name: "Cancelled texture",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+    });
+    project.layers.push(
+      createLayer("animated", "Cancelled sprite", "cancelled-texture"),
+    );
+    const fake = createFakeScene();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      playVvfx(fake.scene, createRuntimeDefinition(project), {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fake.textureKeys.size).toBe(0);
+    expect(fake.sprites).toHaveLength(0);
+  });
+
+  it("rejects loading and playback on an already terminated scene", async () => {
+    const definition = createRuntimeDefinition(
+      createEmptyProject("Terminated scene"),
+    );
+    const fake = createFakeScene();
+    (fake.scene.sys as unknown as { settings: { status: number } }).settings = {
+      status: 8,
+    };
+
+    await expect(loadVvfxAssets(fake.scene, definition)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await expect(playVvfx(fake.scene, definition)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(fake.textureKeys.size).toBe(0);
+    expect(fake.sprites).toHaveLength(0);
+  });
+
+  it("uses bounded concurrent decodes under one aggregate deadline", async () => {
+    const project = createEmptyProject("Bounded texture decoding");
+    for (let index = 0; index < 5; index += 1)
+      project.assets.push({
+        id: `pending-texture-${index}`,
+        name: `Pending texture ${index}`,
+        mimeType: "image/png",
+        dataUrl: TINY_PNG_DATA_URL,
+        width: 1,
+        height: 1,
+        transparency: "yes",
+      });
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+    const OriginalImage = globalThis.Image;
+    const images: Array<{ src: string }> = [];
+    class PendingImage {
+      decoding = "auto";
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onerror: OnErrorEventHandler | null = null;
+      onload: (() => void) | null = null;
+      private source = "";
+
+      constructor() {
+        images.push(this);
+      }
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+      }
+    }
+
+    vi.useFakeTimers();
+    vi.stubGlobal("Image", PendingImage);
+    try {
+      const loading = loadVvfxAssets(fake.scene, definition);
+      const rejection = expect(loading).rejects.toThrow(
+        /timed out while decoding/i,
+      );
+      expect(images).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(IMAGE_DECODE_TIMEOUT_MS);
+      await rejection;
+
+      expect(images).toHaveLength(4);
+      expect(images.every((image) => image.src === "")).toBe(true);
+      expect(fake.textureKeys.has("pending-texture-0")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", OriginalImage);
+    }
   });
 
   it("plays deterministic emitters and cleans up after completion", () => {
@@ -660,7 +1317,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(emitter);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const onComplete = vi.fn();
@@ -716,7 +1373,7 @@ describe("Phaser runtime package", () => {
     project.layers.push(source, target);
     const definition = createRuntimeDefinition(project);
     const fake = createFakeScene([
-      "vvfx-missing",
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
       ...definition.assets.map((asset) => asset.id),
     ]);
     const effect = new VvfxEffect(fake.scene, definition, {
@@ -738,5 +1395,308 @@ describe("Phaser runtime package", () => {
           !sprite.destroyed,
       ),
     ).toBe(true);
+  });
+
+  it("rebuilds Phaser sprites from canonical state on restart", () => {
+    const project = createEmptyProject("Runtime restart cleanup");
+    project.preview.duration = 1_000;
+    project.layers.push(
+      createLayer("animated", "Restarted ring", "builtin-ring"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      autoDestroy: false,
+    });
+    const beforeRestart = fake.sprites.find((sprite) => !sprite.destroyed);
+
+    expect(beforeRestart).toBeDefined();
+    effect.update(120);
+    effect.restart();
+
+    expect(beforeRestart?.destroyed).toBe(true);
+    expect(effect.currentTime).toBe(0);
+    expect(
+      fake.sprites.some(
+        (sprite) => sprite !== beforeRestart && !sprite.destroyed,
+      ),
+    ).toBe(true);
+    effect.destroy();
+  });
+
+  it("auto-destroys even when the host completion callback throws", () => {
+    const project = createEmptyProject("Throwing completion callback");
+    project.preview.duration = 500;
+    project.layers.push(
+      createLayer("animated", "Short flash", "builtin-flash"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      onComplete: () => {
+        throw new Error("Host completion failed");
+      },
+    });
+
+    expect(() => effect.update(500)).toThrow("Host completion failed");
+    expect(effect.isDestroyed).toBe(true);
+    expect(effect.isPlaying).toBe(false);
+    expect(fake.sceneEvents.listenerCount("update")).toBe(0);
+    expect(fake.sprites.every((sprite) => sprite.destroyed)).toBe(true);
+  });
+
+  it("shares leased embedded textures and releases the final playback owner", async () => {
+    const project = createEmptyProject("Shared runtime image");
+    const asset: VfxAsset = {
+      id: "leased-image",
+      name: "Leased image",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    project.assets.push(asset);
+    project.layers.push(createLayer("animated", "Leased", asset.id));
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+
+    await withDecodedImage(1, 1, async () => {
+      const first = await playVvfx(fake.scene, definition, {
+        autoDestroy: false,
+      });
+      const second = await playVvfx(fake.scene, definition, {
+        autoDestroy: false,
+      });
+
+      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      first.destroy();
+      expect(fake.textureKeys.has(asset.id)).toBe(true);
+      second.destroy();
+      expect(fake.textureKeys.has(asset.id)).toBe(false);
+    });
+  });
+
+  it("shares embedded texture leases across scenes using one TextureManager", async () => {
+    const project = createEmptyProject("Cross-scene runtime image");
+    const asset: VfxAsset = {
+      id: "cross-scene-image",
+      name: "Cross-scene image",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    project.assets.push(asset);
+    project.layers.push(
+      createLayer("animated", "Shared scene image", asset.id),
+    );
+    const definition = createRuntimeDefinition(project);
+    const firstScene = createFakeScene();
+    const secondScene = createFakeScene();
+    secondScene.scene.textures = firstScene.scene.textures;
+
+    await withDecodedImage(1, 1, async () => {
+      const creator = await playVvfx(firstScene.scene, definition, {
+        autoDestroy: false,
+      });
+      const borrower = await playVvfx(secondScene.scene, definition, {
+        autoDestroy: false,
+      });
+
+      expect(firstScene.textureKeys.has(asset.id)).toBe(true);
+      creator.destroy();
+      expect(firstScene.textureKeys.has(asset.id)).toBe(true);
+      expect(secondScene.sprites.some((sprite) => !sprite.destroyed)).toBe(
+        true,
+      );
+
+      borrower.destroy();
+      expect(firstScene.textureKeys.has(asset.id)).toBe(false);
+    });
+  });
+
+  it("retains provisional ownership until a persistent preload commits", async () => {
+    const acquiredProject = createEmptyProject("Acquired runtime image");
+    const sharedAsset: VfxAsset = {
+      id: "persistent-race-image",
+      name: "Persistent race image",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    acquiredProject.assets.push(sharedAsset);
+    acquiredProject.layers.push(
+      createLayer("animated", "Acquired shared image", sharedAsset.id),
+    );
+    const fake = createFakeScene();
+    let acquiredEffect!: VvfxEffect;
+    await withDecodedImage(1, 1, async () => {
+      acquiredEffect = await playVvfx(
+        fake.scene,
+        createRuntimeDefinition(acquiredProject),
+        { autoDestroy: false },
+      );
+    });
+
+    const persistentProject = createEmptyProject("Persistent runtime images");
+    const delayedAsset: VfxAsset = {
+      ...sharedAsset,
+      id: "persistent-race-delayed-image",
+      name: "Delayed persistent image",
+    };
+    persistentProject.assets.push(sharedAsset, delayedAsset);
+    const persistentDefinition = createRuntimeDefinition(persistentProject);
+    const OriginalImage = globalThis.Image;
+    const pendingImages: Array<{
+      onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
+    }> = [];
+    class DeferredImage {
+      decoding = "auto";
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onerror: OnErrorEventHandler | null = null;
+      onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null =
+        null;
+      private source = "";
+
+      constructor() {
+        pendingImages.push(this);
+      }
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+      }
+    }
+
+    vi.stubGlobal("Image", DeferredImage);
+    try {
+      const preload = loadVvfxAssets(fake.scene, persistentDefinition);
+      expect(pendingImages).toHaveLength(1);
+
+      acquiredEffect.destroy();
+      expect(fake.textureKeys.has(sharedAsset.id)).toBe(true);
+
+      pendingImages[0].onload?.call(
+        pendingImages[0] as never,
+        new Event("load"),
+      );
+      await preload;
+      expect(fake.textureKeys.has(sharedAsset.id)).toBe(true);
+      expect(fake.textureKeys.has(delayedAsset.id)).toBe(true);
+    } finally {
+      vi.stubGlobal("Image", OriginalImage);
+    }
+  });
+
+  it("rolls back an image when addImage synchronously shuts down the scene", async () => {
+    const project = createEmptyProject("Synchronous shutdown image");
+    const asset: VfxAsset = {
+      id: "sync-shutdown-image",
+      name: "Synchronous shutdown image",
+      mimeType: "image/png",
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes",
+      spriteSheet: null,
+    };
+    project.assets.push(asset);
+    project.layers.push(createLayer("animated", "Shutdown image", asset.id));
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+    const originalAddImage = fake.scene.textures.addImage.bind(
+      fake.scene.textures,
+    );
+    fake.scene.textures.addImage = (key, source) => {
+      const texture = originalAddImage(key, source);
+      fake.sceneEvents.emit("shutdown");
+      return texture;
+    };
+
+    await withDecodedImage(1, 1, async () => {
+      await expect(
+        playVvfx(fake.scene, definition, { autoDestroy: false }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    });
+
+    expect(fake.textureKeys.has(asset.id)).toBe(false);
+    expect(fake.sprites).toHaveLength(0);
+  });
+
+  it("rolls back embedded textures installed before a later decode fails", async () => {
+    const project = createEmptyProject("Partial runtime image failure");
+    const assets: VfxAsset[] = [0, 1].map((index) => ({
+      id: `transaction-image-${index}`,
+      name: `Transaction image ${index}`,
+      mimeType: "image/png" as const,
+      dataUrl: TINY_PNG_DATA_URL,
+      width: 1,
+      height: 1,
+      transparency: "yes" as const,
+      spriteSheet: null,
+    }));
+    project.assets.push(...assets);
+    project.layers.push(
+      ...assets.map((asset, index) =>
+        createLayer("animated", `Transaction ${index}`, asset.id),
+      ),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene();
+    const OriginalImage = globalThis.Image;
+    let imageIndex = 0;
+    class PartiallyFailingImage {
+      readonly index = imageIndex++;
+      decoding = "auto";
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onerror: OnErrorEventHandler | null = null;
+      onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null =
+        null;
+      private source = "";
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+        if (!value) return;
+        queueMicrotask(() => {
+          if (this.index === 0)
+            this.onload?.call(this as never, new Event("load"));
+          else this.onerror?.call(this as never, new Event("error"));
+        });
+      }
+    }
+
+    vi.stubGlobal("Image", PartiallyFailingImage);
+    try {
+      await expect(playVvfx(fake.scene, definition)).rejects.toThrow(
+        /could not load/i,
+      );
+      expect(fake.textureKeys.has(assets[0].id)).toBe(false);
+      expect(fake.textureKeys.has(assets[1].id)).toBe(false);
+      expect(fake.sprites).toHaveLength(0);
+    } finally {
+      vi.stubGlobal("Image", OriginalImage);
+    }
   });
 });

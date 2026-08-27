@@ -34,7 +34,29 @@ The `.vvfx` file is UTF-8 JSON. It contains editor metadata, embedded image data
 }
 ```
 
-Uploaded images use a `data:image/png;base64,...` or `data:image/webp;base64,...` source. Built-in tutorial shapes use `image/builtin` plus a stable built-in name. Import treats the file as untrusted: required containers and layer types are checked, numbers are normalized, unsafe spawn counts are clamped, and missing built-in assets are restored.
+Uploaded images use an exact `data:image/png;base64,...` or
+`data:image/webp;base64,...` source. Standard, canonically padded base64, the
+matching PNG/WebP signature, complete static container structure, valid PNG
+chunk CRCs, consistent WebP canvas/payload dimensions, and bounded image
+dimensions are required. APNG, animated WebP, URL-safe base64, media
+parameters, external URLs, SVG, and MIME-mismatched bytes are rejected. The
+browser then fully decodes embedded images before a project or template is
+activated, so a structurally plausible but corrupt compressed payload cannot
+enter playback. Built-in tutorial shapes use
+`image/builtin` plus their canonical stable ID and built-in name. Import treats
+the file as untrusted: required containers and layer types are checked, numbers
+are normalized, unsafe spawn counts are clamped, and missing built-in assets
+are restored.
+
+Before JSON parsing, editable project files are limited to 40 MiB. A project
+can contain at most 500 layers, 128 assets, 250 groups, and 100 Timeline
+markers. Each embedded image is at most 8 MiB and 4096 by 4096 / 16,777,216
+pixels; all embedded images together are limited to 24 MiB and 33,554,432
+decoded pixels. IDs are at most 128 characters using letters, digits, `.`, `_`,
+and `-`, must start with a letter or digit, and cannot use prototype-reserved
+names. Project, layer, group, and asset names are at most 120 characters. Image
+decode batches use at most two concurrent decoders and a 30-second collection
+deadline; each individual decoder retains its shorter 10-second deadline.
 
 Version 2 assets can include their source `width` and `height` plus a uniform
 `spriteSheet` grid containing `frameWidth`, `frameHeight`, and `frameCount`.
@@ -118,8 +140,10 @@ second timeline:
 Version 11 events are layer-lifecycle signals. Project version 13 later adds
 the deterministic `copy-finish` signal, but still does not provide collision or
 gameplay callbacks. Import rejects missing targets, duplicate event IDs,
-self-links, and directed cycles. Runtime scheduling also applies depth and
-total-activation guards.
+self-links, and active directed cycles. Disabled events and links owned by a
+disabled layer remain stored but inert; enabling either side revalidates the
+active graph before the edit commits. Runtime scheduling also applies depth
+and total-activation guards.
 
 Version 12 adds Tier 2 placement/alignment, behavior timing stages, and a
 curated Experimental rendering pass:
@@ -323,6 +347,34 @@ For example, an animated or spawn layer may contain:
 }
 ```
 
+### Optional-feature state
+
+Current project v17 keeps most optional behavior blocks structurally present so
+old projects normalize to one predictable shape. Their `enabled` flag has an
+intentional meaning:
+
+- `enabled: true` applies the stored configuration;
+- `enabled: false` preserves the stored configuration but contributes nothing
+  to evaluation or playback;
+- removing a feature that uses a required block replaces it with the canonical
+  disabled defaults, so adding it again starts cleanly;
+- resetting a control writes that control's canonical default without changing
+  the feature's enabled state or unrelated settings.
+
+Features whose schema supports true absence use it: no tint is `null`, no
+attachment/group/mask reference is `null`, no events are `[]`, and an asset
+without flipbook slicing has `spriteSheet: null`. Removing sprite-sheet slicing,
+removing the layer's primary image, or choosing another image also resets that
+layer's `frameAnimation` block to canonical defaults, so a later sheet does not
+revive an old frame range or playback mode. Removing a layer also removes
+events that target it and detaches its children. Import rejects broken current
+references rather than retaining ghost data.
+
+These are authored-data rules, not preview-only conventions. Disabled settings
+remain disabled after `.vvfx` export/import, save/load, template use, and
+undo/redo. Removed entries and references do not reappear after those
+boundaries. Derived evaluator values are never serialized back into the layer.
+
 ### Layer categories
 
 Every layer has identity, image assignment, visibility, attachment, transform,
@@ -375,6 +427,14 @@ texture keys already loaded by a game. Effect groups are flattened into layer
 position/timing during export. Preview background, custom color, grid, zoom,
 selection, eye visibility, and Solo state are omitted. The layer `enabled`
 flag remains the game-facing playback switch.
+
+Runtime JSON intentionally retains disabled feature blocks and their tuned
+values with `enabled: false`. This lets the runtime consume the same normalized
+shape while guaranteeing the feature contributes no evaluated behavior and
+creates no feature-owned transient objects. Removed events and nullable
+references are absent; required blocks have canonical disabled defaults.
+Generated Phaser TypeScript embeds this exact definition and calls the same
+runtime, so it does not maintain a second lifecycle implementation.
 
 ### Phaser runtime usage
 
@@ -544,9 +604,9 @@ entry is reported as **already here**. If the ID matches but content differs,
 the import receives a fresh ID and an `(imported)` name; local work is never
 silently overwritten.
 
-Safety bounds are 24 MB per selected file, 100 templates per pack, 250 layers,
+Safety bounds are 24 MiB per selected file, 100 templates per pack, 250 layers,
 100 groups, 100 assets, and 12 MB of embedded image bytes per template, with a
-20 MB embedded-image total per pack. Shared assets must be canonical Vvfx
+20 MB embedded-image total and the project decoded-pixel budget per pack. Shared assets must be canonical Vvfx
 built-ins or embedded PNG/WebP data; `file:`, `http:`, and other external image
 links are rejected. Template v1 and pack v1 migrate to v2 on read. Because v1
 did not record its source project version/scope/anchor, it is interpreted as a

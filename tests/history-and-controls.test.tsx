@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   renderHook,
@@ -7,9 +8,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssetPanel } from "../src/editor/components/AssetPanel";
-import { RangeField } from "../src/editor/components/Controls";
+import {
+  RangeField,
+  SelectField,
+  TextField,
+  Toggle,
+} from "../src/editor/components/Controls";
 import { ExportDialog } from "../src/editor/components/ExportDialog";
 import { GroupInspector } from "../src/editor/components/GroupInspector";
 import { LayerPanel } from "../src/editor/components/LayerPanel";
@@ -29,6 +35,7 @@ import {
   timingAfterTimelineDrag,
 } from "../src/editor/components/Timeline";
 import { useHistoryState } from "../src/editor/useHistoryState";
+import { validPngDataUrl } from "./fixtures/portableImages";
 import {
   createEmptyProject,
   createGroup,
@@ -39,6 +46,8 @@ import {
   layerPositionAfterPreviewDrag,
   pathPointAfterPreviewDrag,
 } from "../src/preview/dragPosition";
+
+afterEach(cleanup);
 
 describe("undo and redo", () => {
   it("moves safely through editor history", () => {
@@ -65,9 +74,189 @@ describe("undo and redo", () => {
     act(() => result.current.redo());
     expect(result.current.value).toEqual({ effectX: 40, zoom: 2 });
   });
+
+  it("coalesces one interaction into a single undoable change", () => {
+    const { result } = renderHook(() => useHistoryState(0));
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced(1);
+      result.current.setCoalesced(2);
+      result.current.setCoalesced(3);
+      result.current.endInteraction();
+    });
+
+    expect(result.current.value).toBe(3);
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(0);
+    act(() => result.current.redo());
+    expect(result.current.value).toBe(3);
+  });
+
+  it("keeps separate interactions and discrete changes as separate undo steps", () => {
+    const { result } = renderHook(() => useHistoryState(0));
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced(1);
+      result.current.setCoalesced(2);
+      result.current.endInteraction();
+      result.current.beginInteraction();
+      result.current.setCoalesced(3);
+      result.current.endInteraction();
+      result.current.set(4);
+    });
+
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(3);
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(2);
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(0);
+  });
+
+  it("starts a fresh interaction even when an unmounted field never blurred", () => {
+    const { result } = renderHook(() => useHistoryState(0));
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced(1);
+      // Removing a focused input does not reliably dispatch blur. The next
+      // real focus event must replace the stale token rather than reuse it.
+      result.current.beginInteraction();
+      result.current.setCoalesced(2);
+    });
+
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(1);
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(0);
+  });
+
+  it("ends an active interaction when history navigation or replacement occurs", () => {
+    const { result } = renderHook(() => useHistoryState(0));
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced(1);
+      result.current.setCoalesced(2);
+      result.current.undo();
+      result.current.set(3);
+      result.current.set(4);
+    });
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(3);
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced(5);
+      result.current.replace(10);
+      result.current.set(11);
+      result.current.set(12);
+    });
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(11);
+
+    act(() => {
+      result.current.set(20);
+      result.current.undo();
+      result.current.beginInteraction();
+      result.current.redo();
+      result.current.setCoalesced(21);
+      result.current.setCoalesced(22);
+    });
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(21);
+  });
+
+  it("restores falsey past and future values", () => {
+    const { result } = renderHook(() => useHistoryState<number | false>(0));
+
+    act(() => result.current.set(1));
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(0);
+    act(() => result.current.redo());
+    expect(result.current.value).toBe(1);
+
+    act(() => result.current.set(false));
+    act(() => result.current.undo());
+    expect(result.current.value).toBe(1);
+    act(() => result.current.redo());
+    expect(result.current.value).toBe(false);
+  });
+
+  it("never folds an unrelated discrete mutation into an active interaction", () => {
+    const { result } = renderHook(() =>
+      useHistoryState({ name: "Initial", assets: 0 }),
+    );
+
+    act(() => {
+      result.current.beginInteraction();
+      result.current.setCoalesced({ name: "Chain", assets: 0 });
+      result.current.setCoalesced({ name: "Chain lightning", assets: 0 });
+      result.current.set((current) => ({ ...current, assets: 1 }));
+      result.current.setCoalesced({ name: "Chain lightning final", assets: 1 });
+      result.current.endInteraction();
+    });
+
+    act(() => result.current.undo());
+    expect(result.current.value).toEqual({
+      name: "Chain lightning",
+      assets: 1,
+    });
+    act(() => result.current.undo());
+    expect(result.current.value).toEqual({
+      name: "Chain lightning",
+      assets: 0,
+    });
+  });
 });
 
 describe("beginner-friendly controls", () => {
+  it("keeps help buttons outside explicit field and switch labels", () => {
+    const onToggle = vi.fn();
+    render(
+      <>
+        <SelectField
+          label="Blend mode"
+          value="normal"
+          help="Controls how colors combine."
+          onChange={vi.fn()}
+        >
+          <option value="normal">Normal</option>
+        </SelectField>
+        <TextField
+          label="Layer name"
+          value="Lightning"
+          help="Names this layer."
+          onChange={vi.fn()}
+        />
+        <Toggle
+          label="Loop copies"
+          checked={false}
+          help="Repeats the copies."
+          onChange={onToggle}
+        />
+      </>,
+    );
+
+    const select = screen.getByRole("combobox", { name: "Blend mode" });
+    const selectLabel = screen.getByText("Blend mode").closest("label");
+    expect(selectLabel).not.toBeNull();
+    expect((selectLabel as HTMLLabelElement).control).toBe(select);
+
+    const text = screen.getByRole("textbox", { name: "Layer name" });
+    const textLabel = screen.getByText("Layer name").closest("label");
+    expect((textLabel as HTMLLabelElement).control).toBe(text);
+
+    const toggle = screen.getByRole("switch", { name: "Loop copies" });
+    const toggleLabel = screen.getByText("Loop copies").closest("label");
+    expect((toggleLabel as HTMLLabelElement).control).toBe(toggle);
+    expect(toggle).toHaveAccessibleName("Loop copies");
+    fireEvent.click(toggleLabel as HTMLLabelElement);
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
+
   it("moves preview layers by pointer delta without double-counting offsets", () => {
     expect(
       layerPositionAfterPreviewDrag({
@@ -125,7 +314,9 @@ describe("beginner-friendly controls", () => {
       />,
     );
     expect(screen.getByText("ms")).toBeInTheDocument();
-    expect(screen.getByLabelText("Help: Lower is faster.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Help for How long it lasts" }),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("How long it lasts"), {
       target: { value: "800" },
     });
@@ -231,7 +422,7 @@ describe("beginner-friendly controls", () => {
       id: "flame-sheet",
       name: "Flame sheet",
       mimeType: "image/png" as const,
-      dataUrl: "data:image/png;base64,abc",
+      dataUrl: validPngDataUrl(128, 32),
       width: 128,
       height: 32,
       spriteSheet: null,
@@ -264,7 +455,7 @@ describe("beginner-friendly controls", () => {
       id: "atlas-spark",
       name: "Atlas spark",
       mimeType: "image/png" as const,
-      dataUrl: "data:image/png;base64,abc",
+      dataUrl: validPngDataUrl(64, 64),
       width: 64,
       height: 64,
       spriteSheet: null,
@@ -854,6 +1045,9 @@ describe("beginner-friendly controls", () => {
         "effect",
       ),
     );
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false"),
+    );
     const savedTemplateCard = screen.getByText("Enemy hit").closest("article");
     expect(savedTemplateCard).not.toBeNull();
     fireEvent.click(
@@ -862,6 +1056,9 @@ describe("beginner-friendly controls", () => {
       }),
     );
     expect(onInsert).toHaveBeenCalledWith(template);
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false"),
+    );
 
     if (!picker) throw new Error("Missing template file picker");
     const file = new File(["{}"], "shared.vvfx-template", {
@@ -873,4 +1070,48 @@ describe("beginner-friendly controls", () => {
       "1 added · 1 already here · 1 imported as a copy",
     );
   }, 10_000);
+
+  it("does not present a partial export as a complete oversized template backup", () => {
+    const project = createEmptyProject("Oversized library");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const template = createTemplateFromProject(project, "Saved flash");
+
+    render(
+      <TemplateLibraryDialog
+        projectName={project.metadata.name}
+        canSaveCurrent
+        templates={[template]}
+        excessSavedCount={3}
+        saveSummaries={{
+          effect: {
+            layerCount: 1,
+            groupCount: 0,
+            assetCount: 1,
+            uploadedAssetCount: 0,
+            omittedParentLinks: 0,
+            omittedEventLinks: 0,
+            timelineAnchor: 0,
+            duration: 900,
+          },
+        }}
+        onSaveCurrent={vi.fn().mockResolvedValue(undefined)}
+        onInsert={vi.fn()}
+        onInsertBuiltIn={vi.fn()}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onDuplicate={vi.fn().mockResolvedValue(undefined)}
+        onExportOne={vi.fn()}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+        onImport={vi.fn().mockResolvedValue({
+          added: 0,
+          alreadyHere: 0,
+          importedAsCopy: 0,
+        })}
+        onExport={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Export all" })).toBeDisabled();
+    expect(screen.getByText(/Export all is disabled/i)).toBeVisible();
+  });
 });

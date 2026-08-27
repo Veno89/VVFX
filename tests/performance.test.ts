@@ -3,6 +3,7 @@ import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 import { evaluateProject } from "../src/vfx/engine";
 import {
   MAX_STRESS_INSTANCES,
+  analyzeLayerLifecycle,
   analyzeProjectPerformance,
   countRecentCreations,
   replicateInstancesForStress,
@@ -230,5 +231,47 @@ describe("guarded stress preview", () => {
   it("counts only sprite creations in the rolling time window", () => {
     expect(countRecentCreations([0, 250, 1_000, 1_250, 1_500], 1_500)).toBe(3);
     expect(countRecentCreations([100, 200], 1_500)).toBe(0);
+  });
+});
+
+describe("lifecycle diagnostics", () => {
+  it("reports only currently active modifiers and event links", () => {
+    const project = createEmptyProject();
+    const source = createLayer("animated", "Lifecycle source", "builtin-spark");
+    const target = createLayer("animated", "Lifecycle target", "builtin-flash");
+    target.startMode = "triggered";
+    source.trail.enabled = true;
+    source.behavior.flicker.enabled = true;
+    source.appearance.effects.outerGlow.enabled = true;
+    source.events = [
+      {
+        id: "lifecycle-event",
+        enabled: true,
+        trigger: "finish",
+        percentage: 1,
+        action: "play",
+        targetLayerId: target.id,
+        chance: 1,
+        maxTriggers: 1,
+      },
+    ];
+    project.layers = [source, target];
+
+    expect(analyzeLayerLifecycle(project, source.id)).toMatchObject({
+      active: true,
+      activeModifiers: expect.arrayContaining([
+        "Flicker",
+        "Motion trail",
+        "Outer glow",
+      ]),
+      activeEventLinks: 1,
+    });
+
+    source.enabled = false;
+    expect(analyzeLayerLifecycle(project, source.id)).toMatchObject({
+      active: false,
+      activeModifiers: [],
+      activeEventLinks: 0,
+    });
   });
 });

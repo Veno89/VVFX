@@ -17,7 +17,16 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { LAYER_TYPE_LABELS } from "../guidance";
 import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
+import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
 import type { LayerType, VfxGroup, VfxLayer } from "../../vfx/types";
+
+const SCRATCH_LAYER_TYPES: LayerType[] = [
+  "static",
+  "animated",
+  "beam",
+  "burst",
+  "emitter",
+];
 
 export function LayerPanel({
   layers,
@@ -50,19 +59,31 @@ export function LayerPanel({
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
+  const [addMenuIndex, setAddMenuIndex] = useState(0);
+  const [actionsMenuIndex, setActionsMenuIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
+  const addTriggerRef = useRef<HTMLButtonElement>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const layerNameRefs = useRef(new Map<string, HTMLButtonElement>());
+  const deleteFocusFrameRef = useRef<number | null>(null);
   const addMenuRef = useFocusRegion<HTMLDivElement>({
     active: addOpen,
     trapFocus: false,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: addTriggerRef,
     onEscape: () => setAddOpen(false),
   });
   const actionsMenuRef = useFocusRegion<HTMLSpanElement>({
     active: actionsOpenId !== null,
     activationKey: actionsOpenId,
     trapFocus: false,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: actionsTriggerRef,
     onEscape: () => setActionsOpenId(null),
   });
   useEffect(() => {
@@ -70,6 +91,13 @@ export function LayerPanel({
     const frame = window.requestAnimationFrame(() => editRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [editingId]);
+  useEffect(
+    () => () => {
+      if (deleteFocusFrameRef.current !== null)
+        window.cancelAnimationFrame(deleteFocusFrameRef.current);
+    },
+    [],
+  );
   const startRename = (layer: VfxLayer) => {
     setEditingId(layer.id);
     setEditValue(layer.name);
@@ -81,7 +109,29 @@ export function LayerPanel({
       onUpdate(layer.id, { name } as Partial<VfxLayer>);
     setEditingId(null);
   };
-  const moveMenuFocus = (event: KeyboardEvent<HTMLElement>) => {
+  const restoreFocusAfterDelete = (layerIndex: number) => {
+    const fallbackLayerIds = [
+      layers[layerIndex + 1]?.id,
+      layers[layerIndex - 1]?.id,
+    ].filter((id): id is string => Boolean(id));
+    if (deleteFocusFrameRef.current !== null)
+      window.cancelAnimationFrame(deleteFocusFrameRef.current);
+    deleteFocusFrameRef.current = window.requestAnimationFrame(() => {
+      deleteFocusFrameRef.current = null;
+      const fallbackLayer = fallbackLayerIds
+        .map((id) => layerNameRefs.current.get(id))
+        .find((candidate) => candidate?.isConnected);
+      const fallback =
+        fallbackLayer?.isConnected === true
+          ? fallbackLayer
+          : addTriggerRef.current;
+      if (fallback?.isConnected) fallback.focus({ preventScroll: true });
+    });
+  };
+  const moveMenuFocus = (
+    event: KeyboardEvent<HTMLElement>,
+    setMenuIndex: (index: number) => void,
+  ) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const items = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"),
@@ -90,13 +140,18 @@ export function LayerPanel({
     event.preventDefault();
     const currentIndex = items.indexOf(document.activeElement as HTMLElement);
     const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
+      currentIndex < 0
+        ? event.key === "ArrowUp" || event.key === "End"
           ? items.length - 1
-          : event.key === "ArrowUp"
-            ? (currentIndex - 1 + items.length) % items.length
-            : (currentIndex + 1) % items.length;
+          : 0
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : event.key === "ArrowUp"
+              ? (currentIndex - 1 + items.length) % items.length
+              : (currentIndex + 1) % items.length;
+    setMenuIndex(nextIndex);
     items[nextIndex]?.focus();
   };
   return (
@@ -108,11 +163,16 @@ export function LayerPanel({
         </div>
         <div className="menu-wrap">
           <button
+            ref={addTriggerRef}
             className="primary-small"
             type="button"
             onClick={() => {
               setActionsOpenId(null);
-              setAddOpen((open) => !open);
+              if (addOpen) setAddOpen(false);
+              else {
+                setAddMenuIndex(0);
+                setAddOpen(true);
+              }
             }}
             aria-controls="layer-add-menu"
             aria-expanded={addOpen}
@@ -128,22 +188,16 @@ export function LayerPanel({
               role="menu"
               tabIndex={-1}
               aria-label="Add layer"
-              onKeyDown={moveMenuFocus}
+              onKeyDown={(event) => moveMenuFocus(event, setAddMenuIndex)}
             >
               <span className="menu-label">Start from scratch</span>
-              {(
-                [
-                  "static",
-                  "animated",
-                  "beam",
-                  "burst",
-                  "emitter",
-                ] as LayerType[]
-              ).map((type) => (
+              {SCRATCH_LAYER_TYPES.map((type, menuIndex) => (
                 <button
                   key={type}
                   type="button"
                   role="menuitem"
+                  tabIndex={addMenuIndex === menuIndex ? 0 : -1}
+                  onFocus={() => setAddMenuIndex(menuIndex)}
                   onClick={() => {
                     onAdd(type);
                     setAddOpen(false);
@@ -164,11 +218,19 @@ export function LayerPanel({
                 </button>
               ))}
               <span className="menu-label">Guided presets</span>
-              {COMPOSITION_PRESETS.map((preset) => (
+              {COMPOSITION_PRESETS.map((preset, presetIndex) => (
                 <button
                   key={preset.id}
                   type="button"
                   role="menuitem"
+                  tabIndex={
+                    addMenuIndex === SCRATCH_LAYER_TYPES.length + presetIndex
+                      ? 0
+                      : -1
+                  }
+                  onFocus={() =>
+                    setAddMenuIndex(SCRATCH_LAYER_TYPES.length + presetIndex)
+                  }
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
@@ -179,11 +241,26 @@ export function LayerPanel({
                   <small>Ingredients: {preset.ingredients.join(" + ")}</small>
                 </button>
               ))}
-              {LAYER_PRESETS.map((preset) => (
+              {LAYER_PRESETS.map((preset, presetIndex) => (
                 <button
                   key={preset.id}
                   type="button"
                   role="menuitem"
+                  tabIndex={
+                    addMenuIndex ===
+                    SCRATCH_LAYER_TYPES.length +
+                      COMPOSITION_PRESETS.length +
+                      presetIndex
+                      ? 0
+                      : -1
+                  }
+                  onFocus={() =>
+                    setAddMenuIndex(
+                      SCRATCH_LAYER_TYPES.length +
+                        COMPOSITION_PRESETS.length +
+                        presetIndex,
+                    )
+                  }
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
@@ -278,6 +355,7 @@ export function LayerPanel({
                   className="layer-name-edit"
                   value={editValue}
                   aria-label={`Rename ${layer.name}`}
+                  maxLength={MAX_VFX_NAME_LENGTH}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => setEditValue(event.target.value)}
                   onBlur={() => finishRename(layer)}
@@ -288,6 +366,10 @@ export function LayerPanel({
                 />
               ) : (
                 <button
+                  ref={(element) => {
+                    if (element) layerNameRefs.current.set(layer.id, element);
+                    else layerNameRefs.current.delete(layer.id);
+                  }}
                   className="layer-name-button"
                   type="button"
                   onClick={() => onSelect(layer.id)}
@@ -343,6 +425,9 @@ export function LayerPanel({
                 className={`layer-more ${actionsOpenId === layer.id ? "is-open" : ""}`}
               >
                 <button
+                  ref={
+                    actionsOpenId === layer.id ? actionsTriggerRef : undefined
+                  }
                   type="button"
                   title="Layer actions"
                   aria-label={`Actions for ${layer.name}`}
@@ -351,9 +436,11 @@ export function LayerPanel({
                   aria-haspopup="menu"
                   onClick={() => {
                     setAddOpen(false);
-                    setActionsOpenId((openId) =>
-                      openId === layer.id ? null : layer.id,
-                    );
+                    if (actionsOpenId === layer.id) setActionsOpenId(null);
+                    else {
+                      setActionsMenuIndex(0);
+                      setActionsOpenId(layer.id);
+                    }
                   }}
                 >
                   <MoreHorizontal size={14} />
@@ -366,11 +453,15 @@ export function LayerPanel({
                     role="menu"
                     tabIndex={-1}
                     aria-label={`Actions for ${layer.name}`}
-                    onKeyDown={moveMenuFocus}
+                    onKeyDown={(event) =>
+                      moveMenuFocus(event, setActionsMenuIndex)
+                    }
                   >
                     <button
                       type="button"
                       role="menuitem"
+                      tabIndex={actionsMenuIndex === 0 ? 0 : -1}
+                      onFocus={() => setActionsMenuIndex(0)}
                       onClick={() => {
                         setActionsOpenId(null);
                         startRename(layer);
@@ -381,6 +472,8 @@ export function LayerPanel({
                     <button
                       type="button"
                       role="menuitem"
+                      tabIndex={actionsMenuIndex === 1 ? 0 : -1}
+                      onFocus={() => setActionsMenuIndex(1)}
                       onClick={() => {
                         setActionsOpenId(null);
                         onDuplicate(layer.id);
@@ -391,9 +484,12 @@ export function LayerPanel({
                     <button
                       type="button"
                       role="menuitem"
+                      tabIndex={actionsMenuIndex === 2 ? 0 : -1}
+                      onFocus={() => setActionsMenuIndex(2)}
                       onClick={() => {
                         setActionsOpenId(null);
                         onDelete(layer.id);
+                        restoreFocusAfterDelete(index);
                       }}
                     >
                       <Trash2 size={13} /> Delete

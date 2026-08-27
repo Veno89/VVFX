@@ -32,6 +32,7 @@ export function GroupInspector({
             className="layer-name-input"
             value={group.name}
             aria-label="Group name"
+            maxLength={120}
             onChange={(event) =>
               onChange({ ...group, name: event.target.value })
             }

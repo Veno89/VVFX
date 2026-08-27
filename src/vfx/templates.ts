@@ -1,6 +1,17 @@
 import { BUILT_IN_ASSETS, makeId } from "./defaults";
+import { finiteLayerCycleCount } from "./limits";
 import { activeTimelineEnd } from "./projectState";
 import { validateProject } from "./serialization";
+import {
+  isSafeVfxId,
+  MAX_PROJECT_ASSETS,
+  MAX_PROJECT_GROUPS,
+  MAX_PROJECT_IMAGE_PIXELS,
+  MAX_PROJECT_LAYERS,
+  MAX_VFX_NAME_LENGTH,
+  utf8ByteLength,
+} from "./inputLimits";
+import { inspectPortableImageDataUrl } from "./portableImage";
 import type { VfxAsset, VfxGroup, VfxLayer, VfxProject } from "./types";
 
 export const TEMPLATE_FORMAT_VERSION = 2 as const;
@@ -73,6 +84,13 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.max(minimum, Math.min(maximum, value));
 
+function allocateUniqueId(prefix: string, usedIds: Set<string>): string {
+  let id = makeId(prefix);
+  while (usedIds.has(id)) id = makeId(prefix);
+  usedIds.add(id);
+  return id;
+}
+
 const groupDelayForLayer = (
   project: Pick<VfxProject, "groups">,
   layer: Pick<VfxLayer, "groupId">,
@@ -114,7 +132,7 @@ function directLayerSpan(layer: VfxLayer): number {
   const repeats =
     layer.timing.repeatForever || layer.timing.loop
       ? 1
-      : Math.max(1, Math.floor(layer.timing.repeat) + 1);
+      : finiteLayerCycleCount(layer.timing.repeat);
   const trailTail = layer.trail.enabled
     ? Math.min(
         Math.max(0, layer.trail.lifetime),
@@ -218,7 +236,7 @@ function assetsAreInterchangeable(left: VfxAsset, right: VfxAsset): boolean {
 function portableAssetError(asset: unknown): string | null {
   if (
     !isRecord(asset) ||
-    typeof asset.id !== "string" ||
+    !isSafeVfxId(asset.id) ||
     typeof asset.mimeType !== "string" ||
     typeof asset.dataUrl !== "string"
   )
@@ -239,22 +257,34 @@ function portableAssetError(asset: unknown): string | null {
     return "A template contains an unknown built-in image.";
   if (asset.mimeType !== "image/png" && asset.mimeType !== "image/webp")
     return "Shared template images must be embedded PNG or WebP files.";
-  const expectedPrefix = `data:${asset.mimeType};base64,`;
-  if (!asset.dataUrl.startsWith(expectedPrefix))
-    return "Shared template images must be embedded PNG or WebP data, not file or web links.";
-  const encoded = asset.dataUrl.slice(expectedPrefix.length);
-  if (encoded.length === 0 || !/^[A-Za-z0-9+/_-]*={0,2}$/.test(encoded))
-    return "A template contains damaged embedded image data.";
+  const inspection = inspectPortableImageDataUrl(asset.dataUrl, asset.mimeType);
+  if (!inspection.ok) return inspection.error;
   return null;
 }
 
-function embeddedAssetBytes(assets: VfxAsset[]): number {
-  return assets.reduce((total, asset) => {
-    if (asset.builtIn) return total;
-    const encoded = asset.dataUrl.slice(asset.dataUrl.indexOf(",") + 1);
-    const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
-    return total + Math.max(0, Math.floor((encoded.length * 3) / 4) - padding);
-  }, 0);
+function embeddedAssetUsage(assets: VfxAsset[]): {
+  bytes: number;
+  pixels: number;
+} {
+  return assets.reduce(
+    (usage, asset) => {
+      if (asset.builtIn) return usage;
+      const inspection = inspectPortableImageDataUrl(
+        asset.dataUrl,
+        asset.mimeType === "image/webp" ? "image/webp" : "image/png",
+      );
+      if (!inspection.ok)
+        return {
+          bytes: Number.POSITIVE_INFINITY,
+          pixels: Number.POSITIVE_INFINITY,
+        };
+      return {
+        bytes: usage.bytes + inspection.byteLength,
+        pixels: usage.pixels + inspection.width * inspection.height,
+      };
+    },
+    { bytes: 0, pixels: 0 },
+  );
 }
 
 export function createTemplateFromProject(
@@ -295,7 +325,8 @@ export function createTemplateFromProject(
     formatVersion: TEMPLATE_FORMAT_VERSION,
     projectFormatVersion: CURRENT_PROJECT_FORMAT_VERSION,
     id: makeId("template"),
-    name: name.trim() || "Untitled effect template",
+    name:
+      name.trim().slice(0, MAX_VFX_NAME_LENGTH) || "Untitled effect template",
     description: description.trim().slice(0, 280),
     createdAt: now,
     updatedAt: now,
@@ -327,7 +358,7 @@ function sourceProjectVersion(input: Record<string, unknown>): number | null {
   return input.projectFormatVersion;
 }
 
-export function validateTemplate(input: unknown): TemplateValidationResult {
+function validateTemplateUnchecked(input: unknown): TemplateValidationResult {
   if (!isRecord(input) || input.format !== "vvfx-template")
     return { ok: false, error: "This is not a Vvfx effect template." };
   if (input.formatVersion !== 1 && input.formatVersion !== 2)
@@ -380,10 +411,13 @@ export function validateTemplate(input: unknown): TemplateValidationResult {
         ? input.scope
         : "effect";
   if (
-    typeof input.id !== "string" ||
-    !input.id.trim() ||
+    !isSafeVfxId(input.id) ||
     typeof input.name !== "string" ||
     !input.name.trim() ||
+    input.name.length > MAX_VFX_NAME_LENGTH ||
+    (typeof input.description === "string" && input.description.length > 280) ||
+    (typeof input.createdAt === "string" && input.createdAt.length > 64) ||
+    (typeof input.updatedAt === "string" && input.updatedAt.length > 64) ||
     !Array.isArray(input.assets) ||
     !Array.isArray(input.layers) ||
     input.layers.length === 0
@@ -455,7 +489,7 @@ export function validateTemplate(input: unknown): TemplateValidationResult {
   const project = validateProject({
     formatVersion: projectFormatVersion,
     metadata: {
-      id: `template-validation-${input.id}`,
+      id: "template-validation",
       name: input.name,
       createdAt: now,
       updatedAt: now,
@@ -495,10 +529,16 @@ export function validateTemplate(input: unknown): TemplateValidationResult {
   const assets = project.project.assets.filter((asset) =>
     usedAssetIds.has(asset.id),
   );
-  if (embeddedAssetBytes(assets) > MAX_TEMPLATE_EMBEDDED_BYTES)
+  const embeddedUsage = embeddedAssetUsage(assets);
+  if (embeddedUsage.bytes > MAX_TEMPLATE_EMBEDDED_BYTES)
     return {
       ok: false,
       error: "This template contains more than 12 MB of embedded image data.",
+    };
+  if (embeddedUsage.pixels > MAX_PROJECT_IMAGE_PIXELS)
+    return {
+      ok: false,
+      error: "This template's images exceed the decoded texture budget.",
     };
   const usedGroupIds = new Set(
     project.project.layers.flatMap((layer) =>
@@ -511,8 +551,8 @@ export function validateTemplate(input: unknown): TemplateValidationResult {
       format: "vvfx-template",
       formatVersion: TEMPLATE_FORMAT_VERSION,
       projectFormatVersion: CURRENT_PROJECT_FORMAT_VERSION,
-      id: input.id.trim().slice(0, 160),
-      name: input.name.trim().slice(0, 120),
+      id: input.id,
+      name: input.name.trim(),
       description:
         typeof input.description === "string"
           ? input.description.trim().slice(0, 280)
@@ -531,6 +571,17 @@ export function validateTemplate(input: unknown): TemplateValidationResult {
   };
 }
 
+export function validateTemplate(input: unknown): TemplateValidationResult {
+  try {
+    return validateTemplateUnchecked(input);
+  } catch {
+    return {
+      ok: false,
+      error: "This template contains damaged or unsupported data.",
+    };
+  }
+}
+
 export function createTemplatePack(templates: VfxTemplate[]): VfxTemplatePack {
   return {
     format: "vvfx-template-pack",
@@ -541,17 +592,72 @@ export function createTemplatePack(templates: VfxTemplate[]): VfxTemplatePack {
 }
 
 export function serializeTemplate(template: VfxTemplate): string {
-  return JSON.stringify(template, null, 2);
+  const result = validateTemplate(template);
+  if (!result.ok || !result.template)
+    throw new Error(result.error ?? "This template could not be exported.");
+  const text = JSON.stringify(result.template, null, 2);
+  if (
+    text.length > MAX_TEMPLATE_FILE_BYTES ||
+    utf8ByteLength(text) > MAX_TEMPLATE_FILE_BYTES
+  )
+    throw new Error("This template is larger than the supported 24 MB limit.");
+  return text;
 }
 
 export function serializeTemplatePack(templates: VfxTemplate[]): string {
-  return JSON.stringify(createTemplatePack(templates), null, 2);
+  if (templates.length === 0)
+    throw new Error("A template pack must contain at least one template.");
+  if (templates.length > MAX_TEMPLATES_PER_PACK)
+    throw new Error(
+      `A template pack cannot contain more than ${MAX_TEMPLATES_PER_PACK} templates.`,
+    );
+  const normalized: VfxTemplate[] = [];
+  const ids = new Set<string>();
+  let embeddedBytes = 0;
+  let decodedPixels = 0;
+  for (const template of templates) {
+    const result = validateTemplate(template);
+    if (!result.ok || !result.template)
+      throw new Error(result.error ?? "A template could not be exported.");
+    if (ids.has(result.template.id))
+      throw new Error(
+        `The template identifier "${result.template.id}" appears more than once.`,
+      );
+    ids.add(result.template.id);
+    const usage = embeddedAssetUsage(result.template.assets);
+    embeddedBytes += usage.bytes;
+    decodedPixels += usage.pixels;
+    if (embeddedBytes > MAX_TEMPLATE_PACK_EMBEDDED_BYTES)
+      throw new Error(
+        "This template pack contains more than 20 MB of embedded image data.",
+      );
+    if (decodedPixels > MAX_PROJECT_IMAGE_PIXELS)
+      throw new Error("This template pack exceeds the decoded texture budget.");
+    normalized.push(result.template);
+  }
+  const text = JSON.stringify(createTemplatePack(normalized), null, 2);
+  if (
+    text.length > MAX_TEMPLATE_FILE_BYTES ||
+    utf8ByteLength(text) > MAX_TEMPLATE_FILE_BYTES
+  )
+    throw new Error(
+      "This template pack is larger than the supported 24 MB limit.",
+    );
+  return text;
 }
 
 export function deserializeTemplatePack(
   text: string,
 ): TemplatePackValidationResult {
-  if (new TextEncoder().encode(text).byteLength > MAX_TEMPLATE_FILE_BYTES)
+  if (typeof text !== "string")
+    return {
+      ok: false,
+      error: "This template or pack is not valid JSON.",
+    };
+  if (
+    text.length > MAX_TEMPLATE_FILE_BYTES ||
+    utf8ByteLength(text) > MAX_TEMPLATE_FILE_BYTES
+  )
     return {
       ok: false,
       error: "This template file is larger than the supported 24 MB limit.",
@@ -591,6 +697,7 @@ export function deserializeTemplatePack(
   const templates: VfxTemplate[] = [];
   const templateIds = new Set<string>();
   let embeddedBytes = 0;
+  let decodedPixels = 0;
   for (const candidate of input.templates) {
     const result = validateTemplate(candidate);
     if (!result.ok || !result.template)
@@ -604,12 +711,19 @@ export function deserializeTemplatePack(
         error: `This pack contains the template identifier “${result.template.id}” more than once.`,
       };
     templateIds.add(result.template.id);
-    embeddedBytes += embeddedAssetBytes(result.template.assets);
+    const usage = embeddedAssetUsage(result.template.assets);
+    embeddedBytes += usage.bytes;
     if (embeddedBytes > MAX_TEMPLATE_PACK_EMBEDDED_BYTES)
       return {
         ok: false,
         error:
           "This template pack contains more than 20 MB of embedded image data.",
+      };
+    decodedPixels += usage.pixels;
+    if (decodedPixels > MAX_PROJECT_IMAGE_PIXELS)
+      return {
+        ok: false,
+        error: "This template pack exceeds the decoded texture budget.",
       };
     templates.push(result.template);
   }
@@ -632,6 +746,18 @@ export function insertTemplateIntoProject(
   template: VfxTemplate,
   insertionTimeMs = 0,
 ): { project: VfxProject; insertedLayerIds: string[] } {
+  const projectResult = validateProject(project);
+  if (!projectResult.ok || !projectResult.project)
+    throw new Error(projectResult.error ?? "The current project is damaged.");
+  const templateResult = validateTemplate(template);
+  if (!templateResult.ok || !templateResult.template)
+    throw new Error(templateResult.error ?? "This template is damaged.");
+  project = projectResult.project;
+  template = templateResult.template;
+  if (project.layers.length + template.layers.length > MAX_PROJECT_LAYERS)
+    throw new Error(
+      `A project can contain at most ${MAX_PROJECT_LAYERS} layers.`,
+    );
   const insertionTime = clamp(
     Number.isFinite(insertionTimeMs) ? insertionTimeMs : 0,
     0,
@@ -639,6 +765,7 @@ export function insertTemplateIntoProject(
   );
   const insertionOffset = insertionTime - template.timelineAnchor;
   const assets = clone(project.assets);
+  const usedAssetIds = new Set(assets.map((asset) => asset.id));
   const assetIdMap = new Map<string, string>();
   for (const templateAsset of template.assets) {
     const matchingId = assets.find((asset) => asset.id === templateAsset.id);
@@ -653,15 +780,30 @@ export function insertTemplateIntoProject(
       assetIdMap.set(templateAsset.id, matchingSource.id);
       continue;
     }
-    const id = matchingId ? makeId("asset") : templateAsset.id;
+    const id = matchingId
+      ? allocateUniqueId("asset", usedAssetIds)
+      : templateAsset.id;
+    usedAssetIds.add(id);
     assets.push({ ...clone(templateAsset), id });
     assetIdMap.set(templateAsset.id, id);
   }
+  if (assets.length > MAX_PROJECT_ASSETS)
+    throw new Error(
+      `A project can contain at most ${MAX_PROJECT_ASSETS} images.`,
+    );
 
   const groups = clone(project.groups);
+  const usedGroupIds = new Set(groups.map((group) => group.id));
   const groupIdMap = new Map(
-    template.groups.map((group) => [group.id, makeId("group")]),
+    template.groups.map((group) => [
+      group.id,
+      allocateUniqueId("group", usedGroupIds),
+    ]),
   );
+  if (groups.length + template.groups.length > MAX_PROJECT_GROUPS)
+    throw new Error(
+      `A project can contain at most ${MAX_PROJECT_GROUPS} groups.`,
+    );
   const groupDelayMap = new Map<string, number>();
   for (const templateGroup of template.groups) {
     const members = template.layers.filter(
@@ -686,8 +828,15 @@ export function insertTemplateIntoProject(
     });
   }
 
+  const usedLayerIds = new Set(project.layers.map((layer) => layer.id));
   const layerIdMap = new Map(
-    template.layers.map((layer) => [layer.id, makeId("layer")]),
+    template.layers.map((layer) => [
+      layer.id,
+      allocateUniqueId("layer", usedLayerIds),
+    ]),
+  );
+  const usedEventIds = new Set(
+    project.layers.flatMap((layer) => layer.events.map((event) => event.id)),
   );
   const insertedLayers = template.layers.map((source) => {
     const layer = clone(source);
@@ -710,7 +859,7 @@ export function insertTemplateIntoProject(
       : null;
     layer.events = source.events.map((event) => ({
       ...event,
-      id: makeId("event"),
+      id: allocateUniqueId("event", usedEventIds),
       targetLayerId: layerIdMap.get(event.targetLayerId) ?? event.targetLayerId,
     }));
     layer.groupId = source.groupId
@@ -746,21 +895,26 @@ export function insertTemplateIntoProject(
     layer.solo = false;
     return layer;
   });
-  return {
-    project: {
-      ...project,
-      assets,
-      groups,
-      layers: [...project.layers, ...insertedLayers],
-      preview: {
-        ...project.preview,
-        duration: clamp(
-          Math.max(project.preview.duration, insertionTime + template.duration),
-          500,
-          30_000,
-        ),
-      },
+  const combined = validateProject({
+    ...project,
+    assets,
+    groups,
+    layers: [...project.layers, ...insertedLayers],
+    preview: {
+      ...project.preview,
+      duration: clamp(
+        Math.max(project.preview.duration, insertionTime + template.duration),
+        500,
+        30_000,
+      ),
     },
+  });
+  if (!combined.ok || !combined.project)
+    throw new Error(
+      combined.error ?? "This template does not fit in the current project.",
+    );
+  return {
+    project: combined.project,
     insertedLayerIds: insertedLayers.map((layer) => layer.id),
   };
 }

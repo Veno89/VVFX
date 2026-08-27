@@ -1,7 +1,7 @@
 "use client";
 
 import { Wand2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type {
   DissolvePattern,
   RenderingEffectsSettings,
@@ -27,21 +27,23 @@ function ColorField({
   help: string;
   onChange: (value: string) => void;
 }) {
+  const inputId = useId();
   return (
-    <label className="field experimental-color-field">
+    <div className="field experimental-color-field">
       <span className="field__label">
-        {label} <HelpTip text={help} />
+        <label htmlFor={inputId}>{label}</label>{" "}
+        <HelpTip label={label} text={help} />
       </span>
       <span>
         <input
+          id={inputId}
           type="color"
           value={value}
-          aria-label={label}
           onChange={(event) => onChange(event.target.value)}
         />
         <code>{value}</code>
       </span>
-    </label>
+    </div>
   );
 }
 

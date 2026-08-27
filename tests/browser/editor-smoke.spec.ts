@@ -70,12 +70,29 @@ test("loads the editor, routes focus, and protects unsaved work", async ({
     .poll(() => page.evaluate(() => document.activeElement?.tagName))
     .not.toBe("BODY");
 
+  const newButton = page.getByRole("button", { name: "New", exact: true });
+  await newButton.focus();
+  await page.keyboard.press("Tab");
+  await expect(newButton).not.toBeFocused();
+
   await page.getByRole("textbox", { name: "Project name" }).fill("QA draft");
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await newButton.click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Start a new project?",
   });
   await expect(confirmation).toBeVisible();
+  const keepEditing = confirmation.getByRole("button", {
+    name: "Keep editing",
+    exact: true,
+  });
+  const discardChanges = confirmation.getByRole("button", {
+    name: "Discard changes and start new",
+  });
+  await expect(keepEditing).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(discardChanges).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(keepEditing).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(confirmation).toBeHidden();
   expect(pageErrors).toEqual([]);
@@ -122,12 +139,72 @@ test("the template library footer remains reachable at 720px height", async ({
   const footer = dialog.locator(":scope > footer");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   await expect(footer).toBeVisible();
+  const builtInInsertNames = await dialog
+    .locator(".template-list--built-in .primary-action")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("aria-label")),
+    );
+  expect(builtInInsertNames).toHaveLength(7);
+  expect(new Set(builtInInsertNames).size).toBe(7);
+  expect(builtInInsertNames).toContain("Insert Magic impact copy");
   const footerBox = await footer.boundingBox();
   expect(footerBox).not.toBeNull();
   expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(720);
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+});
+
+test("feature removal starts cleanly and remains reversible", async ({
+  page,
+}) => {
+  await openEditor(page);
+  await addPreset(page, "Neon projectile");
+
+  await page.getByText("Motion trail", { exact: true }).click();
+  const removeTrail = page.getByRole("button", {
+    name: "Remove motion trail",
+  });
+  await expect(removeTrail).toBeVisible();
+  await removeTrail.click();
+  await expect(removeTrail).toBeHidden();
+
+  await page.getByText("Experimental rendering", { exact: true }).click();
+  const removeGlow = page.getByRole("button", { name: "Remove outer glow" });
+  await expect(removeGlow).toBeVisible();
+  await removeGlow.click();
+  await expect(removeGlow).toBeHidden();
+
+  let performanceDialog = await openPerformanceInspector(page);
+  await performanceDialog.getByText("Lifecycle diagnostic").click();
+  const activeModifiers = performanceDialog.getByTestId(
+    "performance-active-modifiers",
+  );
+  await expect(activeModifiers).not.toContainText("Motion trail");
+  await expect(activeModifiers).not.toContainText("Outer glow");
+  await expect
+    .poll(() => numericMetric(page, "performance-trail-sprites"))
+    .toBe(0);
+  await closePerformanceInspector(page, performanceDialog);
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(removeTrail).toBeVisible();
+  await expect(removeGlow).toBeVisible();
+  performanceDialog = await openPerformanceInspector(page);
+  await performanceDialog.getByText("Lifecycle diagnostic").click();
+  await expect(
+    performanceDialog.getByTestId("performance-active-modifiers"),
+  ).toContainText("Motion trail");
+  await expect(
+    performanceDialog.getByTestId("performance-active-modifiers"),
+  ).toContainText("Outer glow");
+  await closePerformanceInspector(page, performanceDialog);
+
+  await page.getByRole("button", { name: "Redo" }).click();
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(removeTrail).toBeHidden();
+  await expect(removeGlow).toBeHidden();
 });
 
 test("professional workspace settings persist and export preflight follows its target", async ({

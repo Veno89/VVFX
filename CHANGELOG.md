@@ -40,3 +40,6 @@ uses semantic versions for release artifacts.
 - Corrected responsive overflow, asset-card overlap, clipped template content,
   persistent tooltips, inaccessible selection state, focus loss, and
   destructive new-project behavior.
+- Added distinct Inspector removal actions for configured optional modifiers,
+  exposed selected layers programmatically, disambiguated template insertion
+  names, and corrected remaining mojibake in lifecycle-facing copy.

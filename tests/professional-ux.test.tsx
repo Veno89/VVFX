@@ -10,13 +10,17 @@ import { Inspector } from "../src/editor/components/Inspector";
 import { AssetPanel } from "../src/editor/components/AssetPanel";
 import { TutorialCenter } from "../src/editor/components/LearningCenter";
 import {
+  DEFAULT_BEHAVIOR,
+  DEFAULT_COLOR_OVER_LIFETIME,
   DEFAULT_FRAME_ANIMATION,
+  DEFAULT_TRAIL,
   createEmptyProject,
   createLayer,
 } from "../src/vfx/defaults";
 import { evaluateProject } from "../src/vfx/engine";
 import { KEYFRAME_PRESETS, keyframesFromPreset } from "../src/vfx/keyframes";
 import { seededRandom } from "../src/vfx/random";
+import { createDefaultRenderingEffects } from "../src/vfx/renderingEffects";
 import {
   normalizeFrameAnimation,
   normalizeSpriteSheet,
@@ -259,6 +263,9 @@ describe("beginner property and trail presets", () => {
     expect(screen.getByLabelText("Columns")).toHaveValue(4);
     expect(screen.getByLabelText("Rows")).toHaveValue(4);
     expect(
+      screen.getByText("Each frame is 64 × 64 px.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("switch", { name: /^Random starting frame/ }),
     ).toBeInTheDocument();
 
@@ -314,6 +321,91 @@ describe("beginner property and trail presets", () => {
       expect.objectContaining({
         behavior: expect.objectContaining({
           wobble: expect.objectContaining({ style: "sway" }),
+        }),
+      }),
+    );
+  });
+
+  it("removes configured modifiers through canonical Inspector actions", () => {
+    const layer = createLayer("animated", "Lifecycle controls", "builtin-ring");
+    layer.trail = { ...layer.trail, enabled: true, count: 11 };
+    layer.appearance.colorOverLifetime = {
+      enabled: true,
+      stops: [
+        { time: 0, color: "#ff0000" },
+        { time: 1, color: "#0000ff" },
+      ],
+    };
+    layer.behavior.pulse = {
+      ...layer.behavior.pulse,
+      enabled: true,
+      scale: 0.4,
+    };
+    layer.behavior.flicker = {
+      ...layer.behavior.flicker,
+      enabled: true,
+      amount: 0.6,
+    };
+    layer.behavior.wobble = {
+      ...layer.behavior.wobble,
+      enabled: true,
+      x: 28,
+    };
+    layer.appearance.effects.outerGlow = {
+      ...layer.appearance.effects.outerGlow,
+      enabled: true,
+      outerStrength: 6,
+    };
+    const onChange = vi.fn();
+    render(
+      <Inspector
+        layer={layer}
+        assets={[]}
+        layers={[layer]}
+        onChange={onChange}
+        onAssetChange={vi.fn()}
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        canPaste={false}
+      />,
+    );
+
+    for (const name of [
+      "motion trail",
+      "color over lifetime",
+      "pulse",
+      "flicker",
+      "organic movement",
+      "outer glow",
+    ])
+      fireEvent.click(screen.getByRole("button", { name: `Remove ${name}` }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ trail: DEFAULT_TRAIL }),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appearance: expect.objectContaining({
+          colorOverLifetime: DEFAULT_COLOR_OVER_LIFETIME,
+        }),
+      }),
+    );
+    for (const [key, defaults] of [
+      ["pulse", DEFAULT_BEHAVIOR.pulse],
+      ["flicker", DEFAULT_BEHAVIOR.flicker],
+      ["wobble", DEFAULT_BEHAVIOR.wobble],
+    ] as const)
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          behavior: expect.objectContaining({ [key]: defaults }),
+        }),
+      );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appearance: expect.objectContaining({
+          effects: expect.objectContaining({
+            outerGlow: createDefaultRenderingEffects().outerGlow,
+          }),
         }),
       }),
     );

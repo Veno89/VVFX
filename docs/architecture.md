@@ -273,10 +273,13 @@ Vvfx uses three distinct lifecycle operations:
   waypoints, color stops, layers, assets, attachments, masks, and sprite-sheet
   definitions use empty arrays or `null` where the schema supports absence.
   Optional configuration blocks required by the current schema are replaced
-  with their canonical disabled defaults. Removing a sprite-sheet definition,
+  with their canonical disabled defaults. The Inspector exposes this as a
+  distinct **Remove** action for trails, color over lifetime, pulse, flicker,
+  organic movement, and every Experimental rendering effect; ordinary toggles
+  continue to preserve tuned values. Removing a sprite-sheet definition,
   removing its primary image, or choosing another image also resets per-layer
-  frame playback settings. Adding them again therefore starts from defaults
-  rather than hidden old settings.
+  frame playback settings. Adding any removed feature again therefore starts
+  from defaults rather than hidden old settings.
 - **Reset** changes only the named control or feature scope to its canonical
   defaults. It does not disable the feature or reset adjacent authored data
   unless the control explicitly says so. For example, resetting a glow value

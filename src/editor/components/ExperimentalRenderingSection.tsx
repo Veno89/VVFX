@@ -1,11 +1,12 @@
 "use client";
 
-import { Wand2 } from "lucide-react";
+import { Trash2, Wand2 } from "lucide-react";
 import { useId, type ReactNode } from "react";
-import type {
-  DissolvePattern,
-  RenderingEffectsSettings,
-  SpriteWarpMode,
+import {
+  createDefaultRenderingEffects,
+  type DissolvePattern,
+  type RenderingEffectsSettings,
+  type SpriteWarpMode,
 } from "../../vfx/renderingEffects";
 import type { VfxAsset } from "../../vfx/types";
 import {
@@ -69,6 +70,28 @@ export function ExperimentalRenderingSection({
       [key]: { ...effects[key], ...patch },
     });
   const stillMaskAssets = assets.filter((asset) => !asset.spriteSheet);
+  const defaults = createDefaultRenderingEffects();
+  const removeAction = (key: keyof RenderingEffectsSettings, name: string) => {
+    if (JSON.stringify(effects[key]) === JSON.stringify(defaults[key]))
+      return null;
+    return (
+      <div className="feature-lifecycle-actions">
+        <button
+          type="button"
+          className="small-button"
+          title={`Remove ${name}, forget its saved settings, and return it to defaults. Undo restores it.`}
+          onClick={() =>
+            onChange({
+              ...effects,
+              [key]: structuredClone(defaults[key]),
+            })
+          }
+        >
+          <Trash2 size={13} /> Remove {name}
+        </button>
+      </div>
+    );
+  };
 
   return (
     <SettingsSection
@@ -107,6 +130,7 @@ export function ExperimentalRenderingSection({
             })
           }
         />
+        {removeAction("visualMask", "visual mask")}
         {effects.visualMask.enabled && (
           <>
             <SelectField
@@ -237,6 +261,7 @@ export function ExperimentalRenderingSection({
           help="Adds a real soft halo around visible pixels. Good for magic, electricity, and neon artwork."
           onChange={(enabled) => change("outerGlow", { enabled })}
         />
+        {removeAction("outerGlow", "outer glow")}
         {effects.outerGlow.enabled && (
           <FieldGroup>
             <ColorField
@@ -278,6 +303,7 @@ export function ExperimentalRenderingSection({
           help="Softens the image pixels with a GPU blur. More steps and higher quality cost more to render."
           onChange={(enabled) => change("blur", { enabled })}
         />
+        {removeAction("blur", "blur")}
         {effects.blur.enabled && (
           <>
             <SelectField
@@ -348,6 +374,7 @@ export function ExperimentalRenderingSection({
           help="Makes the entire image darker or brighter. Exposure changes intensity in photographic stops."
           onChange={(enabled) => change("brightnessExposure", { enabled })}
         />
+        {removeAction("brightnessExposure", "brightness and exposure")}
         {effects.brightnessExposure.enabled && (
           <FieldGroup>
             <RangeField
@@ -384,6 +411,7 @@ export function ExperimentalRenderingSection({
           help="Sweeps a bright line across the image during playback. Its experimental phase follows Phaser's renderer clock, so exact scrub positions may vary."
           onChange={(enabled) => change("animatedShine", { enabled })}
         />
+        {removeAction("animatedShine", "animated shine")}
         {effects.animatedShine.enabled && (
           <FieldGroup>
             <RangeField
@@ -428,6 +456,7 @@ export function ExperimentalRenderingSection({
           help="Places different colors across different parts of one image. This is different from changing the whole image color over time."
           onChange={(enabled) => change("spatialGradient", { enabled })}
         />
+        {removeAction("spatialGradient", "spatial gradient")}
         {effects.spatialGradient.enabled && (
           <>
             <FieldGroup>
@@ -527,6 +556,7 @@ export function ExperimentalRenderingSection({
           help="Removes this sprite across its existing lifetime. Straight wipe uses one moving edge; noisy erosion breaks it into irregular disappearing patches."
           onChange={(enabled) => change("directionalDissolve", { enabled })}
         />
+        {removeAction("directionalDissolve", "dissolve / erase")}
         {effects.directionalDissolve.enabled && (
           <>
             <SelectField
@@ -641,6 +671,7 @@ export function ExperimentalRenderingSection({
           help="Warps this image's own pixels. It does not bend or refract the game scene behind it."
           onChange={(enabled) => change("spriteWarp", { enabled })}
         />
+        {removeAction("spriteWarp", "image distortion")}
         {effects.spriteWarp.enabled && (
           <>
             <SelectField

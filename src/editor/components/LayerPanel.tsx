@@ -530,6 +530,7 @@ export function LayerPanel({
                         }}
                         className="layer-name-button"
                         type="button"
+                        aria-pressed={selectedId === layer.id}
                         onClick={() => onSelect(layer.id)}
                         title="Select layer · double-click to rename"
                       >

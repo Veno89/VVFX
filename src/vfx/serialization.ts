@@ -1581,12 +1581,12 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
       if (!maskAsset)
         return {
           ok: false,
-          error: `The layer â€œ${layer.name}â€ uses an image silhouette that is missing from this project.`,
+          error: `The layer “${layer.name}” uses an image silhouette that is missing from this project.`,
         };
       if (maskAsset.builtIn || maskAsset.spriteSheet || !maskAsset.alphaMask)
         return {
           ok: false,
-          error: `The image silhouette used by â€œ${layer.name}â€ has not been prepared from a still PNG or WebP.`,
+          error: `The image silhouette used by “${layer.name}” has not been prepared from a still PNG or WebP.`,
         };
       if (
         maximumAlphaMaskValue(maskAsset.alphaMask) <
@@ -1594,7 +1594,7 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
       )
         return {
           ok: false,
-          error: `No visible pixels remain in the image silhouette used by â€œ${layer.name}â€. Lower Minimum opacity or choose another image.`,
+          error: `No visible pixels remain in the image silhouette used by “${layer.name}”. Lower Minimum opacity or choose another image.`,
         };
     }
     if (layer.parentId && !layerIds.has(layer.parentId))

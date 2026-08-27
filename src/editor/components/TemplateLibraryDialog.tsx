@@ -451,6 +451,7 @@ export function TemplateLibraryDialog({
                     type="button"
                     className="primary-action"
                     disabled={busy}
+                    aria-label={`Insert ${preset.name} copy`}
                     onClick={() => onInsertBuiltIn(preset.id)}
                   >
                     <Plus size={14} /> Insert copy
@@ -518,6 +519,7 @@ export function TemplateLibraryDialog({
                       type="button"
                       className="primary-action"
                       disabled={busy}
+                      aria-label={`Insert ${template.name} copy`}
                       onClick={() => void insertSavedTemplate(template)}
                     >
                       <Plus size={14} /> Insert copy

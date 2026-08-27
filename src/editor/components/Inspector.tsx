@@ -23,7 +23,13 @@ import {
 } from "lucide-react";
 import { useId, type ReactNode } from "react";
 import { describeLayer, layerTypeLabel } from "../guidance";
-import { DEFAULT_FRAME_ANIMATION, makeId } from "../../vfx/defaults";
+import {
+  DEFAULT_BEHAVIOR,
+  DEFAULT_COLOR_OVER_LIFETIME,
+  DEFAULT_FRAME_ANIMATION,
+  DEFAULT_TRAIL,
+  makeId,
+} from "../../vfx/defaults";
 import { canAttachLayer } from "../../vfx/attachments";
 import { enabledIncomingLayerEvents } from "../../vfx/layerLifecycle";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
@@ -69,6 +75,34 @@ import {
 
 function FieldGroup({ children }: { children: ReactNode }) {
   return <div className="field-grid">{children}</div>;
+}
+
+function featureSettingsDiffer(current: unknown, defaults: unknown) {
+  return JSON.stringify(current) !== JSON.stringify(defaults);
+}
+
+function FeatureRemovalAction({
+  name,
+  configured,
+  onRemove,
+}: {
+  name: string;
+  configured: boolean;
+  onRemove: () => void;
+}) {
+  if (!configured) return null;
+  return (
+    <div className="feature-lifecycle-actions">
+      <button
+        type="button"
+        className="small-button"
+        title={`Remove ${name}, forget its saved settings, and return it to defaults. Undo restores it.`}
+        onClick={onRemove}
+      >
+        <Trash2 size={13} /> Remove {name}
+      </button>
+    </div>
+  );
 }
 
 type EnvelopePreset = "entire" | "fade-in" | "fade-out" | "middle" | "custom";
@@ -1357,6 +1391,13 @@ export function Inspector({
               help="Shows fading copies of this layer along the path it has already travelled. It also works on particles."
               onChange={(enabled) => setTrail({ enabled })}
             />
+            <FeatureRemovalAction
+              name="motion trail"
+              configured={featureSettingsDiffer(layer.trail, DEFAULT_TRAIL)}
+              onRemove={() =>
+                onChange({ ...layer, trail: structuredClone(DEFAULT_TRAIL) })
+              }
+            />
             <div className="trail-preset-picker">
               <div>
                 <strong>Trail presets</strong>
@@ -1918,6 +1959,20 @@ export function Inspector({
                 help="Changes the whole image as it plays. It does not paint a gradient across the image. Try warm-to-cool sparks or green-to-purple magic."
                 onChange={(enabled) => setColorOverLifetime({ enabled })}
               />
+              <FeatureRemovalAction
+                name="color over lifetime"
+                configured={featureSettingsDiffer(
+                  layer.appearance.colorOverLifetime,
+                  DEFAULT_COLOR_OVER_LIFETIME,
+                )}
+                onRemove={() =>
+                  setAppearance({
+                    colorOverLifetime: structuredClone(
+                      DEFAULT_COLOR_OVER_LIFETIME,
+                    ),
+                  })
+                }
+              />
               {layer.appearance.colorOverLifetime.enabled && (
                 <div className="color-stop-list">
                   <p className="section-note">
@@ -2054,6 +2109,22 @@ export function Inspector({
               help="Rhythmically changes size or opacity. Good for runes, auras, warning markers, and magical energy."
               onChange={(enabled) => setBehavior("pulse", { enabled })}
             />
+            <FeatureRemovalAction
+              name="pulse"
+              configured={featureSettingsDiffer(
+                layer.behavior.pulse,
+                DEFAULT_BEHAVIOR.pulse,
+              )}
+              onRemove={() =>
+                onChange({
+                  ...layer,
+                  behavior: {
+                    ...layer.behavior,
+                    pulse: structuredClone(DEFAULT_BEHAVIOR.pulse),
+                  },
+                })
+              }
+            />
             {layer.behavior.pulse.enabled && (
               <>
                 <FieldGroup>
@@ -2107,6 +2178,22 @@ export function Inspector({
               help="Quickly varies opacity. Good for fire, electricity, unstable magic, and damaged lights."
               onChange={(enabled) => setBehavior("flicker", { enabled })}
             />
+            <FeatureRemovalAction
+              name="flicker"
+              configured={featureSettingsDiffer(
+                layer.behavior.flicker,
+                DEFAULT_BEHAVIOR.flicker,
+              )}
+              onRemove={() =>
+                onChange({
+                  ...layer,
+                  behavior: {
+                    ...layer.behavior,
+                    flicker: structuredClone(DEFAULT_BEHAVIOR.flicker),
+                  },
+                })
+              }
+            />
             {layer.behavior.flicker.enabled && (
               <>
                 <FieldGroup>
@@ -2159,6 +2246,22 @@ export function Inspector({
               checked={layer.behavior.wobble.enabled}
               help="Makes smoke, wisps, bubbles, and hovering magic wander naturally or repeat a steady sway."
               onChange={(enabled) => setBehavior("wobble", { enabled })}
+            />
+            <FeatureRemovalAction
+              name="organic movement"
+              configured={featureSettingsDiffer(
+                layer.behavior.wobble,
+                DEFAULT_BEHAVIOR.wobble,
+              )}
+              onRemove={() =>
+                onChange({
+                  ...layer,
+                  behavior: {
+                    ...layer.behavior,
+                    wobble: structuredClone(DEFAULT_BEHAVIOR.wobble),
+                  },
+                })
+              }
             />
             {layer.behavior.wobble.enabled && (
               <>

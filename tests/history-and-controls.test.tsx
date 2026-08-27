@@ -376,6 +376,9 @@ describe("beginner-friendly controls", () => {
         onReorder={vi.fn()}
       />,
     );
+    expect(
+      screen.getByTitle("Select layer · double-click to rename"),
+    ).toHaveAttribute("aria-pressed", "true");
     fireEvent.doubleClick(
       screen.getByTitle("Select layer · double-click to rename"),
     );
@@ -1023,6 +1026,9 @@ describe("beginner-friendly controls", () => {
     expect(
       screen.getByRole("heading", { name: "Complete-effect starters" }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Insert Magic impact copy" }),
+    ).toBeVisible();
     const picker =
       container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(picker?.accept).toContain(".vvfx-template");
@@ -1052,7 +1058,7 @@ describe("beginner-friendly controls", () => {
     expect(savedTemplateCard).not.toBeNull();
     fireEvent.click(
       within(savedTemplateCard as HTMLElement).getByRole("button", {
-        name: "Insert copy",
+        name: "Insert Enemy hit copy",
       }),
     );
     expect(onInsert).toHaveBeenCalledWith(template);

@@ -33,6 +33,12 @@ decision-deferrals below, not left looking like a queued phase.
 - [x] Responsive project actions, modal background isolation, shared
       dialog/popup keyboard routing, and typed success, information, warning,
       and error notices.
+- [x] Persistent resizable workspace regions plus per-project layer search,
+      folders, editing locks, keyboard reordering, Timeline zoom, and work
+      ranges. These remain browser-local rather than changing project files.
+- [x] Mobile, balanced, and showcase export preflight profiles with blocking
+      content/reference integrity checks and advisory sprite, pass, image, and
+      duration budgets.
 - [x] Layer rename, automatic asset-based names, duplicate, reorder, attach,
       group, visibility, Solo, and enable/disable controls.
 - [x] Stable preview dragging plus draggable Timeline timing bars, handles,
@@ -91,7 +97,7 @@ decision-deferrals below, not left looking like a queued phase.
 - [x] Clear language separating additive blending from true glow and
       whole-image color changes from spatial gradients.
 - [x] Versioned project v17 and runtime v15 normalization, with the local
-      `@vvfx/phaser-runtime` package at v0.14.0. Timeline markers and notes
+      `@vvfx/phaser-runtime` package at v0.15.0. Timeline markers and notes
       deliberately remain editor-only; playback capabilities retain exact
       runtime parity.
 

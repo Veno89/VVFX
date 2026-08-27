@@ -87,6 +87,9 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 - Optional named Phaser atlas frames with game-side texture/frame mapping.
 - Layer rename, reordering, eye visibility, enable/disable, Solo, duplicate,
   delete, settings copy/paste, attachment, and stable direct preview dragging.
+- Browser-local layer search, folders, editing locks, keyboard reordering, and
+  per-project Timeline zoom/work ranges. Resizable asset, layer, preview,
+  Inspector, and Timeline regions persist without changing project data.
 - Named effect groups with shared X/Y positioning, shared timing offsets,
   membership controls, and draggable group Timeline bars.
 - Timeline layer bars with draggable start/duration handles, exact millisecond
@@ -112,6 +115,9 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   1/10/25/50-copy stress previews.
 - Runtime JSON plus generated Phaser TypeScript. The TypeScript embeds the exact
   runtime definition and calls `playVvfx` from `@vvfx/phaser-runtime`.
+- Export preflight profiles for mobile, balanced gameplay, and showcase targets
+  report content/reference errors plus sprite, WebGL-pass, image, and duration
+  budgets before game-facing exports are downloaded.
 - Clean local WebM (30 FPS) and GIF (15 FPS) export using the active Timeline
   range, with editor guides removed automatically.
 - Clearly marked Experimental WebGL rendering for blur, outer glow,
@@ -189,7 +195,7 @@ approximate tweens. Map asset IDs to textures already loaded by the game with
 `assetKeys`, and optionally override atlas frames with `assetFrames`.
 
 Current formats are editable project **v17** and Runtime JSON **v15**. The local
-`@vvfx/phaser-runtime` package is **v0.14.0**. Older supported formats are
+`@vvfx/phaser-runtime` package is **v0.15.0**. Older supported formats are
 normalized during import; unknown future versions are rejected.
 
 ## Development commands

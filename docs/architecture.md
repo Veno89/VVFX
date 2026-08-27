@@ -18,7 +18,7 @@ Phaser preview bridge and @vvfx/phaser-runtime
 
 Project files currently use format version 17. Clean game-facing runtime
 definitions use format version 15, and the local `@vvfx/phaser-runtime` package
-is version 0.14.0.
+is version 0.15.0.
 
 ## Main modules
 
@@ -69,6 +69,9 @@ This directory has no React dependency.
   playback, including deterministic random sequence offsets.
 - `performance.ts` analyzes whole-effect duration, spawn pressure, trails, and
   indefinite layers; stress-copy replication stays editor-session-only.
+- `exportPreflight.ts` evaluates game-facing exports against mobile, balanced,
+  or showcase content/reference, sprite, render-pass, image, and duration
+  budgets. Structural errors block game exports; performance budgets warn.
 - `presets.ts` contains guided single-layer presets and complete-effect
   compositions used by both the layer menu and learning material.
 - `serialization.ts` treats project imports as untrusted, validates references,
@@ -133,6 +136,8 @@ keyboard controls, and persistence. UI is split by responsibility:
   sprite effects plus explicit Canvas fallback guidance;
 - saved editor-only timing markers/notes, millisecond and frame snapping,
   keyboard nudging, and batch alignment/staggering;
+- browser-local layer search, folders, editing locks, keyboard reordering,
+  Timeline zoom/work ranges, and persistent accessible panel splitters;
 - effect-group membership, shared positioning, and draggable group timing
   bars;
 - first-run onboarding, a hands-on first-effect lesson, product-boundary
@@ -170,9 +175,15 @@ also reports every artwork, visual-mask, and spawn-silhouette dependency before
 a custom image is removed. The editor presents that report first and then
 commits image removal plus all reference repairs as one undoable project value.
 
+`workspace.ts` owns bounded localStorage preferences for panel geometry and
+per-project organization. These preferences deliberately remain outside
+project history and `.vvfx`/Runtime JSON exports. Stored layer IDs are repaired
+against the active project before use, and unavailable storage falls back to
+safe defaults.
+
 ### `packages/phaser-runtime`
 
-The local `@vvfx/phaser-runtime` package (v0.14.0) validates runtime v15, loads
+The local `@vvfx/phaser-runtime` package (v0.15.0) validates runtime v15, loads
 embedded or mapped Phaser textures, and plays effects through the same
 deterministic evaluator used by the editor preview. Its `VvfxEffect` handle
 owns scene update registration, sprite reuse, world-origin positioning, Beam

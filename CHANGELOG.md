@@ -17,6 +17,10 @@ uses semantic versions for release artifacts.
   dependency auditing, and Chromium smoke tests.
 - Generated TypeScript declarations and an isolated consumer test for
   `@vvfx/phaser-runtime`.
+- Persistent resizable workspace regions, per-project Timeline zoom/work
+  ranges, layer search/folders/locks, and keyboard layer reordering.
+- Mobile, balanced, and showcase export preflight profiles with blocking
+  content/reference checks and advisory performance/image budgets.
 
 ### Changed
 

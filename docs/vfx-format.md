@@ -438,7 +438,7 @@ runtime, so it does not maintain a second lifecycle implementation.
 
 ### Phaser runtime usage
 
-Build local `@vvfx/phaser-runtime` v0.14.0 with `npm run build:runtime`, then
+Build local `@vvfx/phaser-runtime` v0.15.0 with `npm run build:runtime`, then
 add `packages/phaser-runtime` to a Phaser game as a local package. Runtime JSON
 can be played directly:
 

@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  ArrowDown,
+  ArrowUp,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -23,10 +25,12 @@ import {
 import {
   Fragment,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { LAYER_TYPE_LABELS } from "../guidance";
 import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
@@ -96,6 +100,11 @@ export function LayerPanel({
   const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
   const [addMenuIndex, setAddMenuIndex] = useState(0);
   const [actionsMenuIndex, setActionsMenuIndex] = useState(0);
+  const [actionsMenuPosition, setActionsMenuPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -153,6 +162,44 @@ export function LayerPanel({
     },
     [],
   );
+  useLayoutEffect(() => {
+    if (!actionsOpenId) return;
+    const positionMenu = () => {
+      const trigger = actionsTriggerRef.current;
+      const menu = actionsMenuRef.current;
+      if (!trigger || !menu) return;
+      const triggerBox = trigger.getBoundingClientRect();
+      const menuBox = menu.getBoundingClientRect();
+      const viewportMargin = 8;
+      const gap = 4;
+      const width = menuBox.width || 190;
+      const height = menuBox.height || 180;
+      const left = Math.min(
+        window.innerWidth - viewportMargin - width,
+        Math.max(viewportMargin, triggerBox.right - width),
+      );
+      const below = triggerBox.bottom + gap;
+      const above = triggerBox.top - gap - height;
+      const top =
+        below + height <= window.innerHeight - viewportMargin
+          ? below
+          : Math.max(viewportMargin, above);
+      setActionsMenuPosition({ left, top });
+    };
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    document.addEventListener("scroll", positionMenu, true);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(positionMenu);
+    if (actionsMenuRef.current) observer?.observe(actionsMenuRef.current);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      document.removeEventListener("scroll", positionMenu, true);
+      observer?.disconnect();
+    };
+  }, [actionsMenuRef, actionsOpenId]);
   const startRename = (layer: VfxLayer) => {
     if (lockedIds.has(layer.id)) return;
     setEditingId(layer.id);
@@ -189,8 +236,11 @@ export function LayerPanel({
     setMenuIndex: (index: number) => void,
   ) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-    const items = Array.from(
+    const allItems = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"),
+    );
+    const items = allItems.filter(
+      (item) => !(item instanceof HTMLButtonElement && item.disabled),
     );
     if (items.length === 0) return;
     event.preventDefault();
@@ -207,7 +257,7 @@ export function LayerPanel({
             : event.key === "ArrowUp"
               ? (currentIndex - 1 + items.length) % items.length
               : (currentIndex + 1) % items.length;
-    setMenuIndex(nextIndex);
+    setMenuIndex(allItems.indexOf(items[nextIndex]));
     items[nextIndex]?.focus();
   };
   return (
@@ -567,6 +617,7 @@ export function LayerPanel({
                       }
                       title="Solo this layer"
                       aria-label={`Solo ${layer.name}`}
+                      aria-pressed={layer.solo}
                     >
                       <span className="solo-letter">S</span>
                     </button>
@@ -614,86 +665,134 @@ export function LayerPanel({
                           if (actionsOpenId === layer.id)
                             setActionsOpenId(null);
                           else {
-                            setActionsMenuIndex(0);
+                            setActionsMenuPosition(null);
+                            setActionsMenuIndex(locked ? 1 : 0);
                             setActionsOpenId(layer.id);
                           }
                         }}
                       >
                         <MoreHorizontal size={14} />
                       </button>
-                      {actionsOpenId === layer.id && (
-                        <span
-                          ref={actionsMenuRef}
-                          id={`layer-actions-menu-${index}`}
-                          className="layer-more__menu"
-                          role="menu"
-                          tabIndex={-1}
-                          aria-label={`Actions for ${layer.name}`}
-                          onKeyDown={(event) =>
-                            moveMenuFocus(event, setActionsMenuIndex)
-                          }
-                        >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            tabIndex={actionsMenuIndex === 0 ? 0 : -1}
-                            onFocus={() => setActionsMenuIndex(0)}
-                            onClick={() => {
-                              setActionsOpenId(null);
-                              startRename(layer);
+                      {actionsOpenId === layer.id &&
+                        typeof document !== "undefined" &&
+                        createPortal(
+                          <span
+                            ref={actionsMenuRef}
+                            id={`layer-actions-menu-${index}`}
+                            className="layer-more__menu layer-more__menu--floating"
+                            role="menu"
+                            tabIndex={-1}
+                            aria-label={`Actions for ${layer.name}`}
+                            style={{
+                              left: actionsMenuPosition?.left ?? 0,
+                              top: actionsMenuPosition?.top ?? 0,
+                              visibility: actionsMenuPosition
+                                ? "visible"
+                                : "hidden",
                             }}
-                            disabled={locked}
+                            onKeyDown={(event) =>
+                              moveMenuFocus(event, setActionsMenuIndex)
+                            }
                           >
-                            <Pencil size={13} /> Rename
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            tabIndex={actionsMenuIndex === 1 ? 0 : -1}
-                            onFocus={() => setActionsMenuIndex(1)}
-                            onClick={() => {
-                              setActionsOpenId(null);
-                              onDuplicate(layer.id);
-                            }}
-                          >
-                            <Copy size={13} /> Duplicate
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            tabIndex={actionsMenuIndex === 2 ? 0 : -1}
-                            onFocus={() => setActionsMenuIndex(2)}
-                            onClick={() => {
-                              setActionsOpenId(null);
-                              onDelete(layer.id);
-                              restoreFocusAfterDelete(index);
-                            }}
-                            disabled={locked}
-                          >
-                            <Trash2 size={13} /> Delete
-                          </button>
-                          <span className="layer-folder-picker" role="none">
-                            <Folder size={12} />
-                            <select
-                              aria-label={`Move ${layer.name} to folder`}
-                              value={folder?.id ?? ""}
-                              onChange={(event) =>
-                                onMoveToFolder?.(
-                                  layer.id,
-                                  event.target.value || null,
-                                )
-                              }
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 0 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(0)}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                startRename(layer);
+                              }}
+                              disabled={locked}
                             >
-                              <option value="">No folder</option>
-                              {folders.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.name}
-                                </option>
-                              ))}
-                            </select>
-                          </span>
-                        </span>
-                      )}
+                              <Pencil size={13} /> Rename
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 1 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(1)}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onDuplicate(layer.id);
+                              }}
+                            >
+                              <Copy size={13} /> Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 2 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(2)}
+                              aria-label={`Move ${layer.name} up, currently position ${index + 1} of ${layers.length}`}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onReorder(index, index - 1);
+                                setReorderAnnouncement(
+                                  `${layer.name} moved to position ${index} of ${layers.length}.`,
+                                );
+                              }}
+                              disabled={locked || index === 0}
+                            >
+                              <ArrowUp size={13} /> Move up
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 3 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(3)}
+                              aria-label={`Move ${layer.name} down, currently position ${index + 1} of ${layers.length}`}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onReorder(index, index + 1);
+                                setReorderAnnouncement(
+                                  `${layer.name} moved to position ${index + 2} of ${layers.length}.`,
+                                );
+                              }}
+                              disabled={locked || index === layers.length - 1}
+                            >
+                              <ArrowDown size={13} /> Move down
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 4 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(4)}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onDelete(layer.id);
+                                restoreFocusAfterDelete(index);
+                              }}
+                              disabled={locked}
+                            >
+                              <Trash2 size={13} /> Delete
+                            </button>
+                            <span className="layer-folder-picker" role="none">
+                              <Folder size={12} />
+                              <select
+                                aria-label={`Move ${layer.name} to folder`}
+                                value={folder?.id ?? ""}
+                                onChange={(event) =>
+                                  onMoveToFolder?.(
+                                    layer.id,
+                                    event.target.value || null,
+                                  )
+                                }
+                              >
+                                <option value="">No folder</option>
+                                {folders.map((candidate) => (
+                                  <option
+                                    key={candidate.id}
+                                    value={candidate.id}
+                                  >
+                                    {candidate.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </span>
+                          </span>,
+                          document.body,
+                        )}
                     </span>
                   </span>
                 </div>
@@ -702,8 +801,17 @@ export function LayerPanel({
           );
         })}
       </div>
+      <span
+        className="visually-hidden"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {reorderAnnouncement}
+      </span>
       <p className="panel-footnote">
-        Drag to reorder · folders and locks stay in this browser workspace.
+        Drag or use layer Actions to reorder · folders and locks stay in this
+        browser workspace.
       </p>
     </section>
   );

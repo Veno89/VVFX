@@ -128,6 +128,60 @@ for (const viewport of responsiveViewports) {
   });
 }
 
+test("layer actions escape clipping and provide accessible reordering", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await openEditor(page);
+  await addPreset(page, "Magic projectile");
+
+  const layerNames = page.locator(".layer-name-button strong");
+  await expect.poll(() => layerNames.count()).toBeGreaterThanOrEqual(2);
+  const orderBefore = await layerNames.allTextContents();
+  const movingLayerName = orderBefore[1];
+  await page
+    .locator(".layer-name-button")
+    .filter({ hasText: movingLayerName })
+    .click();
+
+  const solo = page.getByRole("button", { name: `Solo ${movingLayerName}` });
+  await expect(solo).toHaveAttribute("aria-pressed", "false");
+  await solo.click();
+  await expect(solo).toHaveAttribute("aria-pressed", "true");
+
+  await page
+    .getByRole("button", { name: `Actions for ${movingLayerName}` })
+    .click();
+  const menu = page.getByRole("menu", {
+    name: `Actions for ${movingLayerName}`,
+  });
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveCSS("position", "fixed");
+  const menuBox = await menu.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.y).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(1280);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(720);
+
+  await menu
+    .getByRole("menuitem", {
+      name: new RegExp(
+        `^Move ${movingLayerName} up, currently position 2 of ${orderBefore.length}`,
+      ),
+    })
+    .click();
+  await expect(menu).toBeHidden();
+  await expect
+    .poll(() => page.locator(".layer-name-button strong").allTextContents())
+    .toEqual([movingLayerName, orderBefore[0], ...orderBefore.slice(2)]);
+  await expect(
+    page.getByRole("status").filter({
+      hasText: `${movingLayerName} moved to position 1 of ${orderBefore.length}.`,
+    }),
+  ).toBeAttached();
+});
+
 test("the template library footer remains reachable at 720px height", async ({
   page,
 }) => {

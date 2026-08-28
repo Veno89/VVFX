@@ -43,3 +43,5 @@ uses semantic versions for release artifacts.
 - Added distinct Inspector removal actions for configured optional modifiers,
   exposed selected layers programmatically, disambiguated template insertion
   names, and corrected remaining mojibake in lifecycle-facing copy.
+- Kept layer Actions menus outside scrolling-panel clipping, added announced
+  keyboard Move up/down commands, and exposed Solo with `aria-pressed`.

@@ -136,8 +136,9 @@ keyboard controls, and persistence. UI is split by responsibility:
   sprite effects plus explicit Canvas fallback guidance;
 - saved editor-only timing markers/notes, millisecond and frame snapping,
   keyboard nudging, and batch alignment/staggering;
-- browser-local layer search, folders, editing locks, keyboard reordering,
-  Timeline zoom/work ranges, and persistent accessible panel splitters;
+- browser-local layer search, folders, editing locks, announced Move up/down
+  commands in a viewport-clamped Actions popup, Timeline zoom/work ranges, and
+  persistent accessible panel splitters;
 - effect-group membership, shared positioning, and draggable group timing
   bars;
 - first-run onboarding, a hands-on first-effect lesson, product-boundary

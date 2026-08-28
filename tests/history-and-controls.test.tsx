@@ -390,6 +390,52 @@ describe("beginner-friendly controls", () => {
     });
   });
 
+  it("exposes Solo state and announced keyboard reorder commands", () => {
+    const first = createLayer("animated", "First layer");
+    const second = createLayer("animated", "Second layer");
+    const onUpdate = vi.fn();
+    const onReorder = vi.fn();
+    render(
+      <LayerPanel
+        layers={[first, second]}
+        groups={[]}
+        selectedId={second.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onAdd={vi.fn()}
+        onAddPreset={vi.fn()}
+        onUpdate={onUpdate}
+        onDuplicate={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={onReorder}
+      />,
+    );
+
+    const solo = screen.getByRole("button", { name: "Solo Second layer" });
+    expect(solo).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(solo);
+    expect(onUpdate).toHaveBeenCalledWith(second.id, { solo: true });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Second layer" }),
+    );
+    const menu = screen.getByRole("menu", {
+      name: "Actions for Second layer",
+    });
+    expect(menu).toHaveClass("layer-more__menu--floating");
+    const moveUp = within(menu).getByRole("menuitem", {
+      name: "Move Second layer up, currently position 2 of 2",
+    });
+    expect(moveUp).toBeEnabled();
+    fireEvent.click(moveUp);
+    expect(onReorder).toHaveBeenCalledWith(1, 0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Second layer moved to position 1 of 2.",
+    );
+  });
+
   it("edits a group's shared offsets and membership", () => {
     const group = createGroup("Impact core");
     const flash = createLayer("animated", "Flash");

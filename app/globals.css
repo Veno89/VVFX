@@ -20,6 +20,18 @@
 * {
   box-sizing: border-box;
 }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
 html,
 body {
   margin: 0;
@@ -1307,6 +1319,15 @@ button:disabled {
   border: 1px solid var(--border-bright);
   border-radius: 7px;
   box-shadow: var(--shadow);
+}
+.layer-more__menu--floating {
+  position: fixed;
+  z-index: 100;
+  right: auto;
+  display: grid;
+  width: 190px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 .layer-more:hover .layer-more__menu,
 .layer-more:focus-within .layer-more__menu,

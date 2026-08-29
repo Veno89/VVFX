@@ -12,11 +12,12 @@ import {
   utf8ByteLength,
 } from "./inputLimits";
 import { inspectPortableImageDataUrl } from "./portableImage";
+import { reconcileRenderingEffectClips } from "./renderingEffects";
 import type { VfxAsset, VfxGroup, VfxLayer, VfxProject } from "./types";
 
 export const TEMPLATE_FORMAT_VERSION = 2 as const;
 export const TEMPLATE_PACK_FORMAT_VERSION = 2 as const;
-export const CURRENT_PROJECT_FORMAT_VERSION = 17 as const;
+export const CURRENT_PROJECT_FORMAT_VERSION = 18 as const;
 export const MAX_TEMPLATES_PER_PACK = 100;
 export const MAX_TEMPLATE_LAYERS = 250;
 export const MAX_TEMPLATE_ASSETS = 100;
@@ -303,6 +304,13 @@ export function createTemplateFromProject(
   const selectedLayerIds = new Set(selectedLayers.map((layer) => layer.id));
   const templateLayers = clone(selectedLayers).map((layer) => ({
     ...layer,
+    appearance: {
+      ...layer.appearance,
+      effectClips: reconcileRenderingEffectClips(
+        layer.appearance.effects,
+        layer.appearance.effectClips,
+      ),
+    },
     parentId:
       layer.parentId && selectedLayerIds.has(layer.parentId)
         ? layer.parentId

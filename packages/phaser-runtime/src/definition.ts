@@ -20,6 +20,7 @@ import {
 } from "../../../src/vfx/inputLimits";
 import { MAX_KEYFRAMES } from "../../../src/vfx/keyframes";
 import { inspectPortableImageDataUrl } from "../../../src/vfx/portableImage";
+import { MAX_RENDERING_EFFECT_CLIPS } from "../../../src/vfx/renderingEffects";
 import { validateProject } from "../../../src/vfx/serialization";
 import { MAX_SPRITE_SHEET_FRAMES } from "../../../src/vfx/spriteSheet";
 import type { VfxAsset, VfxProject } from "../../../src/vfx/types";
@@ -28,7 +29,7 @@ import type { RuntimeValidationResult, VvfxRuntimeDefinition } from "./types";
 type BuiltInKind = NonNullable<VfxAsset["builtIn"]>;
 
 const SUPPORTED_RUNTIME_VERSIONS = new Set(
-  Array.from({ length: 15 }, (_unused, index) => index + 1),
+  Array.from({ length: 16 }, (_unused, index) => index + 1),
 );
 const BUILT_INS_BY_KIND = new Map<BuiltInKind, VfxAsset>(
   BUILT_IN_ASSETS.map((asset) => [asset.builtIn as BuiltInKind, asset]),
@@ -257,11 +258,18 @@ function validateLayerCollections(
   const colorOverLifetime = isRecord(appearance)
     ? ownValue(appearance, "colorOverLifetime")
     : undefined;
-  return nestedArrayLengthError(
+  const colorStopsError = nestedArrayLengthError(
     colorOverLifetime,
     "stops",
     MAX_COLOR_STOPS,
     "A runtime layer's color-stop list",
+  );
+  if (colorStopsError) return colorStopsError;
+  return nestedArrayLengthError(
+    appearance,
+    "effectClips",
+    MAX_RENDERING_EFFECT_CLIPS,
+    "A runtime layer's effect-clip list",
   );
 }
 
@@ -684,7 +692,7 @@ function validateRuntimeDefinitionUnchecked(
 
   const now = new Date().toISOString();
   const candidate = {
-    formatVersion: 17,
+    formatVersion: formatVersion >= 16 ? 18 : 17,
     metadata: {
       id: "runtime-project",
       name: name.trim(),
@@ -740,7 +748,7 @@ function normalizedRuntimeDefinitionToProject(
 ): VfxProject {
   const now = new Date().toISOString();
   return {
-    formatVersion: 17,
+    formatVersion: 18,
     metadata: {
       id: "runtime-project",
       name: normalized.name,

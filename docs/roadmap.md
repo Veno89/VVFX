@@ -34,8 +34,9 @@ decision-deferrals below, not left looking like a queued phase.
       dialog/popup keyboard routing, and typed success, information, warning,
       and error notices.
 - [x] Persistent resizable workspace regions plus per-project layer search,
-      folders, editing locks, keyboard reordering, Timeline zoom, and work
-      ranges. These remain browser-local rather than changing project files.
+      folders, editing locks, conventional top-is-front stacking, Timeline zoom,
+      and work ranges. These remain browser-local rather than changing project
+      files.
 - [x] Mobile, balanced, and showcase export preflight profiles with blocking
       content/reference integrity checks and advisory sprite, pass, image, and
       duration budgets.
@@ -43,6 +44,11 @@ decision-deferrals below, not left looking like a queued phase.
       group, visibility, Solo, and enable/disable controls.
 - [x] Stable preview dragging plus draggable Timeline timing bars, handles,
       group bars, and keyframe diamonds.
+- [x] A compact selected-layer Effect toolbelt, contextual Effect Inspector,
+      and collapsible nested FX lanes with draggable/resizable per-copy clips,
+      exact timing, fade controls, keyboard adjustments, and fade shapes.
+- [x] Progressive Timeline disclosure that keeps work-range/marker planning and
+      detailed property moments available without crowding the primary controls.
 - [x] Saved named timing markers with magnetic snapping and draggable ruler
       flags.
 - [x] Exact Start, End, and Duration editing; 1 ms/10 ms keyboard nudging;
@@ -96,10 +102,10 @@ decision-deferrals below, not left looking like a queued phase.
       for rectangle/circle spawn areas.
 - [x] Clear language separating additive blending from true glow and
       whole-image color changes from spatial gradients.
-- [x] Versioned project v17 and runtime v15 normalization, with the local
-      `@vvfx/phaser-runtime` package at v0.15.0. Timeline markers and notes
-      deliberately remain editor-only; playback capabilities retain exact
-      runtime parity.
+- [x] Versioned project v18 and runtime v16 normalization, including full-life
+      effect-clip migration from project v17/runtime v15, and assigned local
+      runtime package v0.16.0. Timeline markers and notes remain editor-only
+      while playback capabilities retain exact runtime parity.
 
 ### Learning and integration
 

@@ -42,13 +42,27 @@ describe("creative presets", () => {
       "masked-energy-ring-experimental",
       "heat-shimmer-experimental",
     ]);
+    const clipIds = new Set<string>();
     for (const preset of experimental) {
       const layer = preset.create();
+      const enabledEffects = Object.entries(layer.appearance.effects)
+        .filter(([, effect]) => effect.enabled)
+        .map(([effect]) => effect)
+        .sort();
+      expect(enabledEffects.length).toBeGreaterThan(0);
       expect(
-        Object.values(layer.appearance.effects).some(
-          (effect) => effect.enabled,
-        ),
-      ).toBe(true);
+        layer.appearance.effectClips.map((clip) => clip.effect).sort(),
+      ).toEqual(enabledEffects);
+      for (const clip of layer.appearance.effectClips) {
+        expect(clip).toMatchObject({
+          start: 0,
+          end: 1,
+          fadeIn: 0,
+          fadeOut: 0,
+        });
+        expect(clipIds.has(clip.id)).toBe(false);
+        clipIds.add(clip.id);
+      }
     }
 
     const dissolvingSpirit = experimental
@@ -284,7 +298,7 @@ describe("game exports", () => {
   it("creates a clean versioned runtime definition", () => {
     const project = createExampleProject();
     const runtime = createRuntimeDefinition(project);
-    expect(runtime.formatVersion).toBe(15);
+    expect(runtime.formatVersion).toBe(16);
     expect(runtime.name).toBe("Simple Magic Impact");
     expect(runtime.layers).toHaveLength(4);
     expect(runtime.layers[0]).not.toHaveProperty("solo");
@@ -359,7 +373,7 @@ describe("game exports", () => {
     });
     expect(code).toContain('from "@vvfx/phaser-runtime"');
     expect(code).toContain("export const vvfxDefinition");
-    expect(code).toContain('"formatVersion": 15');
+    expect(code).toContain('"formatVersion": 16');
     expect(code).toContain("return playVvfx(scene, definition");
     expect(code).toContain("assetKeys: options.assetKeys");
     expect(code).toContain("autoDestroy: options.autoDestroy");
@@ -389,6 +403,9 @@ describe("game exports", () => {
     expect(
       runtime.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({ pattern: "noise", noiseScale: 11 });
+    expect(
+      runtime.layers[0].appearance.effectClips.map((clip) => clip.effect),
+    ).toEqual(["outerGlow", "directionalDissolve"]);
     const generated = generatePhaserCode(project);
     expect(generated).toContain('"outerGlow"');
     expect(generated).toContain('"pattern": "noise"');

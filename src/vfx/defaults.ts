@@ -110,6 +110,7 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
     ],
   },
   effects: createDefaultRenderingEffects(),
+  effectClips: [],
 };
 
 export const DEFAULT_COLOR_OVER_LIFETIME: ColorOverLifetimeSettings = {
@@ -337,6 +338,7 @@ export function createLayer(
         stops: DEFAULT_COLOR_OVER_LIFETIME.stops.map((stop) => ({ ...stop })),
       },
       effects: createDefaultRenderingEffects(),
+      effectClips: [],
     },
     behavior: {
       pulse: {
@@ -530,7 +532,7 @@ export function createExampleProject(): VfxProject {
   };
 
   return {
-    formatVersion: 17,
+    formatVersion: 18,
     metadata: {
       id: makeId("project"),
       name: "Simple Magic Impact",
@@ -557,7 +559,7 @@ export function createEmptyProject(name = "Untitled Effect"): VfxProject {
   const now = new Date().toISOString();
   const safeName = name.trim().slice(0, MAX_VFX_NAME_LENGTH);
   return {
-    formatVersion: 17,
+    formatVersion: 18,
     metadata: {
       id: makeId("project"),
       name: safeName || "Untitled Effect",

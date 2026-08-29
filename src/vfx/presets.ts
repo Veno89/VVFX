@@ -1,5 +1,15 @@
-import { createExampleProject, createLayer } from "./defaults";
+import { createExampleProject, createLayer, makeId } from "./defaults";
+import { reconcileRenderingEffectClips } from "./renderingEffects";
 import type { VfxLayer } from "./types";
+
+function addPresetRenderingEffectClips(layer: VfxLayer): VfxLayer {
+  layer.appearance.effectClips = reconcileRenderingEffectClips(
+    layer.appearance.effects,
+    layer.appearance.effectClips,
+    (effect) => makeId(`effect-${effect}`),
+  );
+  return layer;
+}
 
 export interface LayerPreset {
   id: string;
@@ -1011,7 +1021,7 @@ export const LAYER_PRESETS: LayerPreset[] = [
         speed: 1.2,
         lineWidth: 0.28,
       };
-      return layer;
+      return addPresetRenderingEffectClips(layer);
     },
   },
   {
@@ -1067,7 +1077,7 @@ export const LAYER_PRESETS: LayerPreset[] = [
         axis: "vertical",
         reverse: true,
       };
-      return layer;
+      return addPresetRenderingEffectClips(layer);
     },
   },
   {
@@ -1118,7 +1128,7 @@ export const LAYER_PRESETS: LayerPreset[] = [
         color: "#67ddff",
         outerStrength: 2.6,
       };
-      return layer;
+      return addPresetRenderingEffectClips(layer);
     },
   },
   {
@@ -1158,7 +1168,7 @@ export const LAYER_PRESETS: LayerPreset[] = [
         strength: 0.6,
         steps: 1,
       };
-      return layer;
+      return addPresetRenderingEffectClips(layer);
     },
   },
 ];

@@ -1,12 +1,16 @@
 # Vvfx capability matrix
 
 This document is the source of truth for what Vvfx authors, previews, and
-exports today. It describes editable project format **version 17**, runtime
-format **version 15**, and local runtime package **0.15.0**.
+exports today. The current source describes editable project format **version
+18** and runtime format **version 16**. The private/local runtime package is
+**0.16.0** and requires Phaser `>=4.2.1 <5`.
 
-The generated Phaser TypeScript export is an exact integration path: it embeds
-the runtime definition and calls `playVvfx` from `@vvfx/phaser-runtime`. It does
-not maintain a second, approximate animation implementation.
+Runtime JSON is the recommended game-integration path. It is compact and can be
+replaced as one stable effect asset. The Advanced TypeScript export is an exact
+standalone wrapper: it embeds that definition and calls `playVvfx` from
+`@vvfx/phaser-runtime`; it does not maintain a second, approximate animation
+implementation. Its endpoint type and option exist only for definitions that
+contain Beam layers.
 
 ## Product boundary
 
@@ -15,7 +19,7 @@ not maintain a second, approximate animation implementation.
 | Asset creation         | Importing transparent PNG/WebP artwork, four simple built-in practice shapes, uniform sprite-sheet slicing, optional Phaser atlas-frame names, and bounded alpha sampling for spawn stencils                                                             | Drawing or repairing silhouettes, smoke texture, lightning branches, runes, painted highlights, detailed gradients, and hand-drawn animation frames           |
 | VFX behavior           | Layering, timing, endpoint-fitted beams, layer and copy-finish events, movement, whole-image tinting, color over lifetime, silhouette spawning, randomness, behaviors, trails, paths, flipbooks, property curves, and composition                        | Repainting pixels, procedural lightning branches, collision/gameplay callbacks, or changing the internal drawing without a sprite sheet                       |
 | Preview environment    | Checkerboard, black, dark, white, or custom-color workspace backgrounds; grid; zoom; selection and path guides                                                                                                                                           | A game scene, camera, lighting system, or final environment art                                                                                               |
-| Workspace organization | Resizable persistent panels, layer search/folders/editing locks, keyboard reordering, and per-project Timeline zoom/work ranges                                                                                                                          | Runtime behavior or portable project data; these browser-local preferences are intentionally omitted from exports                                             |
+| Workspace organization | Resizable persistent panels, layer search/folders/editing locks, conventional top-is-front stacking, and per-project Timeline zoom/work ranges                                                                                                           | Runtime behavior or portable project data; these browser-local preferences are intentionally omitted from exports                                             |
 | Advanced rendering     | Normal/additive blending plus Experimental WebGL still-image clipping masks, blur, outer glow, brightness/exposure, animated shine, two-color spatial gradient, straight-wipe dissolve, seeded noisy erosion, sprite warp, and sprite-local heat shimmer | Scene-behind refraction/heat haze, animated/layer-to-layer/camera masks, lighting, fluid simulation, a general compositing graph, and custom shader pipelines |
 
 Vvfx is therefore a **2D effect behavior compositor**, not an image editor and
@@ -23,12 +27,12 @@ not a general-purpose shader authoring tool.
 
 ## Beam layer
 
-| Capability                                                 | Editor preview                                            | Runtime JSON v15              | Generated Phaser TS                                 | Important limits                                                                                           |
-| ---------------------------------------------------------- | --------------------------------------------------------- | ----------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Authored endpoints                                         | Exact, with draggable endpoint B                          | Exact                         | Exact via runtime                                   | Endpoint B is stored as a local offset from the layer position (A)                                         |
-| Automatic fitting                                          | Centers, rotates, and stretches one image between A and B | Exact                         | Exact via runtime                                   | Source art must be tightly cropped and drawn left to right; this is not a segmented spline or tiled ribbon |
-| Flipbook, tint, additive blend, glow, flicker, and opacity | Supported                                                 | Exact                         | Exact via runtime                                   | The current frame is fitted as one sprite; VVFX does not draw procedural branches                          |
-| Moving game targets                                        | Not a gameplay simulation                                 | World-space endpoint override | `beamEndpoints` plus `VvfxEffect.setEndpoints(...)` | Target selection, collision, sound, and scene lighting remain owned by the host game                       |
+| Capability                                                 | Editor preview                                            | Runtime JSON v16                            | Generated Phaser TS                                        | Important limits                                                                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Authored endpoints                                         | Exact, with draggable endpoint B                          | Exact                                       | Exact via runtime                                          | Endpoint B is stored as a local offset from the layer position (A)                                                |
+| Automatic fitting                                          | Centers, rotates, and stretches one image between A and B | Exact, with optional short-Beam source crop | Exact via runtime, with `beamFit` and `beamThicknessScale` | Crop preserves the authored pixel density for short dynamic Beams; this is not a segmented spline or tiled ribbon |
+| Flipbook, tint, additive blend, glow, flicker, and opacity | Supported                                                 | Exact                                       | Exact via runtime                                          | The current frame is fitted as one sprite; VVFX does not draw procedural branches                                 |
+| Moving game targets                                        | Not a gameplay simulation                                 | World-space endpoint override               | `beamEndpoints` plus `VvfxEffect.setEndpoints(...)`        | Target selection, collision, sound, and scene lighting remain owned by the host game                              |
 
 Beam layers use the ordinary layer Timeline and appearance controls. Their
 length and angle remain pinned to the endpoints; authored movement paths and
@@ -41,7 +45,7 @@ copy` means each burst/emitter instance evaluates the feature across its own
 lifetime. `--` means the public editor intentionally does not expose it for
 that layer type.
 
-| Capability                                                  | Still image             | Animated image            | Burst                     | Repeating copies       | Editor preview          | Runtime JSON v15    | Generated Phaser TS | Presets/help                        | Important limits                                                                                                                                                                                                                                                    |
+| Capability                                                  | Still image             | Animated image            | Burst                     | Repeating copies       | Editor preview          | Runtime JSON v16    | Generated Phaser TS | Presets/help                        | Important limits                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------- | ----------------------- | ------------------------- | ------------------------- | ---------------------- | ----------------------- | ------------------- | ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | One positioned image                                        | Yes                     | Yes                       | --                        | --                     | Exact                   | Exact               | Exact via runtime   | First-effect guide                  | A still image has a delay and finite authored lifetime, but no movement/easing controls                                                                                                                                                                             |
 | One transforming image                                      | --                      | Yes                       | --                        | --                     | Exact                   | Exact               | Exact via runtime   | Impact flash, Shockwave, Smoke wisp | Changes happen during one layer lifetime                                                                                                                                                                                                                            |
@@ -51,6 +55,7 @@ that layer type.
 | Uniform or separate X/Y scale                               | Starting size           | Yes                       | Per copy                  | Per copy               | Exact                   | Exact               | Exact via runtime   | Inspector help                      | Scale values are normalized (`1` = 100%)                                                                                                                                                                                                                            |
 | Opacity and rotation                                        | Starting value          | Yes                       | Per copy                  | Per copy               | Exact                   | Exact               | Exact via runtime   | Inspector help                      | Opacity is clamped from 0 to 1                                                                                                                                                                                                                                      |
 | Delay and lifetime                                          | Yes                     | Yes                       | Per copy                  | Per copy               | Exact                   | Exact               | Exact via runtime   | Timeline and layer summary          | Minimum normalized duration is 50 ms                                                                                                                                                                                                                                |
+| Timed rendering-effect clips                                | Per copy                | Per copy                  | Per copy                  | Per copy               | Exact plus nested lanes | Exact               | Exact via runtime   | Effect toolbelt and Inspector       | One clip per curated effect; start/end and fade fractions use raw chronological copy lifetime, independent of transform easing/yoyo, and do not create an independent z-order layer                                                                                 |
 | Timing markers and choreography notes                       | Yes                     | Yes                       | Yes                       | Yes                    | Editor authoring aid    | Omitted             | Omitted             | Timeline timing-plan helper         | Named markers, pasted notes, snapping, and frame readouts organize authoring; they never change effect playback                                                                                                                                                     |
 | Exact timing and multi-layer alignment                      | Yes                     | Yes                       | Yes                       | Yes                    | Exact                   | Exact layer values  | Exact via runtime   | Timeline precision bar              | Start/End/Duration use milliseconds; multi-move, align, and stagger commit ordinary layer timing values                                                                                                                                                             |
 | Layer events                                                | Source/target           | Source/target             | Source/target             | Start/repeat source    | Exact and deterministic | Exact               | Exact via runtime   | Events Inspector and recipes        | Start/percentage/repeat/finish events play or restart layers; active cycles, depth, and total activations are bounded, while disabled links remain inert stored configuration                                                                                       |
@@ -92,7 +97,7 @@ effects are WebGL-only. On Canvas the runtime keeps the ordinary sprite and
 skips the GPU effect; it never drops the layer or silently removes its settings
 from exported data.
 
-| Experimental capability    | Inspector | Editor preview     | Runtime JSON v15 | Phaser runtime     | WebM/GIF capture         | Canvas fallback         |
+| Experimental capability    | Inspector | Editor preview     | Runtime JSON v16 | Phaser runtime     | WebM/GIF capture         | Canvas fallback         |
 | -------------------------- | --------- | ------------------ | ---------------- | ------------------ | ------------------------ | ----------------------- |
 | Outer glow                 | Yes       | Experimental WebGL | Preserved        | Experimental WebGL | Captures rendered canvas | Plain sprite            |
 | Blur                       | Yes       | Experimental WebGL | Preserved        | Experimental WebGL | Captures rendered canvas | Plain sprite            |
@@ -121,7 +126,7 @@ they do not sample or bend the game scene behind it.
 
 The same state rules apply to every optional capability in this matrix:
 
-| Authored state | Editor preview                                                | Editable project / save-load                                                                        | Runtime JSON v15 and generated Phaser TS                                                   | Undo/redo                                                  |
+| Authored state | Editor preview                                                | Editable project / save-load                                                                        | Runtime JSON v16 and generated Phaser TS                                                   | Undo/redo                                                  |
 | -------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
 | Enabled        | Applies immediately                                           | Configuration and `enabled: true` are saved                                                         | Applies through the shared evaluator/runtime                                               | Restores the complete enabled configuration                |
 | Disabled       | Contributes nothing; cached visual/transient state is cleared | Tuned configuration is preserved with `enabled: false`                                              | Disabled configuration is intentionally retained but does not play or allocate the feature | Restores the prior enabled state and settings              |
@@ -134,6 +139,9 @@ tint, and `blendMode: "normal"` means no additive blend. Property presets are
 not hidden runtime modifiers: they generate ordinary editable property moments.
 Trail presets likewise populate the ordinary trail configuration. Removing or
 resetting either affects only that authored data.
+For a rendering effect, Disable keeps its tuned settings and timed clip while
+contributing nothing. Remove resets the settings and removes the clip; Undo and
+Redo restore or reapply both parts together.
 
 The Advanced **Effect performance** panel includes a collapsed Lifecycle
 diagnostic. It lists only modifiers and event links that can affect the selected
@@ -173,6 +181,10 @@ inside a disabled feature are intentionally absent from that active list.
   Experimental WebGL version, while a painted gradient has wider compatibility.
 - **Additive blend** brightens overlapping pixels. **Outer glow** creates a soft
   halo and is a separate Experimental WebGL control.
+- The **layer stack** controls compositing: the top row is frontmost. A nested
+  **FX clip** only controls when its parent layer's rendering effect is active;
+  it has no independent z-order. Painted glow artwork that must sit behind a
+  core image therefore belongs on a separate layer below the core.
 - **Gravity** adds vertical acceleration. **Slow down over time** reshapes route
   progress while preserving the endpoint. Neither is a collision physics
   system.

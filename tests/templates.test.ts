@@ -15,6 +15,25 @@ import {
 import { TINY_WEBP_DATA_URL, validPngDataUrl } from "./fixtures/portableImages";
 
 describe("reusable effect templates", () => {
+  it("reconciles and preserves rendering-effect clips in templates", () => {
+    const source = createEmptyProject("Timed template glow");
+    const layer = createLayer("animated", "Glow", "builtin-ring");
+    layer.appearance.effects.outerGlow.enabled = true;
+    layer.appearance.effectClips = [];
+    source.layers = [layer];
+
+    const template = createTemplateFromProject(source);
+    expect(template.layers[0].appearance.effectClips).toMatchObject([
+      { effect: "outerGlow", start: 0, end: 1 },
+    ]);
+
+    const destination = createEmptyProject("Destination");
+    const inserted = insertTemplateIntoProject(destination, template);
+    expect(inserted.project.layers[0].appearance.effectClips).toMatchObject([
+      { effect: "outerGlow", start: 0, end: 1 },
+    ]);
+  });
+
   it("copies the complete effect and only the images its layers use", () => {
     const project = createEmptyProject("Blue impact");
     project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
@@ -33,7 +52,7 @@ describe("reusable effect templates", () => {
       "builtin-spark",
     ]);
     expect(template.formatVersion).toBe(2);
-    expect(template.projectFormatVersion).toBe(17);
+    expect(template.projectFormatVersion).toBe(18);
     expect(template.scope).toBe("effect");
     expect(template.timelineAnchor).toBe(0);
     expect(template.duration).toBe(900);
@@ -139,7 +158,7 @@ describe("reusable effect templates", () => {
     const result = deserializeTemplatePack(JSON.stringify(legacy));
     expect(result.ok).toBe(true);
     expect(result.pack?.templates[0].formatVersion).toBe(2);
-    expect(result.pack?.templates[0].projectFormatVersion).toBe(17);
+    expect(result.pack?.templates[0].projectFormatVersion).toBe(18);
     expect(result.pack?.templates[0].groups).toEqual([]);
     expect(result.pack?.templates[0].layers[0].groupId).toBeNull();
   });

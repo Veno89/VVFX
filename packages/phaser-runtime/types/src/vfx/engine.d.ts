@@ -6,6 +6,12 @@ export interface EvaluationDiagnostics {
   /** Set only when supplied by the caller; 0 means the schedule cache hit. */
   scheduleCompilations?: number;
 }
+export type BeamFit = "stretch" | "crop";
+/** Runtime-only Beam presentation controls; these never mutate project data. */
+export interface BeamEvaluationOptions {
+  beamFit?: BeamFit;
+  beamThicknessScale?: number;
+}
 export interface ProjectEvaluator {
   readonly project: VfxProject;
   evaluate(
@@ -13,6 +19,7 @@ export interface ProjectEvaluator {
     selectedId: string | null,
     beamEndpoints?: Readonly<Record<string, BeamEndpoints>>,
     diagnostics?: EvaluationDiagnostics,
+    beamOptions?: BeamEvaluationOptions,
   ): EvaluatedInstance[];
 }
 /**
@@ -29,4 +36,5 @@ export declare function evaluateProject(
   selectedId: string | null,
   beamEndpoints?: Readonly<Record<string, BeamEndpoints>>,
   diagnostics?: EvaluationDiagnostics,
+  beamOptions?: BeamEvaluationOptions,
 ): EvaluatedInstance[];

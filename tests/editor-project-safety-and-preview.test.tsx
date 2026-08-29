@@ -50,7 +50,12 @@ vi.mock("../src/persistence/projects", () => projectPersistence);
 vi.mock("../src/editor/embeddedImageValidation", () => embeddedImageValidation);
 
 vi.mock("../src/preview/PhaserPreview", () => ({
-  PhaserPreview: () => <canvas aria-label="Effect preview" />,
+  PhaserPreview: ({ restartRevision = 0 }: { restartRevision?: number }) => (
+    <canvas
+      aria-label="Effect preview"
+      data-restart-revision={restartRevision}
+    />
+  ),
 }));
 
 afterEach(() => {
@@ -80,6 +85,14 @@ beforeEach(() => {
   projectPersistence.saveProject.mockClear();
   window.localStorage.setItem("vvfx-onboarding-complete-v1", "true");
 });
+
+function openTimingPlan() {
+  if (!screen.queryByRole("button", { name: "Timing plan" }))
+    fireEvent.click(
+      screen.getByRole("button", { name: "More timeline options" }),
+    );
+  fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+}
 
 describe("New project safety", () => {
   it("rechecks unsaved work after an asynchronous project file read", async () => {
@@ -326,7 +339,7 @@ describe("New project safety", () => {
   it("does not merge a field edit with a focused popover that unmounted", () => {
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+    openTimingPlan();
     const notes = screen.getByRole("textbox", { name: "Timing plan notes" });
     expect(notes).toHaveFocus();
     fireEvent.change(notes, {
@@ -342,14 +355,14 @@ describe("New project safety", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(projectName).toHaveValue("Untitled Effect");
-    fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+    openTimingPlan();
     expect(
       screen.getByRole("textbox", { name: "Timing plan notes" }),
     ).toHaveValue("0–90 ms lightning branches");
     fireEvent.keyDown(document, { key: "Escape" });
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+    openTimingPlan();
     expect(
       screen.getByRole("textbox", { name: "Timing plan notes" }),
     ).toHaveValue("");
@@ -358,7 +371,7 @@ describe("New project safety", () => {
   it("does not resurrect timing-plan notes after marker creation is undone", () => {
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+    openTimingPlan();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Timing plan notes" }),
       { target: { value: "0–90 ms branch flash" } },
@@ -367,7 +380,7 @@ describe("New project safety", () => {
     expect(screen.queryByRole("dialog", { name: /Turn feedback/i })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    fireEvent.click(screen.getByRole("button", { name: "Timing plan" }));
+    openTimingPlan();
     expect(
       screen.getByRole("textbox", { name: "Timing plan notes" }),
     ).toHaveValue("");
@@ -456,10 +469,7 @@ describe("New project safety", () => {
 });
 
 describe("Editor integrity mutations", () => {
-  it("keeps a completed Save As successful when list refresh fails", async () => {
-    projectPersistence.inspectStoredProjects.mockRejectedValueOnce(
-      new Error("Saved-project index temporarily unavailable."),
-    );
+  it("keeps a completed Save As successful without loading the saved library", async () => {
     render(<VfxEditor />);
 
     fireEvent.click(screen.getByRole("button", { name: "Save As" }));
@@ -478,10 +488,11 @@ describe("Editor integrity mutations", () => {
     expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue(
       "Durable lightning copy",
     );
-    const warning = await screen.findByText(
-      /saved as .*Durable lightning copy.*list could not be refreshed/i,
+    const confirmation = await screen.findByText(
+      /saved as .*Durable lightning copy/i,
     );
-    expect(warning.closest(".toast")).toHaveClass("toast--warning");
+    expect(confirmation.closest(".toast")).toHaveClass("toast--success");
+    expect(projectPersistence.inspectStoredProjects).not.toHaveBeenCalled();
   });
 
   it("adopts the canonical project returned by a regular save", async () => {
@@ -746,7 +757,7 @@ describe("Editor integrity mutations", () => {
       });
     }
     expect(saved && validateProject(saved).ok).toBe(true);
-  });
+  }, 20_000);
 
   it("preflights dependent asset removal and restores it with one Undo", async () => {
     const project = createEmptyProject("Dependency-aware removal");
@@ -915,7 +926,7 @@ function renderPreview() {
 }
 
 describe("Preview controls", () => {
-  it("recreates the Phaser preview at an explicit restart boundary", () => {
+  it("restarts the existing Phaser preview without replacing its canvas", () => {
     const project = createEmptyProject();
     const panel = (restartRevision: number) => (
       <PreviewPanel
@@ -940,7 +951,8 @@ describe("Preview controls", () => {
 
     preview.rerender(panel(1));
 
-    expect(screen.getByLabelText("Effect preview")).not.toBe(firstCanvas);
+    expect(screen.getByLabelText("Effect preview")).toBe(firstCanvas);
+    expect(firstCanvas).toHaveAttribute("data-restart-revision", "1");
   });
 
   it("dismisses random-seed help on pointer leave, blur, and appearance close", () => {

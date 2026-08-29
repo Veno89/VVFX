@@ -19,6 +19,7 @@ import {
 } from "../src/vfx/inputLimits";
 import { createRuntimeDefinition } from "../src/vfx/exporters";
 import { applySpriteSheetFrames } from "../src/vfx/phaserFrames";
+import { createRenderingEffectClip } from "../src/vfx/renderingEffects";
 import { validateProject } from "../src/vfx/serialization";
 import type { VfxAsset } from "../src/vfx/types";
 import { TINY_PNG_DATA_URL, validPngDataUrl } from "./fixtures/portableImages";
@@ -58,8 +59,10 @@ class FakeEvents {
 
 class FakeSprite {
   texture: { key: string };
-  frame: { name: string | number };
+  frame: { name: string | number; realWidth: number; realHeight: number };
   destroyed = false;
+  isCropped = false;
+  crop: { x: number; y: number; width: number; height: number } | null = null;
   x = 0;
   y = 0;
   scaleX = 1;
@@ -70,7 +73,7 @@ class FakeSprite {
 
   constructor(key: string, frame: string | number = "__BASE") {
     this.texture = { key };
-    this.frame = { name: frame };
+    this.frame = { name: frame, realWidth: 128, realHeight: 128 };
   }
 
   setTexture(key: string, frame: string | number = "__BASE") {
@@ -107,6 +110,14 @@ class FakeSprite {
     return this;
   }
   clearTint() {
+    return this;
+  }
+  setCrop(x?: number, y?: number, width?: number, height?: number) {
+    this.isCropped = x !== undefined;
+    this.crop =
+      x === undefined
+        ? null
+        : { x, y: y ?? 0, width: width ?? 0, height: height ?? 0 };
     return this;
   }
   destroy() {
@@ -325,11 +336,55 @@ describe("Phaser runtime package", () => {
     expect(fake.sprites[0]?.scaleX).toBeCloseTo(500 / 128);
     expect(fake.sprites[0]?.scaleY).toBeCloseTo(1);
     expect(fake.sprites[0]?.angle).toBeCloseTo(53.1301, 3);
+    expect(fake.sprites[0]?.crop).toBeNull();
 
     effect.clearEndpoints();
     await Promise.resolve();
     expect(fake.sprites[0]?.x).toBeCloseTo(130);
     expect(fake.sprites[0]?.y).toBeCloseTo(20);
+  });
+
+  it("crops short Beam sources, scales only thickness, and resets crop for longer links", async () => {
+    const project = createEmptyProject("Runtime cropped beam");
+    project.preview.duration = 500;
+    const beam = createLayer("beam", "Lightning", "builtin-spark");
+    beam.behavior.flicker.enabled = false;
+    beam.transform.startScale = 2;
+    beam.transform.endScale = 2;
+    beam.transform.startOpacity = 1;
+    beam.transform.endOpacity = 1;
+    beam.beam = { endX: 240, endY: 0 };
+    project.layers.push(beam);
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      autoDestroy: false,
+      beamFit: "crop",
+      beamThicknessScale: 0.5,
+    });
+
+    effect.setEndpoints(0, 0, 60, 0);
+    await Promise.resolve();
+
+    expect(fake.sprites[0]).toMatchObject({
+      x: 30,
+      scaleY: 1,
+      isCropped: true,
+      crop: { x: 48, y: 0, width: 32, height: 128 },
+    });
+    expect(fake.sprites[0]?.scaleX).toBeCloseTo(240 / 128);
+
+    effect.setEndpoints(0, 0, 300, 0);
+    await Promise.resolve();
+
+    expect(fake.sprites[0]?.scaleX).toBeCloseTo(300 / 128);
+    expect(fake.sprites[0]?.scaleY).toBeCloseTo(1);
+    expect(fake.sprites[0]?.isCropped).toBe(false);
+    expect(fake.sprites[0]?.crop).toBeNull();
+    effect.destroy();
   });
 
   it("coalesces same-turn host setters and cancels stale queued renders", async () => {
@@ -364,6 +419,98 @@ describe("Phaser runtime package", () => {
     await Promise.resolve();
     expect(positionUpdates).toHaveBeenCalledTimes(2);
     effect.destroy();
+  });
+
+  it("caps one-shot playback duration and performs normal completion cleanup", () => {
+    const project = createEmptyProject("Runtime duration cap");
+    project.preview.duration = 3_000;
+    project.layers.push(
+      createLayer("animated", "Long authored effect", "builtin-flash"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const onComplete = vi.fn();
+    const effect = new VvfxEffect(fake.scene, definition, {
+      maxDurationMs: 420,
+      onComplete,
+    });
+
+    effect.update(419);
+    expect(effect.isPlaying).toBe(true);
+    expect(effect.isDestroyed).toBe(false);
+
+    effect.update(1);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(effect.currentTime).toBe(420);
+    expect(effect.isPlaying).toBe(false);
+    expect(effect.isDestroyed).toBe(true);
+    expect(fake.sceneEvents.listenerCount("update")).toBe(0);
+    expect(fake.sprites.every((sprite) => sprite.destroyed)).toBe(true);
+  });
+
+  it("does not apply the one-shot duration cap to looping playback", () => {
+    const project = createEmptyProject("Loop ignores duration cap");
+    project.preview.duration = 500;
+    project.layers.push(createLayer("animated", "Loop", "builtin-flash"));
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      loop: true,
+      maxDurationMs: 10,
+    });
+
+    effect.update(10);
+    expect(effect.isPlaying).toBe(true);
+    expect(effect.isDestroyed).toBe(false);
+    expect(effect.currentTime).toBe(10);
+    effect.destroy();
+  });
+
+  it("ignores inherited, accessor, and invalid runtime presentation options", async () => {
+    const project = createEmptyProject("Hostile runtime options");
+    project.preview.duration = 500;
+    const beam = createLayer("beam", "Safe defaults", "builtin-spark");
+    beam.behavior.flicker.enabled = false;
+    beam.transform.startScale = 2;
+    beam.transform.endScale = 2;
+    project.layers.push(beam);
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const hostileOptions = Object.create({
+      beamFit: "crop",
+      beamThicknessScale: 0,
+      maxDurationMs: 1,
+    }) as Record<string, unknown>;
+    Object.defineProperties(hostileOptions, {
+      beamFit: { get: () => "crop" },
+      beamThicknessScale: { value: -4 },
+      maxDurationMs: { value: Number.NaN },
+    });
+    const effect = new VvfxEffect(
+      fake.scene,
+      definition,
+      hostileOptions as never,
+    );
+
+    effect.setEndpoints(0, 0, 60, 0);
+    await Promise.resolve();
+
+    expect(fake.sprites[0]?.scaleX).toBeCloseTo(60 / 128);
+    expect(fake.sprites[0]?.scaleY).toBeCloseTo(2);
+    expect(fake.sprites[0]?.crop).toBeNull();
+    effect.update(499);
+    expect(effect.isDestroyed).toBe(false);
+    effect.update(1);
+    expect(effect.isDestroyed).toBe(true);
   });
 
   it("resolves mapped and unchanged-key atlas mask frames without CPU mask data", () => {
@@ -421,21 +568,93 @@ describe("Phaser runtime package", () => {
       pattern: "noise",
       noiseScale: 9,
     };
+    sparks.appearance.effectClips = [
+      {
+        ...createRenderingEffectClip("directionalDissolve", "runtime-dissolve"),
+        start: 0.2,
+        end: 0.8,
+      },
+    ];
     project.layers.push(sparks);
     const definition = createRuntimeDefinition(project);
     const result = validateRuntimeDefinition(JSON.stringify(definition));
 
     expect(result.ok).toBe(true);
-    expect(result.definition?.formatVersion).toBe(15);
+    expect(result.definition?.formatVersion).toBe(16);
     expect(result.definition?.format).toBe("vvfx-runtime");
     expect(result.definition?.layers[0].name).toBe("Sparks");
     expect(
       result.definition?.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({ pattern: "noise", noiseScale: 9 });
+    expect(result.definition?.layers[0].appearance.effectClips).toEqual(
+      sparks.appearance.effectClips,
+    );
+    const markerlessVersionSixteen = JSON.parse(
+      JSON.stringify(definition),
+    ) as Record<string, unknown>;
+    const markerlessLayer = (
+      markerlessVersionSixteen.layers as Array<Record<string, unknown>>
+    )[0];
+    const markerlessAppearance = markerlessLayer.appearance as Record<
+      string,
+      unknown
+    >;
+    const markerlessClip = (
+      markerlessAppearance.effectClips as Array<Record<string, unknown>>
+    )[0];
+    delete markerlessClip.progressMode;
+    expect(
+      validateRuntimeDefinition(markerlessVersionSixteen).definition?.layers[0]
+        .appearance.effectClips[0].progressMode,
+    ).toBe("chronological");
+    const versionSixteenWithoutClips = JSON.parse(
+      JSON.stringify(definition),
+    ) as Record<string, unknown>;
+    for (const layer of versionSixteenWithoutClips.layers as Array<
+      Record<string, unknown>
+    >) {
+      delete (layer.appearance as Record<string, unknown>).effectClips;
+    }
+    expect(
+      validateRuntimeDefinition(
+        versionSixteenWithoutClips,
+      ).definition?.layers[0].appearance.effectClips.map((clip) => ({
+        effect: clip.effect,
+        progressMode: clip.progressMode,
+      })),
+    ).toEqual([
+      {
+        effect: "directionalDissolve",
+        progressMode: "chronological",
+      },
+    ]);
     expect(
       validateRuntimeDefinition({ ...definition, formatVersion: 1 }).definition
         ?.formatVersion,
-    ).toBe(15);
+    ).toBe(16);
+    const versionFifteen = JSON.parse(JSON.stringify(definition)) as Record<
+      string,
+      unknown
+    >;
+    versionFifteen.formatVersion = 15;
+    for (const layer of versionFifteen.layers as Array<
+      Record<string, unknown>
+    >) {
+      delete (layer.appearance as Record<string, unknown>).effectClips;
+    }
+    const migratedFifteen =
+      validateRuntimeDefinition(versionFifteen).definition;
+    expect(
+      migratedFifteen?.layers[0].appearance.effectClips.map((clip) => ({
+        effect: clip.effect,
+        progressMode: clip.progressMode,
+      })),
+    ).toEqual([
+      {
+        effect: "directionalDissolve",
+        progressMode: "legacy-transform",
+      },
+    ]);
     const versionThree = JSON.parse(JSON.stringify(definition)) as Record<
       string,
       unknown
@@ -474,7 +693,7 @@ describe("Phaser runtime package", () => {
         delete (layer.spawn as Record<string, unknown>).distribution;
     });
     const migratedSeven = validateRuntimeDefinition(versionSeven).definition;
-    expect(migratedSeven?.formatVersion).toBe(15);
+    expect(migratedSeven?.formatVersion).toBe(16);
     expect(migratedSeven?.layers[0].behavior.physics).toEqual({
       gravity: 0,
       drag: 0,
@@ -517,13 +736,61 @@ describe("Phaser runtime package", () => {
       delete dissolve.noiseScale;
     }
     const migratedTwelve = validateRuntimeDefinition(versionTwelve).definition;
-    expect(migratedTwelve?.formatVersion).toBe(15);
+    expect(migratedTwelve?.formatVersion).toBe(16);
     expect(
       migratedTwelve?.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({ pattern: "directional", noiseScale: 6 });
     expect(
       validateRuntimeDefinition({ ...definition, formatVersion: 99 }).ok,
     ).toBe(false);
+  });
+
+  it("rejects duplicate and malformed effect clips in runtime v16", () => {
+    const project = createEmptyProject("Runtime clip validation");
+    const layer = createLayer("animated", "Glow", "builtin-ring");
+    layer.appearance.effectClips = [
+      createRenderingEffectClip("outerGlow", "runtime-glow"),
+    ];
+    project.layers.push(layer);
+    const definition = createRuntimeDefinition(project);
+    const cloneDefinition = () =>
+      JSON.parse(JSON.stringify(definition)) as Record<string, unknown>;
+    const effectClips = (candidate: Record<string, unknown>) => {
+      const rawLayer = (candidate.layers as Array<Record<string, unknown>>)[0];
+      const appearance = rawLayer.appearance as Record<string, unknown>;
+      return appearance.effectClips as Array<Record<string, unknown>>;
+    };
+
+    const invalidProgressMode = cloneDefinition();
+    effectClips(invalidProgressMode)[0].progressMode = "eased";
+    expect(validateRuntimeDefinition(invalidProgressMode)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/progress mode/i),
+    });
+
+    const duplicateEffect = cloneDefinition();
+    effectClips(duplicateEffect).push({
+      ...effectClips(duplicateEffect)[0],
+      id: "second-runtime-glow",
+    });
+    expect(validateRuntimeDefinition(duplicateEffect)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/same effect/i),
+    });
+
+    const invalidType = cloneDefinition();
+    effectClips(invalidType)[0].start = "0";
+    expect(validateRuntimeDefinition(invalidType)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/finite number/i),
+    });
+
+    const invalidRange = cloneDefinition();
+    effectClips(invalidRange)[0].end = 1.1;
+    expect(validateRuntimeDefinition(invalidRange)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/between 0 and 1/i),
+    });
   });
 
   it("does not trust mutable definitions returned by the public validator", () => {
@@ -935,7 +1202,7 @@ describe("Phaser runtime package", () => {
     });
     effect.update(100);
 
-    expect(definition.formatVersion).toBe(15);
+    expect(definition.formatVersion).toBe(16);
     expect(
       definition.assets.find((asset) => asset.id === "atlas-spark"),
     ).toMatchObject({ atlasFrame: "vfx/spark-01" });

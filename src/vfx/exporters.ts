@@ -5,7 +5,7 @@ import { resolveProjectGroups } from "./groups";
 import { hasEnabledRenderingEffects } from "./renderingEffects";
 import { requireCurrentProject } from "./serialization";
 import { spriteFrameSequence } from "./spriteSheet";
-import type { VfxLayer, VfxProject } from "./types";
+import { isSpawnLayer, type VfxLayer, type VfxProject } from "./types";
 
 const EASE_MAP = {
   constant: "Linear",
@@ -24,9 +24,20 @@ export function createRuntimeDefinition(
     requireCurrentProject(project, "runtime-export"),
   );
   const requiredAssetIds = referencedAssetIds(resolvedProject.layers);
+  // Alpha samples are CPU placement data, not visual-mask or sprite data. Keep
+  // them only when an exported spawn layer retains that silhouette choice.
+  // Stored (currently inactive) choices still count so exact disable/re-enable
+  // behavior survives the runtime boundary.
+  const requiredAlphaMaskAssetIds = new Set(
+    resolvedProject.layers.flatMap((layer) =>
+      isSpawnLayer(layer) && layer.spawn.maskAssetId
+        ? [layer.spawn.maskAssetId]
+        : [],
+    ),
+  );
   return {
     format: "vvfx-runtime",
-    formatVersion: 15,
+    formatVersion: 16,
     name: resolvedProject.metadata.name,
     duration: resolvedProject.preview.duration,
     seed: resolvedProject.preview.randomSeed,
@@ -43,17 +54,20 @@ export function createRuntimeDefinition(
           spriteSheet,
           atlasFrame,
           alphaMask,
-        }) => ({
-          id,
-          name,
-          source: dataUrl,
-          builtIn,
-          width,
-          height,
-          spriteSheet,
-          atlasFrame,
-          alphaMask,
-        }),
+        }) => {
+          const includeAlphaMask = requiredAlphaMaskAssetIds.has(id);
+          return {
+            id,
+            name,
+            source: dataUrl,
+            builtIn,
+            width,
+            height,
+            spriteSheet,
+            atlasFrame,
+            ...(includeAlphaMask && alphaMask ? { alphaMask } : {}),
+          };
+        },
       ),
     layers: resolvedProject.layers.map((layer, depth) => ({
       id: layer.id,
@@ -77,6 +91,32 @@ export function createRuntimeDefinition(
       keyframes: layer.keyframes,
       beam: layer.beam,
     })),
+  };
+}
+
+/** Compact game-facing JSON. The editable .vvfx project remains readable JSON. */
+export function serializeRuntimeDefinition(project: VfxProject): string {
+  return JSON.stringify(createRuntimeDefinition(project));
+}
+
+export interface RuntimeExportCapabilities {
+  /** Every runtime definition can be placed at an origin x/y. */
+  pointPlacement: true;
+  /** Endpoint fitting is meaningful only when the definition has Beam layers. */
+  beamEndpoints: boolean;
+  beamLayerCount: number;
+}
+
+export function analyzeRuntimeExportCapabilities(
+  project: Pick<VfxProject, "layers">,
+): RuntimeExportCapabilities {
+  const beamLayerCount = project.layers.filter(
+    (layer) => layer.type === "beam",
+  ).length;
+  return {
+    pointPlacement: true,
+    beamEndpoints: beamLayerCount > 0,
+    beamLayerCount,
   };
 }
 
@@ -312,6 +352,7 @@ function layerCode(
 
 export function generatePhaserCode(project: VfxProject): string {
   const currentProject = requireCurrentProject(project, "runtime-export");
+  const capabilities = analyzeRuntimeExportCapabilities(currentProject);
   const functionName = `play${currentProject.metadata.name.replace(/[^a-zA-Z0-9]/g, "") || "Vfx"}`;
   const definition = JSON.stringify(
     createRuntimeDefinition(currentProject),
@@ -321,8 +362,7 @@ export function generatePhaserCode(project: VfxProject): string {
   return `import Phaser from "phaser";
 import {
   playVvfx,
-  type BeamEndpoints,
-  type VvfxEffect,
+${capabilities.beamEndpoints ? "  type BeamEndpoints,\n  type BeamFit,\n" : ""}  type VvfxEffect,
   type VvfxRuntimeDefinition,
 } from "@vvfx/phaser-runtime";
 
@@ -332,6 +372,11 @@ export const vvfxDefinition: VvfxRuntimeDefinition = ${definition};
 /**
  * Preload your texture keys, then play the effect at a world position.
  * Built-in Vvfx images are created automatically by the runtime.
+ * ${
+   capabilities.beamEndpoints
+     ? `This effect has ${capabilities.beamLayerCount} Beam layer${capabilities.beamLayerCount === 1 ? "" : "s"}; pass beamEndpoints to fit them between game targets, then choose stretch or crop fitting.`
+     : "This effect has no Beam layers, so endpoint options are intentionally omitted."
+ }
  */
 export function ${functionName}(
   scene: Phaser.Scene,
@@ -340,8 +385,8 @@ export function ${functionName}(
   options: {
     assetKeys?: Record<string, string>;
     assetFrames?: Record<string, string | number>;
-    beamEndpoints?: BeamEndpoints;
-    signal?: AbortSignal;
+${capabilities.beamEndpoints ? "    beamEndpoints?: BeamEndpoints;\n" : ""}    signal?: AbortSignal;
+${capabilities.beamEndpoints ? "    beamFit?: BeamFit;\n    beamThicknessScale?: number;\n" : ""}    maxDurationMs?: number;
     seed?: number;
     baseDepth?: number;
     loop?: boolean;
@@ -358,8 +403,8 @@ export function ${functionName}(
     originY,
     assetKeys: options.assetKeys,
     assetFrames: options.assetFrames,
-    beamEndpoints: options.beamEndpoints,
-    signal: options.signal,
+${capabilities.beamEndpoints ? "    beamEndpoints: options.beamEndpoints,\n" : ""}    signal: options.signal,
+${capabilities.beamEndpoints ? "    beamFit: options.beamFit,\n    beamThicknessScale: options.beamThicknessScale,\n" : ""}    maxDurationMs: options.maxDurationMs,
     baseDepth: options.baseDepth,
     loop: options.loop,
     autoDestroy: options.autoDestroy,

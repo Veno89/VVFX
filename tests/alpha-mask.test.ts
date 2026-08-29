@@ -115,6 +115,14 @@ describe("deterministic alpha-mask sampling", () => {
     expect(maximumAlphaMaskValue(mask)).toBe(255);
   });
 
+  it("bounds cached threshold samples per mask", () => {
+    const oldest = eligibleAlphaMaskIndices(mask, 0.01);
+    for (let index = 1; index <= 16; index += 1)
+      eligibleAlphaMaskIndices(mask, (index + 1) / 32);
+
+    expect(eligibleAlphaMaskIndices(mask, 0.01)).not.toBe(oldest);
+  });
+
   it("returns null for a fully transparent or over-threshold mask", () => {
     const empty = { columns: 2, rows: 1, alpha: [0, 0] };
     expect(sampleAlphaMaskOffset(empty, 0.01, 160, 42)).toBeNull();

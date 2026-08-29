@@ -91,6 +91,34 @@ being tested on different browsers, GPUs, and game scenes. The current set is:
 - seeded noisy erosion with irregular disappearing patches;
 - sprite warp and animated heat shimmer inside that sprite.
 
+### Layer order and timed effects
+
+The visible layer list follows the convention used by most visual editors: the
+top row is frontmost and the bottom row is backmost. **Bring forward** moves a
+layer one step toward the viewer; **Send backward** moves it one step away.
+**Bring to front** and **Send to back** move it to either end of the stack.
+
+For a painted chain-lightning core with separate soft halo artwork, put the core
+layer above the halo layer. That separate halo has its own z-order. A blur,
+outer glow, dissolve, or other rendering effect does not: it belongs to its
+parent layer and only changes that layer's pixels.
+
+To time one of those rendering effects:
+
+1. Select the layer and choose **Add effect** in its compact Effect toolbelt.
+2. Select the effect chip to open its contextual Effect Inspector.
+3. Set exact Start, End, Fade in, Fade out, and Fade shape values there, or
+   expand the layer's **FX** badge on the Timeline and drag/resize its nested
+   clip. The clip is measured inside each copy's own lifetime. Its bar and both
+   resize handles are keyboard sliders: Arrow adjusts 1 ms, Shift+Arrow adjusts
+   10 ms, and Ctrl/Cmd+Arrow jumps to the next marker.
+4. Use **Disable** when you want the effect off but want to keep its settings
+   and clip. Use **Remove** when it should be gone and added fresh next time.
+
+Transform easing and yoyo do not run an effect clip backward. Repeats, bursts,
+and emitters play the same clip chronologically inside every generated copy.
+The extra lane is normally collapsed, keeping the main Timeline compact.
+
 These effects use Phaser WebGL. Canvas-only playback safely shows the plain
 sprite and skips the GPU effect. For visual masks and noisy erosion this means
 Canvas keeps the ordinary unmasked, un-eroded sprite; add a normal opacity fade
@@ -137,6 +165,13 @@ works without WebGL.
 - **Repeating copies**: an emitter that keeps making copies at an interval.
   Use it for smoke, bubbles, embers, rain, or ambient motes. The project
   duration bounds how long it emits.
+
+You do not need to rebuild a layer if you chose the wrong type. Open that
+layer's **Actions** menu and use **Change type**. Vvfx keeps compatible timing,
+appearance, effects, links, and stack position in one undoable change. When
+converting artwork to **Beam**, its current center, angle, and image width seed
+the endpoints when dimensions are available; endpoint fitting then replaces
+manual path, angle, movement, keyframe, and separate X/Y scale controls.
 
 ## First complete effect: Magic Impact
 
@@ -243,8 +278,9 @@ one layer at a time. If it feels weak, adjust timing before adding more layers.
 
 Save keeps the editable project in this browser's IndexedDB. Also export a
 `.vvfx` project for a portable backup. When the effect is ready for Phaser,
-export Runtime JSON or generated Phaser TypeScript; both use the same exact
-runtime evaluator.
+export the recommended Runtime JSON and drop it into the game's effect library.
+Advanced TypeScript is available when you specifically want one typed wrapper
+file; both use the same exact runtime evaluator.
 
 ### Reuse or share this effect
 
@@ -404,9 +440,9 @@ clear erosion setup:
 
 1. Add the preset to an empty project and play its 1.4-second lifetime. The
    erase starts around 48% and finishes with the layer.
-2. In Experimental rendering, leave **Erase pattern** on **Noisy erosion**.
-   Pattern size 6 produces medium patches; lower values make larger chunks and
-   higher values make finer, busier breakup.
+2. Select the Dissolve / erosion chip and leave **Erase pattern** on **Noisy
+   erosion** in its Effect Inspector. Pattern size 6 produces medium patches;
+   lower values make larger chunks and higher values make finer, busier breakup.
 3. Replace the practice cloud with a tightly cropped rune, ghost, splatter, or
    other transparent image. The generated noise removes the selected sprite's
    own pixels; it is not a separate mask asset.
@@ -426,14 +462,15 @@ difference between a visual mask and a spawn silhouette:
 
 1. Add the preset to an empty project. Its source is the soft Cloud image, but
    the separate Energy ring mask keeps only a ring-shaped part visible.
-2. In Experimental rendering, open **Clipping**. **Clip with another image** is
-   enabled and **Mask image** is Energy ring.
+2. Select the Visual mask chip. **Clip with another image** is enabled and
+   **Mask image** is Energy ring in its Effect Inspector.
 3. Leave **Read mask from** on **Opacity** for transparent PNG/WebP masks. Choose
    **Brightness** when dark and light values in visible artwork should control
    the result instead.
 4. Try **Fit mask**, position, size, rotation, strength, and **Swap kept and
    hidden areas**. These are local settings that follow every copy; they do not
-   add another Timeline or choose spawn positions.
+   add another compositing layer or choose spawn positions. The Visual mask FX
+   clip controls when those settings are active.
 5. Replace the practice mask with your own still image. Sprite sheets cannot be
    mask sources in this bounded version, although the clipped target itself may
    use a sprite sheet.
@@ -478,7 +515,7 @@ time, size variation, and a separate smoke layer around that real flipbook.
 
 ## What is preview-only and what is exported?
 
-| Data                                                                                                                                                                                | Editable `.vvfx` | Runtime JSON                         | Generated Phaser TS                            |
+| Data                                                                                                                                                                                | Editable `.vvfx` | Runtime JSON                         | Advanced TypeScript                            |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------ | ---------------------------------------------- |
 | Layers, enabled/start mode, layer/copy-finish events, transforms, timing, appearance, behaviors, Experimental rendering, flipbooks, silhouette spawn data, paths, trails, keyframes | Yes              | Yes                                  | Yes, embedded as runtime JSON                  |
 | Project duration and random seed                                                                                                                                                    | Yes              | Yes                                  | Yes                                            |
@@ -495,7 +532,8 @@ exported effect, turn off **Enabled** or remove the layer.
 
 ### Turning timing feedback into an effect
 
-Open **Timing plan** above the Timeline and paste feedback using lines such as
+Open **More**, then **Timeline options** and **Timing plan**, and paste feedback
+using lines such as
 `0 ms impact`, `0–40 ms flash expands`, and `250–700 ms blood fades`.
 **Create markers** turns single times into milestones and ranges into named
 start/end markers. Drag the flags to revise them, or use magnetic marker
@@ -517,11 +555,14 @@ property keyframes are what the game export plays.
   inserts an editable copy at the playhead.
 - **`.vvfx-templates`**: backup or transfer of the whole local template
   library.
-- **Runtime JSON**: clean game-facing definition, currently format version 14;
-  play it with `@vvfx/phaser-runtime`.
-- **Generated Phaser TypeScript**: embeds that same definition and returns the
+- **Runtime JSON (recommended)**: compact `*.vvfx-runtime.json` game-facing
+  definition, currently format version 16; play it with
+  `@vvfx/phaser-runtime` and replace the one file whenever the authored effect
+  changes.
+- **Advanced TypeScript**: embeds that same definition and returns the
   `VvfxEffect` handle from `playVvfx`. It needs the local runtime package and is
-  the convenient exact-code integration path.
+  useful when one standalone typed wrapper is preferable to a shared loader.
+  Beam endpoint options appear only when the effect contains Beam layers.
 - **WebM/GIF**: rendered media for sharing or non-interactive use, not an
   editable or game-runtime effect definition.
 
@@ -542,6 +583,7 @@ property keyframes are what the game export plays.
 | Easing                     | The rhythm of a change: steady, fast first, slow first, smooth, bouncing, overshooting, elastic, or custom.                                                  |
 | Emitter / Repeating copies | A layer that creates new copies at intervals until the effect duration ends.                                                                                 |
 | Effect template            | A reusable editable effect/layer/group that inserts at the playhead; it is smaller than a full project.                                                      |
+| Effect clip                | A nested per-layer time range that controls when one rendering effect is active inside every copy, including its fade in/out.                                |
 | Event                      | A deterministic link that starts or restarts another layer at a chosen lifecycle moment.                                                                     |
 | Copy-finish event          | Plays a target at each original copy's final position; a finite, unattached Triggered Animated image or Burst is recommended.                                |
 | Flipbook                   | Several drawings in one grid, played quickly to make the artwork itself animate.                                                                             |
@@ -552,6 +594,7 @@ property keyframes are what the game export plays.
 | Image silhouette           | An imported image whose visible pixels choose spawn positions; it does not crop or recolor spawned artwork.                                                  |
 | Group                      | Editor organization that shares X/Y position and delay across member layers.                                                                                 |
 | Keyframe                   | A chosen moment for size, opacity, and rotation inside a layer lifetime.                                                                                     |
+| Layer stack                | The compositing order: the top visible row renders frontmost, while the bottom row renders backmost.                                                         |
 | Motion path                | The curve, spiral, or waypoint route an image follows.                                                                                                       |
 | Motion trail               | Fading historical copies left behind a moving layer.                                                                                                         |
 | Organic movement           | Smooth seeded wandering that remains repeatable while scrubbing and in the game runtime.                                                                     |

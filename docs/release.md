@@ -34,6 +34,19 @@ The release gate performs the following checks:
 The Chromium suite owns its temporary production server on port 4173. To test
 an existing server deliberately, set `VVFX_BROWSER_BASE_URL` to its origin.
 
+## Local runtime artifact
+
+After the gate passes, create the assigned private/local runtime tarball without
+publishing it:
+
+```bash
+npm pack ./packages/phaser-runtime --pack-destination ./artifacts/runtime
+```
+
+Record the resulting filename, byte size, SHA-256 digest, package version, and
+declared Phaser peer range with the handoff. Installing that exact `.tgz` in a
+consumer keeps integration evidence tied to the artifact that was reviewed.
+
 ## Version and documentation review
 
 Before creating a release commit:

@@ -101,6 +101,32 @@ export interface RenderingEffectsSettings {
   directionalDissolve: DirectionalDissolveEffectSettings;
   spriteWarp: SpriteWarpEffectSettings;
 }
+export type RenderingEffectKey = keyof RenderingEffectsSettings;
+export type RenderingEffectFadeEasing =
+  "linear" | "smooth" | "ease-in" | "ease-out";
+/**
+ * Chooses the time source used by effect-specific animation controllers.
+ * Current clips always use chronological copy-lifetime time. The legacy mode
+ * exists only so migrated directional dissolves retain their pre-v18 eased and
+ * yoyo-aware transform progression.
+ */
+export type RenderingEffectClipProgressMode =
+  "chronological" | "legacy-transform";
+/**
+ * A normalized timing window inside one copy of the parent layer. Fade values
+ * are fractions of this clip's own duration, rather than layer-lifetime values.
+ */
+export interface RenderingEffectClip {
+  id: string;
+  effect: RenderingEffectKey;
+  start: number;
+  end: number;
+  fadeIn: number;
+  fadeOut: number;
+  fadeEasing: RenderingEffectFadeEasing;
+  progressMode: RenderingEffectClipProgressMode;
+}
+export type RenderingEffectWeights = Record<RenderingEffectKey, number>;
 export interface RenderingEffectControllerValues {
   brightnessMultiplier: number;
   shineSpeed: number;
@@ -115,13 +141,17 @@ export interface RenderingEffectControllerValues {
 }
 export interface EvaluatedRenderingEffects {
   settings: RenderingEffectsSettings;
+  weights: RenderingEffectWeights;
   controllers: RenderingEffectControllerValues;
 }
 export interface RenderingEffectsEvaluationInput {
-  /** Pass the layer's canonical, already-eased lifetime progress. */
+  /** Pass the copy's linear, normalized lifetime progress. */
   lifetimeProgress: number;
+  /** Optional legacy/eased progress used by migrated dissolve settings. */
+  dissolveProgress?: number;
   elapsedMs: number;
   seed: number;
+  clips?: readonly RenderingEffectClip[];
 }
 export type RenderingEffectName =
   | "visual-mask"
@@ -132,12 +162,67 @@ export type RenderingEffectName =
   | "spatial-gradient"
   | "directional-dissolve"
   | "sprite-warp";
+export declare const RENDERING_EFFECT_KEYS: readonly [
+  "visualMask",
+  "blur",
+  "outerGlow",
+  "brightnessExposure",
+  "animatedShine",
+  "spatialGradient",
+  "directionalDissolve",
+  "spriteWarp",
+];
+export declare const RENDERING_EFFECT_NAMES: readonly [
+  "visual-mask",
+  "blur",
+  "outer-glow",
+  "brightness-exposure",
+  "animated-shine",
+  "spatial-gradient",
+  "directional-dissolve",
+  "sprite-warp",
+];
+export declare const MAX_RENDERING_EFFECT_CLIPS: 8;
+export declare function renderingEffectNameForKey(
+  key: RenderingEffectKey,
+): RenderingEffectName;
+export declare function renderingEffectKeyForName(
+  name: RenderingEffectName,
+): RenderingEffectKey;
 export declare const VVFX_RENDERING_NOISE_TEXTURE = "__vvfx-rendering-noise-v1";
 export declare const MAX_RENDERING_EFFECT_PADDING = 64;
 export declare const UNSUPPORTED_RENDERING_EFFECTS_WARNING =
   "Experimental pixel effects need Phaser WebGL. This Canvas renderer will show the ordinary sprites without visual masks, blur, glow, brightness/exposure, shine, gradients, dissolve/noise erosion, or sprite warp.";
 export declare const DEFAULT_RENDERING_EFFECTS: Readonly<RenderingEffectsSettings>;
 export declare function createDefaultRenderingEffects(): RenderingEffectsSettings;
+export declare function createRenderingEffectClip(
+  effect: RenderingEffectKey,
+  id: string,
+): RenderingEffectClip;
+/**
+ * Builds explicit full-life clips for pre-v18 settings. Tuned disabled effects
+ * get a clip too, so enabling them later restores both their settings and time.
+ */
+export declare function migrateLegacyRenderingEffectClips(
+  settings: RenderingEffectsSettings,
+): RenderingEffectClip[];
+/** Adds full-life clips for authored settings without disturbing timed clips. */
+export declare function reconcileRenderingEffectClips(
+  settings: RenderingEffectsSettings,
+  clips: readonly RenderingEffectClip[],
+  createId?: (effect: RenderingEffectKey) => string,
+  options?: {
+    legacyTransformProgress?: boolean;
+  },
+): RenderingEffectClip[];
+export declare function normalizeRenderingEffectClips(
+  value: unknown,
+  settings: RenderingEffectsSettings,
+  options?: {
+    migrateLegacy?: boolean;
+    legacyTransformProgress?: boolean;
+  },
+): RenderingEffectClip[];
 /**
  * Restores missing legacy fields and bounds imported values before they can
  * reach Phaser's GPU controllers. Missing effects are always disabled.
@@ -145,6 +230,15 @@ export declare function createDefaultRenderingEffects(): RenderingEffectsSetting
 export declare function normalizeRenderingEffects(
   value: unknown,
 ): RenderingEffectsSettings;
+export declare function evaluateRenderingEffectClipWeight(
+  clip: RenderingEffectClip,
+  lifetimeProgress: number,
+): number;
+export declare function evaluateRenderingEffectWeights(
+  settings: RenderingEffectsSettings,
+  clips: readonly RenderingEffectClip[],
+  lifetimeProgress: number,
+): RenderingEffectWeights;
 export declare function enabledRenderingEffects(
   settings: RenderingEffectsSettings,
 ): RenderingEffectName[];
@@ -191,12 +285,15 @@ export declare function syncPhaserRenderingEffects({
   scene,
   sprite,
   effects,
+  timeMs,
   resolveAssetFrame,
   onWarning,
 }: {
   scene: Phaser.Scene;
   sprite: Phaser.GameObjects.Image;
   effects: EvaluatedRenderingEffects;
+  /** Explicit effect time for deterministic seeking and restarts. */
+  timeMs?: number;
   resolveAssetFrame?: PhaserRenderingAssetFrameResolver;
   onWarning?: (message: string) => void;
 }): PhaserRenderingEffectsResult;

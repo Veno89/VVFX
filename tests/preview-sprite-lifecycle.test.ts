@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { destroyStalePreviewSprites } from "../src/preview/spriteLifecycle";
+import {
+  applyPreviewRestartRevision,
+  destroyStalePreviewSprites,
+} from "../src/preview/spriteLifecycle";
 
 function fakeSprite(layerId: string, dragging: boolean) {
   const data = new Map<string, unknown>([
@@ -14,6 +17,38 @@ function fakeSprite(layerId: string, dragging: boolean) {
 }
 
 describe("preview sprite lifecycle", () => {
+  it("ends sprite and path-handle drags so restart can restore positions", () => {
+    const sprite = fakeSprite("live-layer", true);
+    const handleData = new Map<string, unknown>([["vvfxDragging", true]]);
+    const pathHandle = {
+      circle: {
+        setData: vi.fn((key: string, value: unknown) => {
+          handleData.set(key, value);
+        }),
+      },
+    };
+
+    const sprites = [
+      {
+        setData: (_key: string, value: unknown) =>
+          sprite.setDragging(Boolean(value)),
+      },
+    ];
+
+    expect(applyPreviewRestartRevision(3, 3, sprites, [pathHandle])).toBe(3);
+    expect(sprite.getData("vvfxDragging")).toBe(true);
+    expect(pathHandle.circle.setData).not.toHaveBeenCalled();
+
+    expect(applyPreviewRestartRevision(3, 4, sprites, [pathHandle])).toBe(4);
+
+    expect(sprite.getData("vvfxDragging")).toBe(false);
+    expect(pathHandle.circle.setData).toHaveBeenCalledWith(
+      "vvfxDragging",
+      false,
+    );
+    expect(handleData.get("vvfxDragging")).toBe(false);
+  });
+
   it("destroys a stale dragging sprite when its owning layer was deleted", () => {
     const deleted = fakeSprite("deleted-layer", true);
     const sprites = new Map([["deleted-instance", deleted]]);

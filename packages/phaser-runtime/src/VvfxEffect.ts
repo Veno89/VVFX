@@ -2,13 +2,17 @@ import type Phaser from "phaser";
 import { tintNumber } from "../../../src/vfx/color";
 import {
   createProjectEvaluator,
+  type BeamEvaluationOptions,
   type ProjectEvaluator,
 } from "../../../src/vfx/engine";
 import {
   isSupportedVfxNumber,
+  MAX_VFX_SCALE,
+  MAX_VFX_TIMING_MS,
   VVFX_INTERNAL_MISSING_TEXTURE_KEY,
   VVFX_INTERNAL_TEXTURE_PREFIX,
 } from "../../../src/vfx/inputLimits";
+import { syncNormalizedSourceCrop } from "../../../src/vfx/phaserFrames";
 import {
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
@@ -164,6 +168,8 @@ export class VvfxEffect {
   private readonly baseDepth: number;
   private readonly loop: boolean;
   private readonly autoDestroy: boolean;
+  private readonly beamOptions: BeamEvaluationOptions;
+  private readonly maxDurationMs: number | null;
   private readonly assetKeys: Record<string, string>;
   private readonly assetFrames: Record<string, string | number>;
   private readonly assetsById: Map<string, VfxProject["assets"][number]>;
@@ -192,6 +198,20 @@ export class VvfxEffect {
     this.baseDepth = finiteOr(ownValue(safeOptions, "baseDepth"), 0);
     this.loop = ownValue(safeOptions, "loop") === true;
     this.autoDestroy = ownValue(safeOptions, "autoDestroy") !== false;
+    const beamFit = ownValue(safeOptions, "beamFit");
+    const beamThicknessScale = ownValue(safeOptions, "beamThicknessScale");
+    this.beamOptions = {
+      beamFit: beamFit === "crop" ? "crop" : "stretch",
+      beamThicknessScale:
+        isSupportedVfxNumber(beamThicknessScale) && beamThicknessScale >= 0
+          ? Math.min(MAX_VFX_SCALE, beamThicknessScale)
+          : 1,
+    };
+    const maxDurationMs = ownValue(safeOptions, "maxDurationMs");
+    this.maxDurationMs =
+      isSupportedVfxNumber(maxDurationMs) && maxDurationMs > 0
+        ? Math.max(1, Math.min(MAX_VFX_TIMING_MS, maxDurationMs))
+        : null;
     const assetIds = this.project.assets.map((asset) => asset.id);
     const detectedRuntimeAssetKeys = Object.fromEntries(
       definition.assets
@@ -335,7 +355,11 @@ export class VvfxEffect {
     if (!isSupportedVfxNumber(delta)) return;
     this.cancelScheduledRender();
     this.elapsed += Math.max(0, delta);
-    const duration = Math.max(1, this.project.preview.duration);
+    const authoredDuration = Math.max(1, this.project.preview.duration);
+    const duration =
+      this.loop || this.maxDurationMs === null
+        ? authoredDuration
+        : Math.min(authoredDuration, this.maxDurationMs);
     if (this.elapsed >= duration) {
       if (this.loop) {
         this.elapsed %= duration;
@@ -441,6 +465,8 @@ export class VvfxEffect {
       this.elapsed,
       null,
       localBeamEndpoints,
+      undefined,
+      this.beamOptions,
     );
     const liveKeys = new Set(instances.map((instance) => instance.key));
     for (const [key, sprite] of this.sprites) {
@@ -480,6 +506,7 @@ export class VvfxEffect {
       ) {
         sprite.setTexture(availableTexture, availableFrame);
       }
+      syncNormalizedSourceCrop(sprite, instance.sourceCrop);
       sprite
         .setPosition(this.originX + instance.x, this.originY + instance.y)
         .setScale(instance.scaleX, instance.scaleY)
@@ -500,6 +527,7 @@ export class VvfxEffect {
         scene: this.scene,
         sprite,
         effects: instance.effects,
+        timeMs: this.elapsed,
         resolveAssetFrame: this.resolveRenderingAssetFrame,
         onWarning: this.onWarning,
       });

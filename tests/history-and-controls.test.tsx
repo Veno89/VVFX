@@ -30,11 +30,13 @@ import { TemplateLibraryDialog } from "../src/editor/components/TemplateLibraryD
 import { TopBar } from "../src/editor/components/TopBar";
 import {
   Timeline,
+  effectClipTimingAfterTimelineDrag,
   groupDelayAfterTimelineDrag,
   keyframeTimeAfterTimelineDrag,
   timingAfterTimelineDrag,
 } from "../src/editor/components/Timeline";
 import { useHistoryState } from "../src/editor/useHistoryState";
+import { createRenderingEffectClip } from "../src/vfx/renderingEffects";
 import { validPngDataUrl } from "./fixtures/portableImages";
 import {
   createEmptyProject,
@@ -390,16 +392,121 @@ describe("beginner-friendly controls", () => {
     });
   });
 
-  it("exposes Solo state and announced keyboard reorder commands", () => {
-    const first = createLayer("animated", "First layer");
-    const second = createLayer("animated", "Second layer");
+  it("shows frontmost layers first and maps drag/drop back to model indices", () => {
+    const back = createLayer("animated", "Back layer");
+    const middle = createLayer("animated", "Middle layer");
+    const front = createLayer("animated", "Front layer");
+    const onReorder = vi.fn();
+    const view = render(
+      <LayerPanel
+        layers={[back, middle, front]}
+        groups={[]}
+        selectedId={front.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onAdd={vi.fn()}
+        onAddPreset={vi.fn()}
+        onUpdate={vi.fn()}
+        onDuplicate={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={onReorder}
+      />,
+    );
+
+    expect(
+      Array.from(
+        view.container.querySelectorAll<HTMLElement>(
+          ".layer-name-button strong",
+        ),
+      ).map((name) => name.textContent),
+    ).toEqual(["Front layer", "Middle layer", "Back layer"]);
+
+    const rows = Array.from(
+      view.container.querySelectorAll<HTMLElement>(".layer-row"),
+    );
+    fireEvent.dragStart(rows[0]);
+    fireEvent.drop(rows[2]);
+    expect(onReorder).toHaveBeenCalledWith(2, 0);
+  });
+
+  it("preserves folders, search, and locks in the front-to-back projection", () => {
+    const back = createLayer("animated", "Back layer");
+    const omitted = createLayer("animated", "Omitted layer");
+    const front = createLayer("animated", "Front layer");
+    const view = render(
+      <LayerPanel
+        layers={[back, omitted, front]}
+        groups={[]}
+        selectedId={front.id}
+        selectedGroupId={null}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onAdd={vi.fn()}
+        onAddPreset={vi.fn()}
+        onUpdate={vi.fn()}
+        onDuplicate={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={vi.fn()}
+        search="stacked"
+        lockedLayerIds={[front.id]}
+        folders={[
+          {
+            id: "stacked-folder",
+            name: "Stacked effects",
+            layerIds: [back.id, front.id],
+            collapsed: false,
+          },
+        ]}
+        onUpdateFolder={vi.fn()}
+        onToggleLock={vi.fn()}
+      />,
+    );
+
+    expect(
+      Array.from(
+        view.container.querySelectorAll<HTMLElement>(
+          ".layer-name-button strong",
+        ),
+      ).map((name) => name.textContent),
+    ).toEqual(["Front layer", "Back layer"]);
+    expect(
+      screen.getByRole("button", { name: "Collapse Stacked effects" }),
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("button", { name: /^Front layer/i })
+        .closest(".layer-row"),
+    ).toHaveAttribute("draggable", "false");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Front layer" }),
+    );
+    const menu = screen.getByRole("menu", { name: "Actions for Front layer" });
+    for (const command of [
+      "Bring Front layer forward, currently position 1 of 3",
+      "Send Front layer backward, currently position 1 of 3",
+      "Bring Front layer to front, currently position 1 of 3",
+      "Send Front layer to back, currently position 1 of 3",
+    ])
+      expect(
+        within(menu).getByRole("menuitem", { name: command }),
+      ).toBeDisabled();
+  });
+
+  it("exposes Solo state and conventional announced stacking commands", () => {
+    const back = createLayer("animated", "Back layer");
+    const middle = createLayer("animated", "Middle layer");
+    const front = createLayer("animated", "Front layer");
     const onUpdate = vi.fn();
     const onReorder = vi.fn();
     render(
       <LayerPanel
-        layers={[first, second]}
+        layers={[back, middle, front]}
         groups={[]}
-        selectedId={second.id}
+        selectedId={front.id}
         selectedGroupId={null}
         onSelect={vi.fn()}
         onSelectGroup={vi.fn()}
@@ -413,27 +520,103 @@ describe("beginner-friendly controls", () => {
       />,
     );
 
-    const solo = screen.getByRole("button", { name: "Solo Second layer" });
+    const solo = screen.getByRole("button", { name: "Solo Front layer" });
     expect(solo).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(solo);
-    expect(onUpdate).toHaveBeenCalledWith(second.id, { solo: true });
+    expect(onUpdate).toHaveBeenCalledWith(front.id, { solo: true });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Actions for Second layer" }),
+      screen.getByRole("button", { name: "Actions for Middle layer" }),
     );
     const menu = screen.getByRole("menu", {
-      name: "Actions for Second layer",
+      name: "Actions for Middle layer",
     });
     expect(menu).toHaveClass("layer-more__menu--floating");
-    const moveUp = within(menu).getByRole("menuitem", {
-      name: "Move Second layer up, currently position 2 of 2",
+    const bringForward = within(menu).getByRole("menuitem", {
+      name: "Bring Middle layer forward, currently position 2 of 3",
     });
-    expect(moveUp).toBeEnabled();
-    fireEvent.click(moveUp);
-    expect(onReorder).toHaveBeenCalledWith(1, 0);
+    expect(bringForward).toBeEnabled();
+    fireEvent.click(bringForward);
+    expect(onReorder).toHaveBeenLastCalledWith(1, 2);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Second layer moved to position 1 of 2.",
+      "Middle layer moved forward to position 1 of 3.",
     );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Middle layer" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", {
+        name: "Send Middle layer backward, currently position 2 of 3",
+      }),
+    );
+    expect(onReorder).toHaveBeenLastCalledWith(1, 0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Middle layer moved backward to position 3 of 3.",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Middle layer" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", {
+        name: "Bring Middle layer to front, currently position 2 of 3",
+      }),
+    );
+    expect(onReorder).toHaveBeenLastCalledWith(1, 2);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Middle layer brought to front and is now frontmost, position 1 of 3.",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Middle layer" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", {
+        name: "Send Middle layer to back, currently position 2 of 3",
+      }),
+    );
+    expect(onReorder).toHaveBeenLastCalledWith(1, 0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Middle layer sent to back and is now backmost, position 3 of 3.",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Front layer" }),
+    );
+    const frontMenu = screen.getByRole("menu", {
+      name: "Actions for Front layer",
+    });
+    expect(
+      within(frontMenu).getByRole("menuitem", {
+        name: "Bring Front layer forward, currently position 1 of 3",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(frontMenu).getByRole("menuitem", {
+        name: "Bring Front layer to front, currently position 1 of 3",
+      }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Front layer" }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Actions for Back layer" }),
+    );
+    const backMenu = screen.getByRole("menu", {
+      name: "Actions for Back layer",
+    });
+    expect(
+      within(backMenu).getByRole("menuitem", {
+        name: "Send Back layer backward, currently position 3 of 3",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(backMenu).getByRole("menuitem", {
+        name: "Send Back layer to back, currently position 3 of 3",
+      }),
+    ).toBeDisabled();
   });
 
   it("edits a group's shared offsets and membership", () => {
@@ -746,6 +929,55 @@ describe("beginner-friendly controls", () => {
     ).toEqual({ delay: 100, duration: 520 });
   });
 
+  it("moves and resizes normalized effect clips inside the parent lifetime", () => {
+    const clip = { start: 0.2, end: 0.6 };
+
+    expect(
+      effectClipTimingAfterTimelineDrag(
+        clip,
+        100,
+        500,
+        2000,
+        100,
+        "move",
+        "off",
+      ),
+    ).toEqual({ start: 0.4, end: 0.8 });
+    expect(
+      effectClipTimingAfterTimelineDrag(
+        clip,
+        100,
+        500,
+        2000,
+        100,
+        "start",
+        "off",
+      ),
+    ).toEqual({ start: 0.4, end: 0.6 });
+    expect(
+      effectClipTimingAfterTimelineDrag(
+        clip,
+        100,
+        500,
+        2000,
+        100,
+        "end",
+        "off",
+      ),
+    ).toEqual({ start: 0.2, end: 0.8 });
+    const clampedMove = effectClipTimingAfterTimelineDrag(
+      clip,
+      100,
+      500,
+      2000,
+      1000,
+      "move",
+      "off",
+    );
+    expect(clampedMove.start).toBeCloseTo(0.6);
+    expect(clampedMove.end).toBe(1);
+  });
+
   it("moves only intermediate keyframe times and keeps them ordered", () => {
     const layer = createLayer("animated", "Pulse");
     layer.timing.duration = 1000;
@@ -932,6 +1164,145 @@ describe("beginner-friendly controls", () => {
       expect.objectContaining({ id: group.id, delay: 500 }),
     );
     expect(groupDelayAfterTimelineDrag(100, 2000, -500)).toBe(0);
+  });
+
+  it("expands per-copy effect lanes, preserves layer identity, and commits one drag", () => {
+    const back = createLayer("animated", "Back glow");
+    const front = createLayer("animated", "Front lightning");
+    const duplicateClipId = "effect-outerGlow";
+    back.appearance.effects.outerGlow.enabled = true;
+    front.appearance.effects.outerGlow.enabled = true;
+    back.appearance.effectClips = [
+      {
+        ...createRenderingEffectClip("outerGlow", duplicateClipId),
+        start: 0.1,
+        end: 0.9,
+      },
+    ];
+    front.appearance.effectClips = [
+      {
+        ...createRenderingEffectClip("outerGlow", duplicateClipId),
+        start: 0.2,
+        end: 0.6,
+        fadeIn: 0.2,
+        fadeOut: 0.1,
+      },
+    ];
+    front.timing = { ...front.timing, delay: 100, duration: 500 };
+    const onLayerChange = vi.fn();
+    const onSelectEffect = vi.fn();
+    const onSeek = vi.fn();
+    const { container } = render(
+      <Timeline
+        layers={[back, front]}
+        groups={[]}
+        duration={1000}
+        time={0}
+        selectedId={front.id}
+        selectedGroupId={null}
+        selectedEffectClipId={duplicateClipId}
+        onSelect={vi.fn()}
+        onSelectGroup={vi.fn()}
+        onSelectEffect={onSelectEffect}
+        onSeek={onSeek}
+        onLayerChange={onLayerChange}
+        onGroupChange={vi.fn()}
+        onDurationChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          ".timeline-layer-label__select",
+        ),
+      ).map((button) => button.textContent),
+    ).toEqual(["Front lightning", "Back glow"]);
+    expect(
+      screen.getByRole("button", {
+        name: "Collapse 1 effect for Front lightning",
+      }),
+    ).toHaveAttribute(
+      "title",
+      "1 effect timed inside each copy of Front lightning",
+    );
+    expect(
+      screen.getByRole("group", {
+        name: "Effects inside each copy of Front lightning",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", {
+        name: "Effects inside each copy of Back glow",
+      }),
+    ).toBeNull();
+
+    const frontLabel = screen.getByRole("button", {
+      name: "Select Outer glow effect on Front lightning",
+    });
+    expect(frontLabel).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(frontLabel);
+    expect(onSelectEffect).toHaveBeenCalledWith(front.id, duplicateClipId);
+    expect(onSeek).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Expand 1 effect for Back glow",
+      }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Select Outer glow effect on Back glow",
+      }),
+    ).toHaveAttribute("aria-pressed", "false");
+
+    const track = container.querySelector(".timeline-tracks");
+    if (!(track instanceof HTMLElement)) throw new Error("Timeline missing");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1000,
+      bottom: 100,
+      left: 0,
+      width: 1000,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const frontClip = screen.getByRole("slider", {
+      name: "Move Outer glow effect inside each copy of Front lightning",
+    });
+    expect(frontClip.closest(".timeline-effect-clip")).toHaveStyle({
+      left: "20%",
+      width: "20%",
+    });
+
+    onLayerChange.mockClear();
+    onSelectEffect.mockClear();
+    fireEvent.pointerDown(frontClip, { button: 0, clientX: 200 });
+    fireEvent.pointerMove(window, { clientX: 300 });
+    expect(frontClip).toHaveAttribute("aria-valuenow", "200");
+    expect(onLayerChange).not.toHaveBeenCalled();
+    expect(onSeek).not.toHaveBeenCalled();
+    fireEvent.pointerUp(window, { clientX: 300 });
+
+    expect(onSelectEffect).toHaveBeenCalledWith(front.id, duplicateClipId);
+    expect(onLayerChange).toHaveBeenCalledOnce();
+    expect(
+      onLayerChange.mock.calls[0][0].appearance.effectClips[0],
+    ).toMatchObject({ start: 0.4, end: 0.8 });
+
+    onLayerChange.mockClear();
+    fireEvent.keyDown(
+      screen.getByRole("slider", {
+        name: "Resize end of Outer glow effect inside each copy of Front lightning",
+      }),
+      { key: "ArrowRight", shiftKey: true },
+    );
+    expect(onLayerChange).toHaveBeenCalledOnce();
+    expect(
+      onLayerChange.mock.calls[0][0].appearance.effectClips[0].end,
+    ).toBeCloseTo(0.62);
   });
 
   it("explains the workspace through a step-based onboarding overlay", () => {

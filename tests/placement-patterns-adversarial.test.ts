@@ -235,7 +235,7 @@ describe("placement parity and migration", () => {
 
     const definition = createRuntimeDefinition(project);
     const restored = runtimeDefinitionToProject(definition);
-    expect(definition.formatVersion).toBe(15);
+    expect(definition.formatVersion).toBe(16);
     expect(definition.layers[0]?.spawn).toMatchObject({
       distribution: "clusters",
       clusterCount: 4,
@@ -298,7 +298,7 @@ describe("placement parity and migration", () => {
 
     const migrated = validateProject(legacy);
     expect(migrated.ok).toBe(true);
-    expect(migrated.project?.formatVersion).toBe(17);
+    expect(migrated.project?.formatVersion).toBe(18);
     expect(migrated.project?.layers[0]?.spawn).toMatchObject({
       stratifiedJitter: 0.65,
       clusterCount: 3,

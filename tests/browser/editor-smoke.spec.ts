@@ -15,6 +15,7 @@ async function openEditor(page: Page) {
   await expect(
     page.getByRole("complementary", { name: "Asset library" }),
   ).toBeVisible();
+  await expect(page.locator(".phaser-mount canvas")).toBeVisible();
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
@@ -167,7 +168,7 @@ test("layer actions escape clipping and provide accessible reordering", async ({
   await menu
     .getByRole("menuitem", {
       name: new RegExp(
-        `^Move ${movingLayerName} up, currently position 2 of ${orderBefore.length}`,
+        `^Bring ${movingLayerName} forward, currently position 2 of ${orderBefore.length}`,
       ),
     })
     .click();
@@ -177,7 +178,7 @@ test("layer actions escape clipping and provide accessible reordering", async ({
     .toEqual([movingLayerName, orderBefore[0], ...orderBefore.slice(2)]);
   await expect(
     page.getByRole("status").filter({
-      hasText: `${movingLayerName} moved to position 1 of ${orderBefore.length}.`,
+      hasText: `${movingLayerName} moved forward to position 1 of ${orderBefore.length}.`,
     }),
   ).toBeAttached();
 });
@@ -223,11 +224,15 @@ test("feature removal starts cleanly and remains reversible", async ({
   await removeTrail.click();
   await expect(removeTrail).toBeHidden();
 
-  await page.getByText("Experimental rendering", { exact: true }).click();
-  const removeGlow = page.getByRole("button", { name: "Remove outer glow" });
+  const glowChip = page.getByRole("button", { name: "Outer glow" });
+  await glowChip.click();
+  await expect(
+    page.getByRole("heading", { name: "Outer glow", exact: true }),
+  ).toBeFocused();
+  const removeGlow = page.getByRole("button", { name: "Remove effect" });
   await expect(removeGlow).toBeVisible();
   await removeGlow.click();
-  await expect(removeGlow).toBeHidden();
+  await expect(glowChip).toBeHidden();
 
   let performanceDialog = await openPerformanceInspector(page);
   await performanceDialog.getByText("Lifecycle diagnostic").click();
@@ -243,7 +248,10 @@ test("feature removal starts cleanly and remains reversible", async ({
 
   await page.getByRole("button", { name: "Undo" }).click();
   await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByText("Motion trail", { exact: true }).click();
   await expect(removeTrail).toBeVisible();
+  await expect(glowChip).toBeVisible();
+  await glowChip.click();
   await expect(removeGlow).toBeVisible();
   performanceDialog = await openPerformanceInspector(page);
   await performanceDialog.getByText("Lifecycle diagnostic").click();
@@ -257,8 +265,9 @@ test("feature removal starts cleanly and remains reversible", async ({
 
   await page.getByRole("button", { name: "Redo" }).click();
   await page.getByRole("button", { name: "Redo" }).click();
+  await page.getByText("Motion trail", { exact: true }).click();
   await expect(removeTrail).toBeHidden();
-  await expect(removeGlow).toBeHidden();
+  await expect(glowChip).toBeHidden();
 });
 
 test("professional workspace settings persist and export preflight follows its target", async ({
@@ -300,6 +309,7 @@ test("professional workspace settings persist and export preflight follows its t
     page.getByRole("textbox", { name: /^Rename folder/ }),
   ).toBeVisible();
 
+  await page.locator(".timeline-property-details > summary").click();
   await page
     .getByRole("combobox", { name: "Timeline property track" })
     .selectOption("opacity");
@@ -319,10 +329,141 @@ test("professional workspace settings persist and export preflight follows its t
   await expect(preflight).toContainText("Visible content");
 });
 
+test("effect lanes stay compact and expose per-copy timing controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openEditor(page);
+  await addPreset(page, "Neon projectile");
+  const pause = page.getByRole("button", { name: "Pause", exact: true });
+  if (await pause.isVisible()) await pause.click();
+
+  const expand = page.getByRole("button", {
+    name: /^Expand \d+ effects? for Neon projectile$/,
+  });
+  await expect(expand).toHaveAttribute("title", /inside each copy/i);
+  await expand.click();
+
+  const lanes = page.getByRole("group", {
+    name: "Effects inside each copy of Neon projectile",
+  });
+  await expect(lanes).toBeVisible();
+  const glow = lanes.getByRole("button", {
+    name: "Select Outer glow effect on Neon projectile",
+  });
+  const playheadBefore = await page
+    .locator(".timeline-time-readout strong")
+    .textContent();
+  await glow.click();
+  await expect(glow).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".timeline-time-readout strong")).toHaveText(
+    playheadBefore ?? "",
+  );
+
+  await expect(
+    page.getByRole("slider", {
+      name: "Move Outer glow effect inside each copy of Neon projectile",
+    }),
+  ).toBeVisible();
+  const endHandle = page.getByRole("slider", {
+    name: "Resize end of Outer glow effect inside each copy of Neon projectile",
+  });
+  const endBefore = Number(await endHandle.getAttribute("aria-valuenow"));
+  await endHandle.focus();
+  await page.keyboard.press("Shift+ArrowLeft");
+  await expect
+    .poll(async () => Number(await endHandle.getAttribute("aria-valuenow")))
+    .toBeLessThan(endBefore);
+});
+
+test("effect authoring restores focus and stays reversible", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openEditor(page);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page
+    .getByRole("menu", { name: "Add layer" })
+    .getByRole("menuitem", { name: /^Still image/ })
+    .click();
+
+  const addEffect = page.getByRole("button", {
+    name: "Add effect",
+    exact: true,
+  });
+  await expect(addEffect).toBeVisible();
+  await addEffect.click();
+  const palette = page.getByRole("dialog", {
+    name: "Add an effect to Unnamed",
+  });
+  await expect(palette).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(palette).toBeHidden();
+  await expect(addEffect).toBeFocused();
+
+  await addEffect.click();
+  await palette
+    .getByRole("button", {
+      name: /Add Outer glow: Add a soft colored halo/,
+    })
+    .click();
+
+  const heading = page.getByRole("heading", {
+    name: "Outer glow",
+    exact: true,
+  });
+  await expect(heading).toBeFocused();
+  await expect(
+    page.getByRole("group", {
+      name: "Effects inside each copy of Unnamed",
+    }),
+  ).toBeVisible();
+
+  const back = page.getByRole("button", {
+    name: "Back to Unnamed settings",
+  });
+  await back.click();
+  let glowChip = page.getByRole("button", {
+    name: "Outer glow",
+    exact: true,
+  });
+  await expect(glowChip).toBeFocused();
+
+  await glowChip.click();
+  const glowEnabled = page.getByRole("switch", { name: "Soft outer glow" });
+  await expect(glowEnabled).toHaveAttribute("aria-checked", "true");
+  await glowEnabled.click();
+  await expect(glowEnabled).toHaveAttribute("aria-checked", "false");
+  await back.click();
+  glowChip = page.getByRole("button", {
+    name: "Outer glow, Off",
+    exact: true,
+  });
+  await expect(glowChip).toBeVisible();
+
+  await glowChip.click();
+  await page.getByRole("button", { name: "Remove effect" }).click();
+  await expect(addEffect).toBeFocused();
+  await expect(glowChip).toBeHidden();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  glowChip = page.getByRole("button", {
+    name: "Outer glow, Off",
+    exact: true,
+  });
+  await expect(glowChip).toBeVisible();
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(glowChip).toBeHidden();
+  expect(pageErrors).toEqual([]);
+});
+
 test("trail and 50× stress toggles return live objects to baseline without heap growth", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await openEditor(page);

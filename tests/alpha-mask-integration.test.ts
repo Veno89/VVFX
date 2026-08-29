@@ -6,6 +6,7 @@ import {
   createRuntimeDefinition,
   generatePhaserCode,
   generateStandalonePhaserCode,
+  serializeRuntimeDefinition,
 } from "../src/vfx/exporters";
 import { validateProject } from "../src/vfx/serialization";
 import {
@@ -79,7 +80,7 @@ describe("alpha-mask spawning integration", () => {
     const { project, mask } = maskedProject();
     const definition = createRuntimeDefinition(project);
     const restored = runtimeDefinitionToProject(definition);
-    expect(definition.formatVersion).toBe(15);
+    expect(definition.formatVersion).toBe(16);
     expect(
       definition.assets.find((asset) => asset.id === mask.id)?.alphaMask,
     ).toEqual(mask.alphaMask);
@@ -90,6 +91,45 @@ describe("alpha-mask spawning integration", () => {
     expect(() => generateStandalonePhaserCode(project)).toThrow(
       /does not support image-silhouette spawning/i,
     );
+  });
+
+  it("keeps stored silhouette grids but omits grids used only by artwork and visual masks", () => {
+    const project = createEmptyProject("Compact runtime masks");
+    const artwork = maskAsset("artwork-with-unused-grid");
+    const visualMask = maskAsset("visual-mask-with-unused-grid");
+    const spawnMask = maskAsset("stored-spawn-mask");
+    const layer = createLayer("emitter", "Compact layer", artwork.id);
+    layer.appearance.effects.visualMask = {
+      ...layer.appearance.effects.visualMask,
+      enabled: true,
+      maskAssetId: visualMask.id,
+    };
+    layer.spawn.shape = "point";
+    layer.spawn.maskAssetId = spawnMask.id;
+    project.assets.push(artwork, visualMask, spawnMask);
+    project.layers.push(layer);
+
+    const definition = createRuntimeDefinition(project);
+    const byId = new Map(definition.assets.map((asset) => [asset.id, asset]));
+    const compactJson = serializeRuntimeDefinition(project);
+
+    expect(byId.get(artwork.id)).not.toHaveProperty("alphaMask");
+    expect(byId.get(visualMask.id)).not.toHaveProperty("alphaMask");
+    expect(byId.get(spawnMask.id)?.alphaMask).toEqual(spawnMask.alphaMask);
+    expect(definition.layers[0].asset).toBe(artwork.id);
+    expect(definition.layers[0].appearance.effects.visualMask.maskAssetId).toBe(
+      visualMask.id,
+    );
+    expect(definition.layers[0].spawn?.maskAssetId).toBe(spawnMask.id);
+    expect(compactJson).not.toContain("\n");
+    expect(JSON.parse(compactJson)).toEqual(definition);
+    expect(runtimeDefinitionToProject(definition).layers[0]).toMatchObject({
+      assetId: artwork.id,
+      spawn: { shape: "point", maskAssetId: spawnMask.id },
+      appearance: {
+        effects: { visualMask: { maskAssetId: visualMask.id } },
+      },
+    });
   });
 
   it("includes mask-only assets in templates and remaps conflicting IDs", () => {

@@ -1,4 +1,18 @@
-import type { VfxAsset } from "./types";
+import type { NormalizedSourceCrop, VfxAsset } from "./types";
+interface CroppableFrame {
+  realWidth: number;
+  realHeight: number;
+}
+interface CroppableImage {
+  frame: CroppableFrame;
+  isCropped: boolean;
+  setCrop(x?: number, y?: number, width?: number, height?: number): unknown;
+}
+/** Applies evaluator-normalized crop coordinates to the sprite's current frame. */
+export declare function syncNormalizedSourceCrop(
+  sprite: CroppableImage,
+  crop: NormalizedSourceCrop | null,
+): void;
 interface FrameTexture {
   frames: object;
   add: (

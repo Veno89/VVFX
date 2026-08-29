@@ -6,6 +6,8 @@ import {
   Boxes,
   ChevronDown,
   ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   Copy,
   Eye,
   EyeOff,
@@ -13,12 +15,14 @@ import {
   FolderPlus,
   GripVertical,
   Layers3,
+  ListChecks,
   Lock,
   LockOpen,
   MoreHorizontal,
   PauseCircle,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -46,6 +50,19 @@ const SCRATCH_LAYER_TYPES: LayerType[] = [
   "emitter",
 ];
 
+const CONVERSION_LAYER_TYPES: LayerType[] = [
+  "beam",
+  "animated",
+  "static",
+  "burst",
+  "emitter",
+];
+
+export interface BulkLayerConversionResult {
+  converted: number;
+  skipped: number;
+}
+
 export function LayerPanel({
   layers,
   groups,
@@ -57,6 +74,8 @@ export function LayerPanel({
   onAdd,
   onAddPreset,
   onUpdate,
+  onConvert,
+  onBulkConvert,
   onDuplicate,
   onDelete,
   onReorder,
@@ -80,6 +99,8 @@ export function LayerPanel({
   onAdd: (type: LayerType) => void;
   onAddPreset: (presetId: string) => void;
   onUpdate: (id: string, patch: Partial<VfxLayer>) => void;
+  onConvert?: (id: string, type: LayerType) => void;
+  onBulkConvert?: (ids: string[], type: LayerType) => BulkLayerConversionResult;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onReorder: (from: number, to: number) => void;
@@ -104,8 +125,10 @@ export function LayerPanel({
     left: number;
     top: number;
   } | null>(null);
-  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [actionAnnouncement, setActionAnnouncement] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [dragModelIndex, setDragModelIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
@@ -114,6 +137,14 @@ export function LayerPanel({
   const layerNameRefs = useRef(new Map<string, HTMLButtonElement>());
   const deleteFocusFrameRef = useRef<number | null>(null);
   const lockedIds = new Set(lockedLayerIds);
+  const selectableLayerIds = layers
+    .filter((layer) => !lockedIds.has(layer.id))
+    .map((layer) => layer.id);
+  const selectableIds = new Set(selectableLayerIds);
+  const selectedBulkLayerIds = bulkSelectedIds.filter((id) =>
+    selectableIds.has(id),
+  );
+  const selectedBulkIds = new Set(selectedBulkLayerIds);
   const folderByLayerId = new Map<string, LayerWorkspaceFolder>();
   for (const folder of folders)
     for (const layerId of folder.layerIds)
@@ -126,7 +157,11 @@ export function LayerPanel({
       .toLocaleLowerCase()
       .includes(normalizedSearch);
   };
-  const displayedLayers = layers.filter(matchesSearch);
+  const displayedLayerEntries = layers
+    .map((layer, modelIndex) => ({ layer, modelIndex }))
+    .filter(({ layer }) => matchesSearch(layer))
+    .reverse();
+  const displayedLayers = displayedLayerEntries.map(({ layer }) => layer);
   const firstDisplayedLayerByFolder = new Map<string, string>();
   for (const layer of displayedLayers) {
     const folder = folderByLayerId.get(layer.id);
@@ -236,6 +271,12 @@ export function LayerPanel({
     setMenuIndex: (index: number) => void,
   ) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    if (
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement
+    )
+      return;
     const allItems = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"),
     );
@@ -406,6 +447,24 @@ export function LayerPanel({
         >
           <FolderPlus size={13} /> Folder
         </button>
+        {onBulkConvert && (layers.length > 0 || bulkMode) && (
+          <button
+            type="button"
+            className={bulkMode ? "is-active" : ""}
+            aria-label={bulkMode ? "Exit layer selection" : "Select layers"}
+            aria-pressed={bulkMode}
+            onClick={() => {
+              setAddOpen(false);
+              setActionsOpenId(null);
+              setBulkMode((current) => {
+                if (current) setBulkSelectedIds([]);
+                return !current;
+              });
+            }}
+          >
+            <ListChecks size={13} /> {bulkMode ? "Done" : "Select"}
+          </button>
+        )}
       </div>
       <div className="group-list-block">
         <div className="group-list-heading">
@@ -445,6 +504,56 @@ export function LayerPanel({
           </div>
         )}
       </div>
+      {bulkMode && onBulkConvert && (
+        <div className="layer-bulk-bar" role="group" aria-label="Bulk layers">
+          <div className="layer-bulk-bar__summary">
+            <strong>{selectedBulkLayerIds.length} selected</strong>
+            <span>
+              <button
+                type="button"
+                onClick={() => setBulkSelectedIds(selectableLayerIds)}
+                disabled={
+                  selectableLayerIds.length === 0 ||
+                  selectedBulkLayerIds.length === selectableLayerIds.length
+                }
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkSelectedIds([])}
+                disabled={selectedBulkLayerIds.length === 0}
+              >
+                Clear
+              </button>
+            </span>
+          </div>
+          <label>
+            <span>Change type</span>
+            <select
+              aria-label="Change type for selected layers"
+              value=""
+              disabled={selectedBulkLayerIds.length === 0}
+              onChange={(event) => {
+                const type = event.target.value as LayerType | "";
+                if (!type) return;
+                const result = onBulkConvert(selectedBulkLayerIds, type);
+                setActionAnnouncement(
+                  `${result.converted} layer${result.converted === 1 ? "" : "s"} converted to ${LAYER_TYPE_LABELS[type]}. ${result.skipped} skipped. Undo restores the batch.`,
+                );
+              }}
+            >
+              <option value="">Choose a target type...</option>
+              {CONVERSION_LAYER_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  Convert selected to {LAYER_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <small>Locked layers stay unchanged and cannot be selected.</small>
+        </div>
+      )}
       <div className="layer-list">
         {layers.length === 0 && (
           <div className="empty-state">
@@ -483,14 +592,17 @@ export function LayerPanel({
               </button>
             </div>
           ))}
-        {layers.map((layer, index) => {
-          if (!matchesSearch(layer)) return null;
+        {displayedLayerEntries.map(({ layer, modelIndex }) => {
           const folder = folderByLayerId.get(layer.id);
           const firstInFolder =
             folder && firstDisplayedLayerByFolder.get(folder.id) === layer.id;
           const hiddenByFolder =
             folder?.collapsed === true && normalizedSearch.length === 0;
           const locked = lockedIds.has(layer.id);
+          const conversionTypes = onConvert
+            ? CONVERSION_LAYER_TYPES.filter((type) => type !== layer.type)
+            : [];
+          const deleteMenuIndex = 6;
           return (
             <Fragment key={layer.id}>
               {firstInFolder && folder && (
@@ -536,19 +648,47 @@ export function LayerPanel({
               )}
               {!hiddenByFolder && (
                 <div
-                  className={`layer-row ${selectedId === layer.id ? "is-selected" : ""} ${!layer.enabled ? "is-disabled" : ""} ${locked ? "is-locked" : ""}`}
-                  draggable={!locked && editingId !== layer.id}
-                  onDragStart={() => setDragIndex(index)}
+                  className={`layer-row ${selectedId === layer.id ? "is-selected" : ""} ${selectedBulkIds.has(layer.id) ? "is-bulk-selected" : ""} ${!layer.enabled ? "is-disabled" : ""} ${locked ? "is-locked" : ""}`}
+                  draggable={!bulkMode && !locked && editingId !== layer.id}
+                  onDragStart={() => setDragModelIndex(modelIndex)}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={() => {
-                    if (dragIndex !== null && dragIndex !== index)
-                      onReorder(dragIndex, index);
-                    setDragIndex(null);
+                    if (
+                      dragModelIndex !== null &&
+                      dragModelIndex !== modelIndex
+                    )
+                      onReorder(dragModelIndex, modelIndex);
+                    setDragModelIndex(null);
                   }}
+                  onDragEnd={() => setDragModelIndex(null)}
                 >
-                  <span className="drag-handle" aria-hidden="true">
-                    {locked ? <Lock size={12} /> : <GripVertical size={14} />}
-                  </span>
+                  {bulkMode ? (
+                    <label
+                      className="layer-bulk-check"
+                      title={locked ? "Locked layers cannot be selected" : ""}
+                    >
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${layer.name} for bulk changes`}
+                        checked={selectedBulkIds.has(layer.id)}
+                        disabled={locked}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setBulkSelectedIds((current) =>
+                            checked
+                              ? current.includes(layer.id)
+                                ? current
+                                : [...current, layer.id]
+                              : current.filter((id) => id !== layer.id),
+                          );
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <span className="drag-handle" aria-hidden="true">
+                      {locked ? <Lock size={12} /> : <GripVertical size={14} />}
+                    </span>
+                  )}
                   <div
                     className="layer-main"
                     onDoubleClick={() => startRename(layer)}
@@ -598,7 +738,13 @@ export function LayerPanel({
                     <button
                       type="button"
                       className={locked ? "is-active" : ""}
-                      onClick={() => onToggleLock?.(layer.id)}
+                      onClick={() => {
+                        if (!locked)
+                          setBulkSelectedIds((current) =>
+                            current.filter((id) => id !== layer.id),
+                          );
+                        onToggleLock?.(layer.id);
+                      }}
                       title={
                         locked ? "Unlock layer editing" : "Lock layer editing"
                       }
@@ -657,7 +803,7 @@ export function LayerPanel({
                         type="button"
                         title="Layer actions"
                         aria-label={`Actions for ${layer.name}`}
-                        aria-controls={`layer-actions-menu-${index}`}
+                        aria-controls={`layer-actions-menu-${modelIndex}`}
                         aria-expanded={actionsOpenId === layer.id}
                         aria-haspopup="menu"
                         onClick={() => {
@@ -678,7 +824,7 @@ export function LayerPanel({
                         createPortal(
                           <span
                             ref={actionsMenuRef}
-                            id={`layer-actions-menu-${index}`}
+                            id={`layer-actions-menu-${modelIndex}`}
                             className="layer-more__menu layer-more__menu--floating"
                             role="menu"
                             tabIndex={-1}
@@ -724,44 +870,123 @@ export function LayerPanel({
                               role="menuitem"
                               tabIndex={actionsMenuIndex === 2 ? 0 : -1}
                               onFocus={() => setActionsMenuIndex(2)}
-                              aria-label={`Move ${layer.name} up, currently position ${index + 1} of ${layers.length}`}
+                              aria-label={`Bring ${layer.name} forward, currently position ${layers.length - modelIndex} of ${layers.length}`}
                               onClick={() => {
                                 setActionsOpenId(null);
-                                onReorder(index, index - 1);
-                                setReorderAnnouncement(
-                                  `${layer.name} moved to position ${index} of ${layers.length}.`,
+                                onReorder(modelIndex, modelIndex + 1);
+                                setActionAnnouncement(
+                                  `${layer.name} moved forward to position ${layers.length - modelIndex - 1} of ${layers.length}.`,
                                 );
                               }}
-                              disabled={locked || index === 0}
+                              disabled={
+                                locked || modelIndex === layers.length - 1
+                              }
                             >
-                              <ArrowUp size={13} /> Move up
+                              <ArrowUp size={13} /> Bring forward
                             </button>
                             <button
                               type="button"
                               role="menuitem"
                               tabIndex={actionsMenuIndex === 3 ? 0 : -1}
                               onFocus={() => setActionsMenuIndex(3)}
-                              aria-label={`Move ${layer.name} down, currently position ${index + 1} of ${layers.length}`}
+                              aria-label={`Send ${layer.name} backward, currently position ${layers.length - modelIndex} of ${layers.length}`}
                               onClick={() => {
                                 setActionsOpenId(null);
-                                onReorder(index, index + 1);
-                                setReorderAnnouncement(
-                                  `${layer.name} moved to position ${index + 2} of ${layers.length}.`,
+                                onReorder(modelIndex, modelIndex - 1);
+                                setActionAnnouncement(
+                                  `${layer.name} moved backward to position ${layers.length - modelIndex + 1} of ${layers.length}.`,
                                 );
                               }}
-                              disabled={locked || index === layers.length - 1}
+                              disabled={locked || modelIndex === 0}
                             >
-                              <ArrowDown size={13} /> Move down
+                              <ArrowDown size={13} /> Send backward
                             </button>
                             <button
                               type="button"
                               role="menuitem"
                               tabIndex={actionsMenuIndex === 4 ? 0 : -1}
                               onFocus={() => setActionsMenuIndex(4)}
+                              aria-label={`Bring ${layer.name} to front, currently position ${layers.length - modelIndex} of ${layers.length}`}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onReorder(modelIndex, layers.length - 1);
+                                setActionAnnouncement(
+                                  `${layer.name} brought to front and is now frontmost, position 1 of ${layers.length}.`,
+                                );
+                              }}
+                              disabled={
+                                locked || modelIndex === layers.length - 1
+                              }
+                            >
+                              <ChevronsUp size={13} /> Bring to front
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={actionsMenuIndex === 5 ? 0 : -1}
+                              onFocus={() => setActionsMenuIndex(5)}
+                              aria-label={`Send ${layer.name} to back, currently position ${layers.length - modelIndex} of ${layers.length}`}
+                              onClick={() => {
+                                setActionsOpenId(null);
+                                onReorder(modelIndex, 0);
+                                setActionAnnouncement(
+                                  `${layer.name} sent to back and is now backmost, position ${layers.length} of ${layers.length}.`,
+                                );
+                              }}
+                              disabled={locked || modelIndex === 0}
+                            >
+                              <ChevronsDown size={13} /> Send to back
+                            </button>
+                            {conversionTypes.length > 0 && (
+                              <span className="layer-type-picker" role="none">
+                                <span>
+                                  <RefreshCw size={12} />
+                                  <strong>Change type</strong>
+                                </span>
+                                <select
+                                  aria-label={`Change type for ${layer.name}`}
+                                  value={layer.type}
+                                  disabled={locked}
+                                  onChange={(event) => {
+                                    const type = event.target
+                                      .value as LayerType;
+                                    if (type === layer.type) return;
+                                    setActionsOpenId(null);
+                                    onConvert?.(layer.id, type);
+                                    setActionAnnouncement(
+                                      `${layer.name} converted to ${LAYER_TYPE_LABELS[type]}. Compatible settings were kept. Undo restores the previous type.`,
+                                    );
+                                  }}
+                                >
+                                  <option value={layer.type}>
+                                    {LAYER_TYPE_LABELS[layer.type]} (current)
+                                  </option>
+                                  {conversionTypes.map((type) => (
+                                    <option key={type} value={type}>
+                                      Convert to {LAYER_TYPE_LABELS[type]}
+                                    </option>
+                                  ))}
+                                </select>
+                                <small>
+                                  Keeps compatible settings. Beam endpoints
+                                  replace path, angle, movement, and X/Y scale.
+                                  Undo restores the original.
+                                </small>
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              tabIndex={
+                                actionsMenuIndex === deleteMenuIndex ? 0 : -1
+                              }
+                              onFocus={() =>
+                                setActionsMenuIndex(deleteMenuIndex)
+                              }
                               onClick={() => {
                                 setActionsOpenId(null);
                                 onDelete(layer.id);
-                                restoreFocusAfterDelete(index);
+                                restoreFocusAfterDelete(modelIndex);
                               }}
                               disabled={locked}
                             >
@@ -807,11 +1032,11 @@ export function LayerPanel({
         aria-live="polite"
         aria-atomic="true"
       >
-        {reorderAnnouncement}
+        {actionAnnouncement}
       </span>
       <p className="panel-footnote">
-        Drag or use layer Actions to reorder · folders and locks stay in this
-        browser workspace.
+        Top layers render in front · drag or use layer Actions to reorder ·
+        folders and locks stay in this browser workspace.
       </p>
     </section>
   );

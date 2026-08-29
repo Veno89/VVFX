@@ -161,26 +161,121 @@ afterEach(() => {
 });
 
 describe("truthful durable mutation feedback", () => {
-  it("keeps a regular save successful when recovery cleanup and list refresh fail", async () => {
+  it("keeps a regular save successful when recovery cleanup fails without loading the saved library", async () => {
     await restoreProject(projectWithLayer("Durable save"));
-    projectPersistence.clearRecoveryDraft.mockRejectedValueOnce(
+    projectPersistence.clearRecoveryDraft.mockRejectedValue(
       new Error("Recovery cleanup unavailable."),
-    );
-    projectPersistence.inspectStoredProjects.mockRejectedValueOnce(
-      new Error("Project index unavailable."),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(
       await screen.findByText(
-        /project saved, but .*recovery draft could not be cleared.*saved-project list could not be refreshed/i,
+        /project saved, but .*recovery draft could not be cleared/i,
       ),
     ).toBeVisible();
     expect(projectPersistence.saveProject).toHaveBeenCalledTimes(1);
+    expect(projectPersistence.inspectStoredProjects).not.toHaveBeenCalled();
     expect(screen.getByText("Saved")).toBeVisible();
     expect(screen.queryByText(/project could not be saved/i)).toBeNull();
   });
+
+  it("serializes recovery autosaves and keeps only the latest pending snapshot", async () => {
+    const firstAutosave = deferred<void>();
+    const latestAutosave = deferred<void>();
+    projectPersistence.saveRecoveryDraft
+      .mockImplementationOnce(() => firstAutosave.promise)
+      .mockImplementationOnce(() => latestAutosave.promise);
+    await restoreProject(projectWithLayer("Autosave A"));
+
+    await waitFor(
+      () =>
+        expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(1),
+      { timeout: 5_000 },
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), {
+      target: { value: "Autosave B" },
+    });
+    await act(
+      () => new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), {
+      target: { value: "Autosave C" },
+    });
+    await act(
+      () => new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
+    );
+    expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstAutosave.resolve(undefined);
+      await firstAutosave.promise;
+    });
+    await waitFor(() =>
+      expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(2),
+    );
+    const latestSnapshot = projectPersistence.saveRecoveryDraft.mock
+      .calls[1]?.[0] as VfxProject | undefined;
+    expect(latestSnapshot?.metadata.name).toBe("Autosave C");
+
+    await act(async () => {
+      latestAutosave.resolve(undefined);
+      await latestAutosave.promise;
+    });
+  });
+
+  it("preserves a newer queued recovery snapshot when an older project save finishes", async () => {
+    const activeRecovery = deferred<void>();
+    const latestRecovery = deferred<void>();
+    const projectSave = deferred<VfxProject>();
+    projectPersistence.saveRecoveryDraft
+      .mockImplementationOnce(() => activeRecovery.promise)
+      .mockImplementationOnce(() => latestRecovery.promise);
+    projectPersistence.saveProject.mockImplementationOnce(
+      () => projectSave.promise,
+    );
+    await restoreProject(projectWithLayer("Saved version B"));
+
+    await waitFor(
+      () =>
+        expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(1),
+      { timeout: 5_000 },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(projectPersistence.saveProject).toHaveBeenCalledTimes(1),
+    );
+    const savedSnapshot = projectPersistence.saveProject.mock.calls[0]?.[0] as
+      VfxProject | undefined;
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), {
+      target: { value: "Recovery version C" },
+    });
+    await act(
+      () => new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
+    );
+    expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      projectSave.resolve(savedSnapshot!);
+      await projectSave.promise;
+      await Promise.resolve();
+      expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(1);
+      activeRecovery.resolve(undefined);
+      await activeRecovery.promise;
+    });
+    await waitFor(() =>
+      expect(projectPersistence.saveRecoveryDraft).toHaveBeenCalledTimes(2),
+    );
+    const latestSnapshot = projectPersistence.saveRecoveryDraft.mock
+      .calls[1]?.[0] as VfxProject | undefined;
+    expect(latestSnapshot?.metadata.name).toBe("Recovery version C");
+
+    await act(async () => {
+      latestRecovery.resolve(undefined);
+      await latestRecovery.promise;
+    });
+  }, 15_000);
 
   it("queues the latest project snapshot and serializes repeated Save shortcuts", async () => {
     const firstSave = deferred<VfxProject>();

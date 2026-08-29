@@ -392,7 +392,7 @@ describe("layer capability boundaries", () => {
 
   it("normalizes contaminated format-v17 layers on project ingress", () => {
     const { project, beam: authoredBeam } = contaminatedV17Project();
-    expect(project.formatVersion).toBe(17);
+    expect(project.formatVersion).toBe(18);
 
     const result = deserializeProject(JSON.stringify(project));
     expect(result.ok).toBe(true);

@@ -10,9 +10,12 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type ComponentProps,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -43,6 +46,12 @@ import {
   createLayer,
   makeId,
 } from "../vfx/defaults";
+import {
+  createRenderingEffectClip,
+  DEFAULT_RENDERING_EFFECTS,
+  normalizeRenderingEffectClips,
+  type RenderingEffectKey,
+} from "../vfx/renderingEffects";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../vfx/presets";
 import {
   analyzeAssetUsage,
@@ -57,6 +66,7 @@ import {
   mergeCompatibleLayerSettings,
   type CopyableLayerSettings,
 } from "../vfx/layerLifecycle";
+import { convertLayerType, convertLayerTypes } from "../vfx/layerConversion";
 import {
   findLayerEventCycle,
   MAX_EVENT_DEPTH,
@@ -107,6 +117,7 @@ import {
 } from "./components/DefinitionDrawer";
 import { ExportDialog } from "./components/ExportDialog";
 import { GroupInspector } from "./components/GroupInspector";
+import { EffectInspector } from "./components/EffectInspector";
 import { Inspector } from "./components/Inspector";
 import {
   FirstEffectGuide,
@@ -133,6 +144,7 @@ import {
 import { TopBar, type ProjectSaveStatus } from "./components/TopBar";
 import { downloadText } from "./download";
 import { verifyEmbeddedAssetImages } from "./embeddedImageValidation";
+import { layerTypeLabel } from "./guidance";
 import {
   recordCanvasAsGif,
   recordCanvasAsWebm,
@@ -140,6 +152,8 @@ import {
   type PreviewRecordingRequest,
 } from "./previewRecording";
 import { useHistoryState } from "./useHistoryState";
+import { createPlaybackClock, type PlaybackClock } from "./playbackClock";
+import { createLatestOnlyAsyncQueue } from "./latestOnlyAsyncQueue";
 import {
   DEFAULT_WORKSPACE_PREFERENCES,
   loadWorkspacePreferences,
@@ -229,6 +243,36 @@ function activeEventGraphIssue(layers: VfxLayer[]): string | null {
   return null;
 }
 
+type ClockedPreviewPanelProps = Omit<
+  ComponentProps<typeof PreviewPanel>,
+  "time"
+> & { clock: PlaybackClock };
+
+export function ClockedPreviewPanel({
+  clock,
+  ...props
+}: ClockedPreviewPanelProps) {
+  const time = useSyncExternalStore(
+    clock.subscribe,
+    clock.getSnapshot,
+    clock.getSnapshot,
+  );
+  return <PreviewPanel {...props} time={time} />;
+}
+
+type ClockedTimelineProps = Omit<ComponentProps<typeof Timeline>, "time"> & {
+  clock: PlaybackClock;
+};
+
+export function ClockedTimeline({ clock, ...props }: ClockedTimelineProps) {
+  const time = useSyncExternalStore(
+    clock.subscribe,
+    clock.getSnapshot,
+    clock.getSnapshot,
+  );
+  return <Timeline {...props} time={time} />;
+}
+
 export function VfxEditor() {
   const initial = useMemo(() => createEmptyProject(), []);
   const history = useHistoryState(initial);
@@ -237,12 +281,15 @@ export function VfxEditor() {
     initial.layers[0]?.id ?? null,
   );
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedEffectClipId, setSelectedEffectClipId] = useState<
+    string | null
+  >(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(
     initial.assets[0]?.id ?? null,
   );
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [time, setTime] = useState(0);
+  const playbackClock = useMemo(() => createPlaybackClock(), []);
   const [previewRestartRevision, setPreviewRestartRevision] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportingPreview, setExportingPreview] = useState(false);
@@ -279,6 +326,7 @@ export function VfxEditor() {
   const [recoveryStorageBlocked, setRecoveryStorageBlocked] = useState(false);
   const [renderedProjectGeneration, setRenderedProjectGeneration] = useState(0);
   const recoveryGeneration = useRef(0);
+  const editorMountedRef = useRef(true);
   const recoveryStorageCheckedRef = useRef(false);
   const recoveryStorageBlockedRef = useRef(false);
   const projectGeneration = useRef(0);
@@ -292,15 +340,21 @@ export function VfxEditor() {
     useState<CopyableLayerSettings | null>(null);
   const [workspace, setWorkspace] = useState(DEFAULT_WORKSPACE_PREFERENCES);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
-  useEffect(
-    () => () => {
+  const recoveryAutosaveQueue = useMemo(
+    () => createLatestOnlyAsyncQueue<() => Promise<void>>((task) => task()),
+    [],
+  );
+  useEffect(() => {
+    editorMountedRef.current = true;
+    return () => {
+      editorMountedRef.current = false;
+      recoveryAutosaveQueue.clearPending();
       projectImageValidation.current?.abort();
       projectImageValidation.current = null;
       if (toastTimerRef.current !== null)
         window.clearTimeout(toastTimerRef.current);
-    },
-    [],
-  );
+    };
+  }, [recoveryAutosaveQueue]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setWorkspace(loadWorkspacePreferences(window.localStorage));
@@ -319,6 +373,10 @@ export function VfxEditor() {
     : (project.layers.find((layer) => layer.id === selectedId) ??
       project.layers[0] ??
       null);
+  const selectedEffectClip =
+    selectedLayer?.appearance.effectClips.find(
+      (clip) => clip.id === selectedEffectClipId,
+    ) ?? null;
   const effectiveSelectedAssetId =
     project.assets.find((asset) => asset.id === selectedAssetId)?.id ??
     project.assets[0]?.id ??
@@ -477,9 +535,9 @@ export function VfxEditor() {
     recoveryDraft !== null;
   const restartPreview = useCallback(() => {
     setPreviewRestartRevision((revision) => revision + 1);
-    setTime(playbackStart);
+    playbackClock.set(playbackStart);
     setPlaying(true);
-  }, [playbackStart]);
+  }, [playbackClock, playbackStart]);
 
   useEffect(() => {
     if (guideStep === 0 && guideActionStep === 0)
@@ -490,7 +548,7 @@ export function VfxEditor() {
   const saveInFlightRef = useRef<Promise<void> | null>(null);
   const activeSaveFingerprintRef = useRef<string | null>(null);
   const queuedSaveProjectRef = useRef<VfxProject | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     latestProjectRef.current = project;
   }, [project]);
   useEffect(() => {
@@ -528,6 +586,24 @@ export function VfxEditor() {
     setInvalidStoredTemplates(inspection.invalidRecords);
     setExcessStoredTemplates(inspection.excessRecords);
     return inspection.templates;
+  }, []);
+  const closeProjectLibrary = useCallback(() => {
+    projectImportRequest.current += 1;
+    projectImageValidation.current?.abort();
+    projectImageValidation.current = null;
+    setProjectsOpen(false);
+    setSavedProjects([]);
+    setInvalidStoredProjects([]);
+    setExcessStoredProjects(0);
+  }, []);
+  const closeTemplateLibrary = useCallback(() => {
+    projectImportRequest.current += 1;
+    projectImageValidation.current?.abort();
+    projectImageValidation.current = null;
+    setTemplatesOpen(false);
+    setSavedTemplates([]);
+    setInvalidStoredTemplates([]);
+    setExcessStoredTemplates(0);
   }, []);
   const handlePreviewCanvasReady = useCallback(
     (canvas: HTMLCanvasElement | null) => {
@@ -589,12 +665,24 @@ export function VfxEditor() {
       return;
     const generation = ++recoveryGeneration.current;
     if (!hasUnsavedChanges) {
-      void clearRecoveryDraft()
-        .then(() => {
-          if (recoveryGeneration.current === generation)
+      recoveryAutosaveQueue.clearPending();
+      recoveryAutosaveQueue.enqueue(async () => {
+        if (recoveryGeneration.current !== generation) return;
+        try {
+          await clearRecoveryDraft();
+          if (
+            editorMountedRef.current &&
+            recoveryGeneration.current === generation
+          )
             setRecoveryStatus("idle");
-        })
-        .catch(() => setRecoveryStatus("error"));
+        } catch {
+          if (
+            editorMountedRef.current &&
+            recoveryGeneration.current === generation
+          )
+            setRecoveryStatus("error");
+        }
+      });
       return;
     }
     const statusTimer = window.setTimeout(() => {
@@ -602,15 +690,23 @@ export function VfxEditor() {
         setRecoveryStatus("saving");
     }, 0);
     const timer = window.setTimeout(() => {
-      void saveRecoveryDraft(latestProjectRef.current)
-        .then(() => {
-          if (recoveryGeneration.current === generation)
+      const projectSnapshot = latestProjectRef.current;
+      recoveryAutosaveQueue.enqueue(async () => {
+        try {
+          await saveRecoveryDraft(projectSnapshot);
+          if (
+            editorMountedRef.current &&
+            recoveryGeneration.current === generation
+          )
             setRecoveryStatus("protected");
-        })
-        .catch(() => {
-          if (recoveryGeneration.current === generation)
+        } catch {
+          if (
+            editorMountedRef.current &&
+            recoveryGeneration.current === generation
+          )
             setRecoveryStatus("error");
-        });
+        }
+      });
     }, 800);
     return () => {
       window.clearTimeout(statusTimer);
@@ -622,6 +718,7 @@ export function VfxEditor() {
     recoveryChecked,
     recoveryDraft,
     recoveryStorageBlocked,
+    recoveryAutosaveQueue,
   ]);
 
   useEffect(() => {
@@ -646,7 +743,8 @@ export function VfxEditor() {
     const tick = (now: number) => {
       const delta = Math.min(80, now - previous) * speed;
       previous = now;
-      setTime((current) => {
+      let reachedEnd = false;
+      playbackClock.set((current) => {
         const next = Math.max(current, playbackStart) + delta;
         if (next < playbackEnd) return next;
         if (project.preview.loop)
@@ -654,14 +752,25 @@ export function VfxEditor() {
             playbackStart +
             ((next - playbackStart) % (playbackEnd - playbackStart))
           );
-        window.setTimeout(() => setPlaying(false), 0);
+        reachedEnd = true;
         return playbackEnd;
       });
+      if (reachedEnd) {
+        setPlaying(false);
+        return;
+      }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playbackEnd, playbackStart, playing, project.preview.loop, speed]);
+  }, [
+    playbackClock,
+    playbackEnd,
+    playbackStart,
+    playing,
+    project.preview.loop,
+    speed,
+  ]);
 
   const recordPreview = useCallback(
     async (
@@ -674,10 +783,10 @@ export function VfxEditor() {
         throw new Error(
           "The live preview is still starting. Wait a moment and try again.",
         );
-      const previousTime = time;
+      const previousTime = playbackClock.getSnapshot();
       const wasPlaying = playing;
       setPlaying(false);
-      setTime(playbackStart);
+      playbackClock.set(playbackStart);
       setExportingPreview(true);
       try {
         await waitForAnimationFrames(2);
@@ -686,7 +795,7 @@ export function VfxEditor() {
           duration: playbackEnd - playbackStart,
           size: request.size,
           renderFrame: async (frameTime: number) => {
-            setTime(playbackStart + frameTime);
+            playbackClock.set(playbackStart + frameTime);
             await waitForAnimationFrames(2);
           },
           onProgress,
@@ -696,11 +805,11 @@ export function VfxEditor() {
           : await recordCanvasAsWebm(recordingOptions);
       } finally {
         setExportingPreview(false);
-        setTime(previousTime);
+        playbackClock.set(previousTime);
         setPlaying(wasPlaying);
       }
     },
-    [playbackEnd, playbackStart, playing, project, time],
+    [playbackClock, playbackEnd, playbackStart, playing, project],
   );
 
   const updateProject = useCallback(
@@ -765,6 +874,108 @@ export function VfxEditor() {
     },
     [history, notify, project.layers],
   );
+  const addRenderingEffect = useCallback(
+    (effect: RenderingEffectKey) => {
+      if (!selectedLayer) return;
+      const existing = selectedLayer.appearance.effectClips.find(
+        (clip) => clip.effect === effect,
+      );
+      if (existing) {
+        setSelectedEffectClipId(existing.id);
+        return;
+      }
+
+      const groupDelay =
+        project.groups.find((group) => group.id === selectedLayer.groupId)
+          ?.delay ?? 0;
+      const duration = Math.max(1, selectedLayer.timing.duration);
+      const elapsedAtPlayhead =
+        playbackClock.getSnapshot() - groupDelay - selectedLayer.timing.delay;
+      const hasTimelineLocalPlayhead =
+        selectedLayer.startMode === "timeline" &&
+        selectedLayer.type !== "burst" &&
+        selectedLayer.type !== "emitter";
+      const repeats =
+        selectedLayer.timing.repeat > 0 ||
+        selectedLayer.timing.repeatForever ||
+        selectedLayer.timing.loop;
+      const localElapsed =
+        hasTimelineLocalPlayhead && repeats && elapsedAtPlayhead >= duration
+          ? elapsedAtPlayhead % duration
+          : hasTimelineLocalPlayhead
+            ? elapsedAtPlayhead
+            : 0;
+      const localPlayhead = Math.max(0, Math.min(1, localElapsed / duration));
+      const defaultLength = Math.min(1, 500 / duration);
+      let start = localPlayhead;
+      const end = Math.min(1, start + defaultLength);
+      if (end - start < Math.min(0.01, defaultLength)) {
+        start = Math.max(0, end - defaultLength);
+      }
+      const clip = {
+        ...createRenderingEffectClip(effect, makeId("effect")),
+        start,
+        end,
+      };
+      const effects = structuredClone(selectedLayer.appearance.effects);
+      effects[effect].enabled = true;
+      if (effect === "visualMask" && !effects.visualMask.maskAssetId) {
+        effects.visualMask.maskAssetId =
+          project.assets.find((asset) => !asset.spriteSheet)?.id ?? null;
+      }
+      updateLayer({
+        ...selectedLayer,
+        appearance: {
+          ...selectedLayer.appearance,
+          effects,
+          effectClips: [...selectedLayer.appearance.effectClips, clip],
+        },
+      });
+      setSelectedEffectClipId(clip.id);
+    },
+    [playbackClock, project.assets, project.groups, selectedLayer, updateLayer],
+  );
+  const updateSelectedEffectClip = useCallback(
+    (patch: Partial<NonNullable<typeof selectedEffectClip>>) => {
+      if (!selectedLayer || !selectedEffectClip) return;
+      const effectClips = normalizeRenderingEffectClips(
+        selectedLayer.appearance.effectClips.map((clip) =>
+          clip.id === selectedEffectClip.id ? { ...clip, ...patch } : clip,
+        ),
+        selectedLayer.appearance.effects,
+      );
+      updateLayer({
+        ...selectedLayer,
+        appearance: { ...selectedLayer.appearance, effectClips },
+      });
+    },
+    [selectedEffectClip, selectedLayer, updateLayer],
+  );
+  const removeSelectedRenderingEffect = useCallback(() => {
+    if (!selectedLayer || !selectedEffectClip) return;
+    const effects = structuredClone(selectedLayer.appearance.effects);
+    Object.assign(
+      effects[selectedEffectClip.effect],
+      structuredClone(DEFAULT_RENDERING_EFFECTS[selectedEffectClip.effect]),
+    );
+    updateLayer({
+      ...selectedLayer,
+      appearance: {
+        ...selectedLayer.appearance,
+        effects,
+        effectClips: selectedLayer.appearance.effectClips.filter(
+          (clip) => clip.id !== selectedEffectClip.id,
+        ),
+      },
+    });
+    setSelectedEffectClipId(null);
+    window.requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLButtonElement>("[data-effect-toolbelt-add]")
+        ?.focus({ preventScroll: true }),
+    );
+    notify("Effect removed. Undo restores its timing and settings.", "success");
+  }, [notify, selectedEffectClip, selectedLayer, updateLayer]);
   const updateLayers = useCallback(
     (nextLayers: VfxLayer[]) => {
       const canonicalLayers = nextLayers.map(canonicalizeLayerCapabilities);
@@ -1031,10 +1242,10 @@ export function VfxEditor() {
       }));
       setSelectedId(layer.id);
       setSelectedGroupId(null);
-      setTime(0);
+      playbackClock.set(0);
       setPlaying(true);
     },
-    [effectiveSelectedAssetId, history, project.assets],
+    [effectiveSelectedAssetId, history, playbackClock, project.assets],
   );
   const addPreset = useCallback(
     (presetId: string) => {
@@ -1042,6 +1253,7 @@ export function VfxEditor() {
         (candidate) => candidate.id === presetId,
       );
       if (composition) {
+        const insertionTime = playbackClock.getSnapshot();
         const source = createEmptyProject(composition.name);
         source.layers = composition.create();
         const template = createTemplateFromProject(
@@ -1051,7 +1263,11 @@ export function VfxEditor() {
           undefined,
           "effect",
         );
-        const inserted = insertTemplateIntoProject(project, template, time);
+        const inserted = insertTemplateIntoProject(
+          project,
+          template,
+          insertionTime,
+        );
         const firstLayer = inserted.project.layers.find(
           (layer) => layer.id === inserted.insertedLayerIds[0],
         );
@@ -1059,10 +1275,10 @@ export function VfxEditor() {
         setSelectedId(firstLayer?.id ?? null);
         setSelectedGroupId(null);
         setSelectedAssetId(firstLayer?.assetId ?? effectiveSelectedAssetId);
-        setTime(time);
+        playbackClock.set(insertionTime);
         setPlaying(true);
         notify(
-          `${composition.name} inserted at ${Math.round(time)} ms — ${composition.description}`,
+          `${composition.name} inserted at ${Math.round(insertionTime)} ms — ${composition.description}`,
           "success",
         );
         return;
@@ -1078,11 +1294,11 @@ export function VfxEditor() {
       }));
       setSelectedId(layer.id);
       setSelectedGroupId(null);
-      setTime(0);
+      playbackClock.set(0);
       setPlaying(true);
       notify(`${preset.name} added — ${preset.description}`, "success");
     },
-    [effectiveSelectedAssetId, history, notify, project, time],
+    [effectiveSelectedAssetId, history, notify, playbackClock, project],
   );
   const duplicateLayer = useCallback(
     (id: string) => {
@@ -1109,6 +1325,94 @@ export function VfxEditor() {
       setSelectedGroupId(null);
     },
     [history, project, updateProjectWorkspace],
+  );
+  const convertLayerById = useCallback(
+    (id: string, targetType: LayerType) => {
+      const source = project.layers.find((layer) => layer.id === id);
+      if (!source || source.type === targetType) return;
+      if (projectWorkspace.lockedLayerIds.includes(id)) {
+        notify("Unlock this layer before changing its type.", "warning");
+        return;
+      }
+      history.set((current) => {
+        const currentSource = current.layers.find((layer) => layer.id === id);
+        if (!currentSource || currentSource.type === targetType) return current;
+        const asset = current.assets.find(
+          (candidate) => candidate.id === currentSource.assetId,
+        );
+        return {
+          ...current,
+          layers: current.layers.map((layer) =>
+            layer.id === id
+              ? convertLayerType(currentSource, targetType, asset)
+              : layer,
+          ),
+          metadata: {
+            ...current.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
+      setSelectedId(id);
+      setSelectedGroupId(null);
+      notify(
+        targetType === "beam"
+          ? `Converted “${source.name}” to Beam. Compatible settings were kept; endpoints now control its length and angle. Undo restores the previous type.`
+          : `Converted “${source.name}” to ${layerTypeLabel(targetType)}. Compatible settings were kept. Undo restores the previous type.`,
+        "success",
+      );
+    },
+    [history, notify, project.layers, projectWorkspace.lockedLayerIds],
+  );
+  const convertSelectedLayers = useCallback(
+    (ids: string[], targetType: LayerType) => {
+      const requestedIds = [...new Set(ids)];
+      const result = convertLayerTypes(
+        project.layers,
+        project.assets,
+        requestedIds,
+        targetType,
+        projectWorkspace.lockedLayerIds,
+      );
+      const typeLabel = layerTypeLabel(targetType);
+      if (result.converted === 0) {
+        notify(
+          `0 layers converted to ${typeLabel}. ${result.skipped} skipped because they were locked, missing, or already that type.`,
+          "warning",
+        );
+        return { converted: 0, skipped: result.skipped };
+      }
+      history.set((current) => {
+        const currentResult = convertLayerTypes(
+          current.layers,
+          current.assets,
+          requestedIds,
+          targetType,
+          projectWorkspace.lockedLayerIds,
+        );
+        if (currentResult.converted === 0) return current;
+        return {
+          ...current,
+          layers: currentResult.layers,
+          metadata: {
+            ...current.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
+      notify(
+        `${result.converted} layer${result.converted === 1 ? "" : "s"} converted to ${typeLabel} in one edit. ${result.skipped} skipped. Undo restores the batch.`,
+        "success",
+      );
+      return { converted: result.converted, skipped: result.skipped };
+    },
+    [
+      history,
+      notify,
+      project.assets,
+      project.layers,
+      projectWorkspace.lockedLayerIds,
+    ],
   );
   const deleteLayerById = useCallback(
     (id: string) => {
@@ -1174,7 +1478,8 @@ export function VfxEditor() {
 
   const activateProject = useCallback(
     (next: VfxProject, manuallySaved: boolean, preserveRecovery = false) => {
-      recoveryGeneration.current += 1;
+      const generation = ++recoveryGeneration.current;
+      recoveryAutosaveQueue.clearPending();
       projectGeneration.current += 1;
       projectImportRequest.current += 1;
       projectImageValidation.current?.abort();
@@ -1185,7 +1490,7 @@ export function VfxEditor() {
       setSelectedGroupId(null);
       setSelectedAssetId(next.assets[0]?.id ?? null);
       setAssetRemovalId(null);
-      setTime(0);
+      playbackClock.set(0);
       setPlaying(false);
       setSavedFingerprint(manuallySaved ? projectFingerprint(next) : null);
       setRecoveryStatus("idle");
@@ -1195,9 +1500,20 @@ export function VfxEditor() {
         recoveryStorageCheckedRef.current &&
         !recoveryStorageBlockedRef.current
       )
-        void clearRecoveryDraft().catch(() => setRecoveryStatus("error"));
+        recoveryAutosaveQueue.enqueue(async () => {
+          if (recoveryGeneration.current !== generation) return;
+          try {
+            await clearRecoveryDraft();
+          } catch {
+            if (
+              editorMountedRef.current &&
+              recoveryGeneration.current === generation
+            )
+              setRecoveryStatus("error");
+          }
+        });
     },
-    [history],
+    [history, playbackClock, recoveryAutosaveQueue],
   );
 
   const createNewProject = useCallback(() => {
@@ -1242,7 +1558,12 @@ export function VfxEditor() {
       }
 
       const savedVersion = projectFingerprint(storedProject);
-      recoveryGeneration.current += 1;
+      const savedSourceIsStillCurrent =
+        projectFingerprint(latestProjectRef.current) === sourceVersion;
+      if (savedSourceIsStillCurrent) {
+        recoveryGeneration.current += 1;
+        recoveryAutosaveQueue.clearPending();
+      }
       history.setTransient((current) => {
         if (projectFingerprint(current) !== sourceVersion) return current;
         return {
@@ -1258,28 +1579,39 @@ export function VfxEditor() {
         };
       });
       setSavedFingerprint(savedVersion);
-      setSavedProjects((current) => upsertSavedProject(current, storedProject));
+      if (projectsOpen)
+        setSavedProjects((current) =>
+          upsertSavedProject(current, storedProject),
+        );
 
       let recoveryCleanupFailed = false;
       if (
         recoveryStorageCheckedRef.current &&
         !recoveryStorageBlockedRef.current &&
+        savedSourceIsStillCurrent &&
         projectFingerprint(latestProjectRef.current) === sourceVersion
       ) {
-        try {
-          await clearRecoveryDraft();
-          setRecoveryStatus("idle");
-        } catch {
-          recoveryCleanupFailed = true;
-          setRecoveryStatus("error");
-        }
+        recoveryAutosaveQueue.enqueue(async () => {
+          if (projectFingerprint(latestProjectRef.current) !== sourceVersion)
+            return;
+          try {
+            await clearRecoveryDraft();
+            setRecoveryStatus("idle");
+          } catch {
+            recoveryCleanupFailed = true;
+            setRecoveryStatus("error");
+          }
+        });
+        await recoveryAutosaveQueue.whenIdle();
       }
 
       let projectRefreshFailed = false;
-      try {
-        await refreshStoredProjects();
-      } catch {
-        projectRefreshFailed = true;
+      if (projectsOpen) {
+        try {
+          await refreshStoredProjects();
+        } catch {
+          projectRefreshFailed = true;
+        }
       }
 
       const followUpWarnings = [
@@ -1302,7 +1634,14 @@ export function VfxEditor() {
         followUpWarnings.length > 0 ? "warning" : "success",
       );
     },
-    [history, notify, recoveryStorageBlocked, refreshStoredProjects],
+    [
+      history,
+      notify,
+      projectsOpen,
+      recoveryAutosaveQueue,
+      recoveryStorageBlocked,
+      refreshStoredProjects,
+    ],
   );
 
   const save = useCallback((): Promise<void> => {
@@ -1366,17 +1705,10 @@ export function VfxEditor() {
           : new Error("This copy could not be saved.");
       }
       activateProject(storedCopy, true);
-      setSavedProjects((current) => upsertSavedProject(current, storedCopy));
       setSaveAsOpen(false);
       notify(`Saved as “${storedCopy.metadata.name}”.`, "success");
-      void refreshStoredProjects().catch(() =>
-        notify(
-          `Saved as “${storedCopy.metadata.name}”, but the saved-project list could not be refreshed yet.`,
-          "warning",
-        ),
-      );
     },
-    [activateProject, notify, project, refreshStoredProjects],
+    [activateProject, notify, project],
   );
 
   const openProjects = useCallback(async () => {
@@ -1457,7 +1789,12 @@ export function VfxEditor() {
           projectFingerprint(latestProjectRef.current) !== sourceFingerprint
         )
           return;
-        const inserted = insertTemplateIntoProject(project, template, time);
+        const insertionTime = playbackClock.getSnapshot();
+        const inserted = insertTemplateIntoProject(
+          project,
+          template,
+          insertionTime,
+        );
         const firstLayer = inserted.project.layers.find(
           (layer) => layer.id === inserted.insertedLayerIds[0],
         );
@@ -1471,9 +1808,9 @@ export function VfxEditor() {
         setSelectedId(firstLayer?.id ?? null);
         setSelectedGroupId(null);
         setSelectedAssetId(firstLayer?.assetId ?? effectiveSelectedAssetId);
-        setTime(time);
+        playbackClock.set(insertionTime);
         setPlaying(true);
-        setTemplatesOpen(false);
+        closeTemplateLibrary();
         notify(
           `Inserted “${template.name}” as ${inserted.insertedLayerIds.length} new layer${inserted.insertedLayerIds.length === 1 ? "" : "s"}.`,
           "success",
@@ -1491,7 +1828,14 @@ export function VfxEditor() {
           projectImageValidation.current = null;
       }
     },
-    [effectiveSelectedAssetId, history, notify, project, time],
+    [
+      closeTemplateLibrary,
+      effectiveSelectedAssetId,
+      history,
+      notify,
+      playbackClock,
+      project,
+    ],
   );
 
   const importTemplateFile = useCallback(
@@ -1644,7 +1988,7 @@ export function VfxEditor() {
       });
     }
     if (step === 4) {
-      setTime(0);
+      playbackClock.set(0);
       setPlaying(true);
     }
     if (step === 5) void save();
@@ -1884,12 +2228,18 @@ export function VfxEditor() {
             onSelect={(id) => {
               setSelectedId(id);
               setSelectedGroupId(null);
+              setSelectedEffectClipId(null);
             }}
-            onSelectGroup={(id) => setSelectedGroupId(id)}
+            onSelectGroup={(id) => {
+              setSelectedGroupId(id);
+              setSelectedEffectClipId(null);
+            }}
             onCreateGroup={addGroup}
             onAdd={(type) => addLayer(type, effectiveSelectedAssetId, "manual")}
             onAddPreset={addPreset}
             onUpdate={patchLayer}
+            onConvert={convertLayerById}
+            onBulkConvert={convertSelectedLayers}
             onDuplicate={duplicateLayer}
             onDelete={deleteLayerById}
             onReorder={(from, to) => {
@@ -1964,10 +2314,10 @@ export function VfxEditor() {
           />
         </div>
 
-        <PreviewPanel
+        <ClockedPreviewPanel
           key={project.metadata.id}
+          clock={playbackClock}
           project={project}
-          time={time}
           playing={playing}
           speed={speed}
           loopEnd={activePlaybackEnd}
@@ -2068,8 +2418,12 @@ export function VfxEditor() {
           }}
           onPlayToggle={() =>
             setPlaying((value) => {
-              if (!value && (time < playbackStart || time >= playbackEnd))
-                setTime(playbackStart);
+              const currentTime = playbackClock.getSnapshot();
+              if (
+                !value &&
+                (currentTime < playbackStart || currentTime >= playbackEnd)
+              )
+                playbackClock.set(playbackStart);
               return !value;
             })
           }
@@ -2086,6 +2440,27 @@ export function VfxEditor() {
             onChange={updateGroup}
             onLayerGroupChange={assignLayerToGroup}
             onDelete={() => deleteGroupById(selectedGroup.id)}
+          />
+        ) : selectedLayer && selectedEffectClip ? (
+          <EffectInspector
+            layer={selectedLayer}
+            clip={selectedEffectClip}
+            assets={project.assets}
+            locked={projectWorkspace.lockedLayerIds.includes(selectedLayer.id)}
+            onBack={() => {
+              const clipId = selectedEffectClip.id;
+              setSelectedEffectClipId(null);
+              window.requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLButtonElement>(
+                    `[data-effect-clip-id="${clipId}"]`,
+                  )
+                  ?.focus({ preventScroll: true }),
+              );
+            }}
+            onLayerChange={updateLayer}
+            onClipChange={updateSelectedEffectClip}
+            onRemove={removeSelectedRenderingEffect}
           />
         ) : (
           <Inspector
@@ -2151,6 +2526,9 @@ export function VfxEditor() {
                 ? projectWorkspace.lockedLayerIds.includes(selectedLayer.id)
                 : false
             }
+            selectedEffectClipId={selectedEffectClip?.id ?? null}
+            onAddEffect={addRenderingEffect}
+            onSelectEffect={setSelectedEffectClipId}
           />
         )}
         <PanelResizeHandle
@@ -2218,20 +2596,30 @@ export function VfxEditor() {
           )
         }
       />
-      <Timeline
+      <ClockedTimeline
+        clock={playbackClock}
         layers={project.layers}
         groups={project.groups}
         duration={project.preview.duration}
-        time={time}
         selectedId={effectiveSelectedId}
         selectedGroupId={effectiveSelectedGroupId}
+        selectedEffectClipId={selectedEffectClip?.id ?? null}
         onSelect={(id) => {
           setSelectedId(id);
           setSelectedGroupId(null);
+          setSelectedEffectClipId(null);
         }}
-        onSelectGroup={(id) => setSelectedGroupId(id)}
+        onSelectGroup={(id) => {
+          setSelectedGroupId(id);
+          setSelectedEffectClipId(null);
+        }}
+        onSelectEffect={(layerId, clipId) => {
+          setSelectedId(layerId);
+          setSelectedGroupId(null);
+          setSelectedEffectClipId(clipId);
+        }}
         onSeek={(nextTime) => {
-          setTime(nextTime);
+          playbackClock.set(nextTime);
           setPlaying(false);
         }}
         onLayerChange={updateLayer}
@@ -2388,12 +2776,7 @@ export function VfxEditor() {
             invalidStoredProjects.length + (recoveryStorageBlocked ? 1 : 0)
           }
           excessSavedCount={excessStoredProjects}
-          onClose={() => {
-            projectImportRequest.current += 1;
-            projectImageValidation.current?.abort();
-            projectImageValidation.current = null;
-            setProjectsOpen(false);
-          }}
+          onClose={closeProjectLibrary}
           onLoad={(next) => {
             if (!confirmProjectReplacement("Loading another project")) return;
             const request = ++projectImportRequest.current;
@@ -2409,7 +2792,7 @@ export function VfxEditor() {
                 )
                   return;
                 activateProject(next, true);
-                setProjectsOpen(false);
+                closeProjectLibrary();
                 notify("Saved project loaded.", "success");
               })
               .catch((error: unknown) => {
@@ -2552,7 +2935,7 @@ export function VfxEditor() {
             projectImageValidation.current?.abort();
             projectImageValidation.current = null;
             addPreset(presetId);
-            setTemplatesOpen(false);
+            closeTemplateLibrary();
           }}
           onRename={async (template, name) => {
             const storedTemplate = await saveTemplate({
@@ -2677,11 +3060,7 @@ export function VfxEditor() {
               "success",
             );
           }}
-          onClose={() => {
-            projectImageValidation.current?.abort();
-            projectImageValidation.current = null;
-            setTemplatesOpen(false);
-          }}
+          onClose={closeTemplateLibrary}
         />
       )}
       {saveAsOpen && (
@@ -2733,15 +3112,22 @@ export function VfxEditor() {
               });
           }}
           onDiscard={() => {
-            recoveryGeneration.current += 1;
+            const generation = ++recoveryGeneration.current;
+            recoveryAutosaveQueue.clearPending();
             projectImportRequest.current += 1;
             projectImageValidation.current?.abort();
             projectImageValidation.current = null;
             setRecoveryDraft(null);
             setRecoveryStatus("idle");
-            void clearRecoveryDraft().catch(() =>
-              notify("Recovery data could not be cleared.", "error"),
-            );
+            recoveryAutosaveQueue.enqueue(async () => {
+              if (recoveryGeneration.current !== generation) return;
+              try {
+                await clearRecoveryDraft();
+              } catch {
+                if (recoveryGeneration.current === generation)
+                  notify("Recovery data could not be cleared.", "error");
+              }
+            });
           }}
         />
       )}

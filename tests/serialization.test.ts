@@ -9,7 +9,10 @@ import {
   serializeProject,
   validateProject,
 } from "../src/vfx/serialization";
-import { createDefaultRenderingEffects } from "../src/vfx/renderingEffects";
+import {
+  createDefaultRenderingEffects,
+  createRenderingEffectClip,
+} from "../src/vfx/renderingEffects";
 import { validPngDataUrl } from "./fixtures/portableImages";
 
 describe("Vvfx project files", () => {
@@ -57,7 +60,7 @@ describe("Vvfx project files", () => {
       result.project?.assets.find((asset) => asset.id === "user-image")
         ?.atlasFrame,
     ).toBe("vfx/spark-strip");
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.groups[0]).toMatchObject({
       name: "Impact core",
       x: 24,
@@ -105,7 +108,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].frameAnimation.framesPerSecond).toBe(12);
     expect(result.project?.layers[0].trail.enabled).toBe(false);
   });
@@ -126,7 +129,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers.every((layer) => !layer.trail.enabled)).toBe(
       true,
     );
@@ -150,7 +153,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].motionPath).toMatchObject({
       enabled: false,
       mode: "curve",
@@ -171,7 +174,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].timing.customEasing).toEqual({
       x1: 0.42,
       y1: 0,
@@ -191,7 +194,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].keyframes).toMatchObject({
       enabled: false,
       initialized: false,
@@ -211,7 +214,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.groups).toEqual([]);
     expect(
       result.project?.layers.every((layer) => layer.groupId === null),
@@ -229,7 +232,7 @@ describe("Vvfx project files", () => {
 
     const result = validateProject(project);
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(
       result.project?.assets.every((asset) => asset.atlasFrame === null),
     ).toBe(true);
@@ -253,7 +256,7 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].appearance.colorOverLifetime).toEqual({
       enabled: false,
       stops: [
@@ -286,7 +289,7 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(result.project?.layers[0].appearance.effects).toEqual(
       createDefaultRenderingEffects(),
     );
@@ -308,12 +311,136 @@ describe("Vvfx project files", () => {
     const result = validateProject(project);
 
     expect(result.ok).toBe(true);
-    expect(result.project?.formatVersion).toBe(17);
+    expect(result.project?.formatVersion).toBe(18);
     expect(
       result.project?.layers[0].appearance.effects.directionalDissolve,
     ).toMatchObject({
       pattern: "directional",
       noiseScale: 6,
+    });
+  });
+
+  it("migrates authored v17 rendering effects into full-life clips", () => {
+    const project = createExampleProject() as unknown as Record<
+      string,
+      unknown
+    >;
+    project.formatVersion = 17;
+    const layers = project.layers as Array<Record<string, unknown>>;
+    for (const rawLayer of layers) {
+      const appearance = rawLayer.appearance as Record<string, unknown>;
+      delete appearance.effectClips;
+    }
+    const appearance = layers[0].appearance as Record<string, unknown>;
+    const effects = appearance.effects as ReturnType<
+      typeof createDefaultRenderingEffects
+    >;
+    effects.outerGlow.enabled = true;
+    effects.blur.strength = 2;
+    effects.directionalDissolve.enabled = true;
+
+    const result = validateProject(project);
+
+    expect(result.ok).toBe(true);
+    expect(result.project?.formatVersion).toBe(18);
+    expect(result.project?.layers[0].appearance.effectClips).toEqual([
+      createRenderingEffectClip("blur", "effect-blur"),
+      createRenderingEffectClip("outerGlow", "effect-outerGlow"),
+      {
+        ...createRenderingEffectClip(
+          "directionalDissolve",
+          "effect-directionalDissolve",
+        ),
+        progressMode: "legacy-transform",
+      },
+    ]);
+    expect(result.project?.layers[1].appearance.effectClips).toEqual([]);
+  });
+
+  it("reconciles authored current-format effects that are missing clips", () => {
+    const project = createEmptyProject("Reconciled glow");
+    const layer = createExampleProject().layers[0];
+    layer.appearance.effects.outerGlow.enabled = true;
+    layer.appearance.effectClips = [];
+    project.layers = [layer];
+
+    const result = deserializeProject(serializeProject(project));
+
+    expect(result.ok).toBe(true);
+    expect(result.project?.layers[0].appearance.effectClips).toEqual([
+      createRenderingEffectClip("outerGlow", "effect-outerGlow"),
+    ]);
+  });
+
+  it("treats marker-less v18 effect clips as chronological drafts", () => {
+    const project = createExampleProject();
+    project.layers[0].appearance.effects.directionalDissolve.enabled = true;
+    project.layers[0].appearance.effectClips = [
+      createRenderingEffectClip(
+        "directionalDissolve",
+        "draft-directional-dissolve",
+      ),
+    ];
+    const rawProject = JSON.parse(JSON.stringify(project)) as Record<
+      string,
+      unknown
+    >;
+    const rawLayer = (rawProject.layers as Array<Record<string, unknown>>)[0];
+    const rawAppearance = rawLayer.appearance as Record<string, unknown>;
+    const rawClip = (
+      rawAppearance.effectClips as Array<Record<string, unknown>>
+    )[0];
+    delete rawClip.progressMode;
+
+    const result = validateProject(rawProject);
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.project?.layers[0].appearance.effectClips[0].progressMode,
+    ).toBe("chronological");
+  });
+
+  it("rejects duplicate current-format clips for one rendering effect", () => {
+    const project = createExampleProject();
+    project.layers[0].appearance.effectClips = [
+      createRenderingEffectClip("outerGlow", "first-glow"),
+      createRenderingEffectClip("outerGlow", "second-glow"),
+    ];
+
+    expect(validateProject(project)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/same effect/i),
+    });
+  });
+
+  it.each([
+    [
+      "unknown effect",
+      { effect: "sceneRefraction" },
+      /unknown rendering effect/i,
+    ],
+    ["non-numeric timing", { start: "0" }, /finite number/i],
+    ["out-of-range timing", { end: 1.1 }, /between 0 and 1/i],
+    ["reversed timing", { start: 0.8, end: 0.2 }, /after its start/i],
+    ["overlapping fades", { fadeIn: 0.7, fadeOut: 0.4 }, /fade-in/i],
+    ["unknown fade easing", { fadeEasing: "bounce" }, /fade easing/i],
+    ["unknown progress mode", { progressMode: "eased" }, /progress mode/i],
+  ])("rejects a current-format effect clip with %s", (_label, patch, error) => {
+    const project = createExampleProject();
+    project.layers[0].appearance.effectClips = [
+      createRenderingEffectClip("outerGlow", "invalid-glow"),
+    ];
+    Object.assign(
+      project.layers[0].appearance.effectClips[0] as unknown as Record<
+        string,
+        unknown
+      >,
+      patch,
+    );
+
+    expect(validateProject(project)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(error),
     });
   });
 

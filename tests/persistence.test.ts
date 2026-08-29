@@ -149,7 +149,7 @@ describe("browser project saves", () => {
       (await listProjects()).find(
         (project) => project.metadata.id === existing.metadata.id,
       )?.formatVersion,
-    ).toBe(17);
+    ).toBe(18);
     expect(await listTemplates()).toEqual([]);
     await deleteProject(existing.metadata.id);
   });

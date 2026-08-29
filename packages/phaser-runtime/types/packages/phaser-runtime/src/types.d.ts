@@ -51,7 +51,7 @@ export interface VvfxRuntimeLayer {
 }
 export interface VvfxRuntimeDefinition {
   format: "vvfx-runtime";
-  formatVersion: 15;
+  formatVersion: 16;
   name: string;
   duration: number;
   seed: number;
@@ -63,6 +63,7 @@ export interface RuntimeValidationResult {
   definition?: VvfxRuntimeDefinition;
   error?: string;
 }
+export type BeamFit = "stretch" | "crop";
 export interface VvfxEffectOptions {
   originX?: number;
   originY?: number;
@@ -76,6 +77,12 @@ export interface VvfxEffectOptions {
   signal?: AbortSignal;
   /** World-space endpoints applied to every Beam layer at startup. */
   beamEndpoints?: BeamEndpoints;
+  /** Stretch all source pixels (default), or crop short dynamic Beams. */
+  beamFit?: BeamFit;
+  /** Multiplies Beam thickness only; endpoint-fitted length is unchanged. */
+  beamThicknessScale?: number;
+  /** Caps one-shot playback and cleanup before the authored duration. */
+  maxDurationMs?: number;
   onComplete?: () => void;
   /** Receives one-time compatibility warnings, such as Canvas FX fallback. */
   onWarning?: (message: string) => void;

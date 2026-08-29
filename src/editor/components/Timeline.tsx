@@ -1,6 +1,13 @@
 "use client";
 
-import { Boxes, Clock3, Flag, Plus, Trash2 } from "lucide-react";
+import {
+  Boxes,
+  Clock3,
+  Flag,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { makeId } from "../../vfx/defaults";
 import { groupTimelineRange } from "../../vfx/groups";
@@ -12,6 +19,7 @@ import {
   snapTimelineTime,
   type TimelineSnapMode,
 } from "../../vfx/timelineTiming";
+import type { RenderingEffectClip } from "../../vfx/renderingEffects";
 import type {
   TimelineAuthoringSettings,
   TimelineMarker,
@@ -19,9 +27,12 @@ import type {
   VfxLayer,
 } from "../../vfx/types";
 import { useFocusRegion } from "../useFocusRegion";
+import { effectToolbeltDefinition } from "./EffectToolbelt";
 
 const TIMING_PLAN_ID = "vvfx-timing-plan";
 const TIMING_PLAN_TITLE_ID = "vvfx-timing-plan-title";
+const TIMELINE_OPTIONS_ID = "vvfx-timeline-options";
+const TIMELINE_OPTIONS_TITLE_ID = "vvfx-timeline-options-title";
 
 const percent = (value: number, duration: number) =>
   `${Math.max(0, Math.min(100, (value / duration) * 100))}%`;
@@ -40,6 +51,9 @@ const PROPERTY_TRACKS: Array<{
   { id: "opacity", label: "Opacity" },
   { id: "rotation", label: "Rotation" },
 ];
+
+const renderingEffectLabel = (effect: RenderingEffectClip["effect"]) =>
+  effectToolbeltDefinition(effect)?.label ?? effect;
 
 const propertyTrackValue = (
   frame: VfxLayer["keyframes"]["frames"][number],
@@ -105,6 +119,14 @@ interface KeyframeDragPreview {
   layerId: string;
   index: number;
   time: number;
+}
+
+interface EffectClipDragPreview {
+  layerId: string;
+  clipId: string;
+  start: number;
+  end: number;
+  mode: DragMode;
 }
 
 interface GroupDragPreview {
@@ -206,6 +228,61 @@ export function timingAfterTimelineDrag(
   };
 }
 
+export function effectClipTimingAfterTimelineDrag(
+  clip: Pick<RenderingEffectClip, "start" | "end">,
+  layerStart: number,
+  layerDuration: number,
+  compositionDuration: number,
+  deltaMs: number,
+  mode: DragMode,
+  snapMode: TimelineSnapMode = "10",
+  markers: TimelineMarker[] = [],
+  bypassSnap = false,
+): Pick<RenderingEffectClip, "start" | "end"> {
+  const safeLayerDuration = Math.max(1, layerDuration);
+  const minimumDuration = Math.min(1, Math.max(0.001, 1 / safeLayerDuration));
+  let start = Math.max(0, Math.min(1, clip.start));
+  let end = Math.max(0, Math.min(1, clip.end));
+  if (end - start < minimumDuration) {
+    if (start + minimumDuration <= 1) end = start + minimumDuration;
+    else {
+      start = Math.max(0, 1 - minimumDuration);
+      end = 1;
+    }
+  }
+  const snappedProgress = (progress: number) =>
+    (snapTimelineTime({
+      value: layerStart + progress * safeLayerDuration + deltaMs,
+      mode: snapMode,
+      markers,
+      duration: compositionDuration,
+      bypass: bypassSnap,
+    }) -
+      layerStart) /
+    safeLayerDuration;
+
+  if (mode === "move") {
+    const clipDuration = Math.min(1, end) - start;
+    const nextStart = Math.max(
+      0,
+      Math.min(1 - clipDuration, snappedProgress(start)),
+    );
+    return { start: nextStart, end: nextStart + clipDuration };
+  }
+  if (mode === "start")
+    return {
+      start: Math.max(
+        0,
+        Math.min(end - minimumDuration, snappedProgress(start)),
+      ),
+      end,
+    };
+  return {
+    start,
+    end: Math.max(start + minimumDuration, Math.min(1, snappedProgress(end))),
+  };
+}
+
 export function keyframeTimeAfterTimelineDrag(
   layer: VfxLayer,
   index: number,
@@ -242,6 +319,8 @@ export function Timeline({
   workEnd = null,
   onViewChange,
   lockedLayerIds = [],
+  selectedEffectClipId = null,
+  onSelectEffect,
 }: {
   layers: VfxLayer[];
   groups: VfxGroup[];
@@ -270,12 +349,16 @@ export function Timeline({
     workEnd?: number | null;
   }) => void;
   lockedLayerIds?: string[];
+  selectedEffectClipId?: string | null;
+  onSelectEffect?: (layerId: string, clipId: string) => void;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const [keyframeDragPreview, setKeyframeDragPreview] =
     useState<KeyframeDragPreview | null>(null);
+  const [effectClipDragPreview, setEffectClipDragPreview] =
+    useState<EffectClipDragPreview | null>(null);
   const [groupDragPreview, setGroupDragPreview] =
     useState<GroupDragPreview | null>(null);
   const [markerDragPreview, setMarkerDragPreview] = useState<{
@@ -293,6 +376,10 @@ export function Timeline({
     draft: timeline.notes,
   });
   const [timingPlanOpen, setTimingPlanOpen] = useState(false);
+  const [timelineOptionsOpen, setTimelineOptionsOpen] = useState(false);
+  const [expandedEffectLayerIds, setExpandedEffectLayerIds] = useState<
+    string[]
+  >([]);
   const [propertyTrack, setPropertyTrack] =
     useState<TimelinePropertyTrack>("summary");
   const [selectedMoment, setSelectedMoment] = useState<{
@@ -300,8 +387,21 @@ export function Timeline({
     index: number;
   } | null>(null);
   const lockedIds = new Set(lockedLayerIds);
+  const selectedEffectLayerId =
+    selectedEffectClipId &&
+    selectedId &&
+    layers
+      .find((layer) => layer.id === selectedId)
+      ?.appearance.effectClips.some((clip) => clip.id === selectedEffectClipId)
+      ? selectedId
+      : null;
 
   useEffect(() => () => dragCleanupRef.current?.(), []);
+  const displayedLayers = [...layers].reverse();
+  const expandedEffectLayers = new Set([
+    ...expandedEffectLayerIds,
+    ...(selectedEffectLayerId ? [selectedEffectLayerId] : []),
+  ]);
   const selectedMomentIndex =
     selectedMoment?.layerId === selectedId ? selectedMoment.index : null;
   const effectiveTimingIds =
@@ -314,6 +414,7 @@ export function Timeline({
     notesEditor.source === timeline.notes ? notesEditor.draft : timeline.notes;
   const setNotesDraft = (draft: string) =>
     setNotesEditor({ source: timeline.notes, draft });
+  const timelineOptionsTriggerRef = useRef<HTMLButtonElement>(null);
   const timingPlanTriggerRef = useRef<HTMLButtonElement>(null);
   const timingPlanNotesRef = useRef<HTMLTextAreaElement>(null);
   const closeTimingPlan = useCallback(() => {
@@ -323,6 +424,15 @@ export function Timeline({
     }
     setTimingPlanOpen(false);
   }, [notesDraft, onTimelineChange, timeline]);
+  const timelineOptionsRef = useFocusRegion<HTMLDivElement>({
+    active: timelineOptionsOpen,
+    initialFocusRef: timingPlanTriggerRef,
+    trapFocus: false,
+    dismissOnFocusOutside: true,
+    dismissOnPointerOutside: true,
+    dismissBoundaryRef: timelineOptionsTriggerRef,
+    onEscape: () => setTimelineOptionsOpen(false),
+  });
   const timingPlanRef = useFocusRegion<HTMLDivElement>({
     active: timingPlanOpen,
     trapFocus: false,
@@ -484,6 +594,143 @@ export function Timeline({
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("blur", cancel);
+  };
+
+  const selectEffectClip = (layerId: string, clipId: string) => {
+    setSelectedMarkerId(null);
+    setSelectedMoment(null);
+    setExpandedEffectLayerIds((current) =>
+      current.includes(layerId) ? current : [...current, layerId],
+    );
+    onSelectEffect?.(layerId, clipId);
+  };
+
+  const commitEffectClipTiming = (
+    layer: VfxLayer,
+    clipId: string,
+    timing: Pick<RenderingEffectClip, "start" | "end">,
+  ) => {
+    const currentClip = layer.appearance.effectClips.find(
+      (clip) => clip.id === clipId,
+    );
+    if (
+      !currentClip ||
+      (currentClip.start === timing.start && currentClip.end === timing.end)
+    )
+      return;
+    onLayerChange({
+      ...layer,
+      appearance: {
+        ...layer.appearance,
+        effectClips: layer.appearance.effectClips.map((clip) =>
+          clip.id === clipId ? { ...clip, ...timing } : clip,
+        ),
+      },
+    });
+  };
+
+  const startEffectClipDrag = (
+    event: React.PointerEvent,
+    layer: VfxLayer,
+    clip: RenderingEffectClip,
+    mode: DragMode,
+  ) => {
+    if (event.button !== 0 || lockedIds.has(layer.id)) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    selectEffectClip(layer.id, clip.id);
+    const layerStart = groupDelayForLayer(layer, groups) + layer.timing.delay;
+    const originX = event.clientX;
+    let latest = { start: clip.start, end: clip.end };
+    const timingAt = (clientX: number, bypassSnap = false) =>
+      effectClipTimingAfterTimelineDrag(
+        clip,
+        layerStart,
+        layer.timing.duration,
+        duration,
+        ((clientX - originX) / rect.width) * duration,
+        mode,
+        snapMode,
+        timeline.markers,
+        bypassSnap,
+      );
+
+    dragCleanupRef.current?.();
+    setEffectClipDragPreview({
+      layerId: layer.id,
+      clipId: clip.id,
+      ...latest,
+      mode,
+    });
+    const move = (moveEvent: PointerEvent) => {
+      latest = timingAt(moveEvent.clientX, moveEvent.altKey);
+      setEffectClipDragPreview({
+        layerId: layer.id,
+        clipId: clip.id,
+        ...latest,
+        mode,
+      });
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      dragCleanupRef.current = null;
+      setEffectClipDragPreview(null);
+    };
+    const up = (upEvent: PointerEvent) => {
+      latest = timingAt(upEvent.clientX, upEvent.altKey);
+      cleanup();
+      commitEffectClipTiming(layer, clip.id, latest);
+    };
+    const cancel = () => cleanup();
+    dragCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+  };
+
+  const moveEffectClipWithKeyboard = (
+    event: React.KeyboardEvent,
+    layer: VfxLayer,
+    clip: RenderingEffectClip,
+    mode: DragMode,
+  ) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (lockedIds.has(layer.id)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectEffectClip(layer.id, clip.id);
+    const layerStart = groupDelayForLayer(layer, groups) + layer.timing.delay;
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const progress = mode === "end" ? clip.end : clip.start;
+    const currentTime = layerStart + progress * layer.timing.duration;
+    const targetTime =
+      event.ctrlKey || event.metaKey
+        ? nextMarkerTime(
+            currentTime,
+            direction as -1 | 1,
+            timeline.markers,
+            duration,
+          )
+        : currentTime + direction * (event.shiftKey ? 10 : 1);
+    commitEffectClipTiming(
+      layer,
+      clip.id,
+      effectClipTimingAfterTimelineDrag(
+        clip,
+        layerStart,
+        layer.timing.duration,
+        duration,
+        targetTime - currentTime,
+        mode,
+        "off",
+      ),
+    );
   };
 
   const moveWithKeyboard = (event: React.KeyboardEvent, layer: VfxLayer) => {
@@ -977,18 +1224,18 @@ export function Timeline({
   );
   return (
     <section className="timeline-panel" aria-label="Effect timeline">
-      <div className="timeline-header">
-        <div>
+      <div className="timeline-commandbar">
+        <div
+          className="timeline-commandbar__title"
+          title="Drag bars to move them. Use layer handles to adjust start and duration."
+        >
           <Clock3 size={14} />
-          <span>Timeline</span>
-          <small>
-            Drag a group or layer bar to move it. Layer handles adjust start and
-            duration. Keyframe diamonds move intermediate moments.
-          </small>
+          <strong>Timeline</strong>
         </div>
-        <label>
-          Effect length{" "}
+        <label className="timeline-duration-control">
+          Composition duration
           <input
+            aria-label="Composition duration"
             type="number"
             min={500}
             max={30000}
@@ -1000,8 +1247,6 @@ export function Timeline({
           />
           <span>ms</span>
         </label>
-      </div>
-      <div className="timeline-commandbar">
         <label>
           Snap
           <select
@@ -1018,22 +1263,6 @@ export function Timeline({
             <option value="markers">Markers (magnetic)</option>
             <option value="30fps">30 FPS frames</option>
             <option value="60fps">60 FPS frames</option>
-          </select>
-        </label>
-        <label className="timeline-property-track-control">
-          Property track
-          <select
-            aria-label="Timeline property track"
-            value={propertyTrack}
-            onChange={(event) =>
-              setPropertyTrack(event.target.value as TimelinePropertyTrack)
-            }
-          >
-            {PROPERTY_TRACKS.map((track) => (
-              <option key={track.id} value={track.id}>
-                {track.label}
-              </option>
-            ))}
           </select>
         </label>
         <span className="timeline-zoom-control">
@@ -1056,60 +1285,113 @@ export function Timeline({
             +
           </button>
         </span>
-        <span className="timeline-work-controls">
-          <span>
-            Work {Math.round(effectiveWorkStart)}–{Math.round(effectiveWorkEnd)}
-            ms
-          </span>
-          <button
-            type="button"
-            disabled={!onViewChange || time >= effectiveWorkEnd - 50}
-            onClick={() => onViewChange?.({ workStart: time })}
-          >
-            Set in
-          </button>
-          <button
-            type="button"
-            disabled={!onViewChange || time <= effectiveWorkStart + 50}
-            onClick={() => onViewChange?.({ workEnd: time })}
-          >
-            Set out
-          </button>
-          <button
-            type="button"
-            disabled={
-              !onViewChange || (effectiveWorkStart === 0 && workEnd === null)
-            }
-            onClick={() => onViewChange?.({ workStart: 0, workEnd: null })}
-          >
-            Clear
-          </button>
-        </span>
-        <button type="button" onClick={addMarker} disabled={!onTimelineChange}>
-          <Flag size={12} /> Add marker at {Math.round(time)} ms
+        <button
+          type="button"
+          className="timeline-marker-button"
+          aria-label={`Add marker at ${Math.round(time)} ms`}
+          onClick={addMarker}
+          disabled={!onTimelineChange}
+        >
+          <Flag size={12} /> Marker
         </button>
         <button
-          ref={timingPlanTriggerRef}
+          ref={timelineOptionsTriggerRef}
           type="button"
-          className={timingPlanOpen ? "is-active" : ""}
+          className={timelineOptionsOpen ? "is-active" : ""}
           onClick={() => {
-            if (timingPlanOpen) closeTimingPlan();
-            else setTimingPlanOpen(true);
+            if (timelineOptionsOpen && timingPlanOpen) closeTimingPlan();
+            setTimelineOptionsOpen((open) => !open);
           }}
-          aria-controls={TIMING_PLAN_ID}
-          aria-expanded={timingPlanOpen}
+          aria-controls={TIMELINE_OPTIONS_ID}
+          aria-expanded={timelineOptionsOpen}
           aria-haspopup="dialog"
+          aria-label="More timeline options"
         >
-          Timing plan
+          <MoreHorizontal size={13} /> More
         </button>
-        <span className="timeline-time-readout">
-          Playhead <strong>{Math.round(time)} ms</strong>
-          <small>{millisecondsAsFrames(time, 60)}</small>
+        <span
+          className="timeline-time-readout"
+          title={`Playhead ${Math.round(time)} ms · ${millisecondsAsFrames(time, 60)}`}
+        >
+          <span>Playhead</span> <strong>{Math.round(time)} ms</strong>
         </span>
-        <small className="timeline-nudge-hint">
-          Arrow: 1 ms · Shift: 10 ms · Ctrl/Cmd: next marker · Alt: no snap
-        </small>
       </div>
+      {timelineOptionsOpen && (
+        <div
+          ref={timelineOptionsRef}
+          id={TIMELINE_OPTIONS_ID}
+          className="timeline-options-popover"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={TIMELINE_OPTIONS_TITLE_ID}
+          data-editor-shortcuts="off"
+        >
+          <header>
+            <strong id={TIMELINE_OPTIONS_TITLE_ID}>Timeline options</strong>
+            <button
+              type="button"
+              onClick={() => setTimelineOptionsOpen(false)}
+              aria-label="Close timeline options"
+            >
+              ×
+            </button>
+          </header>
+          <section aria-label="Work range">
+            <div className="timeline-options-popover__heading">
+              <strong>Work range</strong>
+              <span>
+                {Math.round(effectiveWorkStart)}–{Math.round(effectiveWorkEnd)}
+                ms
+              </span>
+            </div>
+            <div className="timeline-options-popover__actions">
+              <button
+                type="button"
+                disabled={!onViewChange || time >= effectiveWorkEnd - 50}
+                onClick={() => onViewChange?.({ workStart: time })}
+              >
+                Set in
+              </button>
+              <button
+                type="button"
+                disabled={!onViewChange || time <= effectiveWorkStart + 50}
+                onClick={() => onViewChange?.({ workEnd: time })}
+              >
+                Set out
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !onViewChange ||
+                  (effectiveWorkStart === 0 && workEnd === null)
+                }
+                onClick={() => onViewChange?.({ workStart: 0, workEnd: null })}
+              >
+                Clear
+              </button>
+            </div>
+          </section>
+          <section aria-label="Timeline planning">
+            <button
+              ref={timingPlanTriggerRef}
+              type="button"
+              className={timingPlanOpen ? "is-active" : ""}
+              onClick={() => {
+                if (timingPlanOpen) closeTimingPlan();
+                else setTimingPlanOpen(true);
+              }}
+              aria-controls={TIMING_PLAN_ID}
+              aria-expanded={timingPlanOpen}
+              aria-haspopup="dialog"
+            >
+              Timing plan
+            </button>
+            <small>
+              Arrow: 1 ms · Shift: 10 ms · Ctrl/Cmd: next marker · Alt: no snap
+            </small>
+          </section>
+        </div>
+      )}
       {timingPlanOpen && (
         <div
           ref={timingPlanRef}
@@ -1221,101 +1503,140 @@ export function Timeline({
                 />
                 ms
               </label>
-              <button
-                type="button"
-                onClick={addPropertyMoment}
-                disabled={!canAddPropertyMoment}
-                title="Add a size, opacity, and rotation keyframe at the playhead."
-              >
-                <Plus size={11} /> Property moment
-              </button>
-              {activePropertyTrack &&
-                selectedPropertyFrame &&
-                selectedMomentIndex !== null && (
-                  <label className="timeline-property-editor">
-                    {
-                      PROPERTY_TRACKS.find(
-                        (track) => track.id === activePropertyTrack,
-                      )?.label
-                    }
-                    <input
-                      aria-label={`Selected moment ${activePropertyTrack}`}
-                      type="number"
-                      min={activePropertyTrack === "rotation" ? -1080 : 0}
-                      max={
-                        activePropertyTrack === "rotation"
-                          ? 1080
-                          : activePropertyTrack === "opacity"
-                            ? 100
-                            : 400
-                      }
-                      step={activePropertyTrack === "rotation" ? 1 : 0.5}
-                      value={
-                        Math.round(
-                          propertyTrackValue(
-                            selectedPropertyFrame,
-                            activePropertyTrack,
-                          ) * 100,
-                        ) / 100
-                      }
-                      disabled={lockedIds.has(selectedTimingLayer.id)}
+              {selectedTimingLayer.startMode === "triggered" && (
+                <span
+                  className="timeline-relative-note"
+                  title="Each event reuses this same timing."
+                >
+                  Relative timing
+                </span>
+              )}
+              <details className="timeline-property-details">
+                <summary>
+                  Property moments
+                  <span>{selectedTimingLayer.keyframes.frames.length}</span>
+                </summary>
+                <div className="timeline-property-details__body">
+                  <label className="timeline-property-track-control">
+                    Track
+                    <select
+                      aria-label="Timeline property track"
+                      value={propertyTrack}
                       onChange={(event) =>
-                        onLayerChange(
-                          layerAfterTimelinePropertyChange(
-                            selectedTimingLayer,
-                            selectedMomentIndex,
-                            activePropertyTrack,
-                            Number(event.target.value),
-                          ),
+                        setPropertyTrack(
+                          event.target.value as TimelinePropertyTrack,
                         )
                       }
-                    />
-                    {propertyTrackUnit(activePropertyTrack)}
+                    >
+                      {PROPERTY_TRACKS.map((track) => (
+                        <option key={track.id} value={track.id}>
+                          {track.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                )}
-              {selectedTimingLayer.startMode === "triggered" && (
-                <span className="timeline-relative-note">
-                  Relative bar — each event reuses this same timing
-                </span>
-              )}
-              {selectedTimingLayer.keyframes.enabled && (
-                <span className="timeline-moment-list">
-                  Moments
-                  {selectedTimingLayer.keyframes.frames.map((frame, index) => {
-                    const absolute =
-                      selectedStart +
-                      frame.time * selectedTimingLayer.timing.duration;
-                    return (
-                      <button
-                        key={`${frame.time}-${index}`}
-                        type="button"
-                        className={
-                          selectedMomentIndex === index ? "is-selected" : ""
+                  <button
+                    type="button"
+                    onClick={addPropertyMoment}
+                    disabled={!canAddPropertyMoment}
+                    title="Add a size, opacity, and rotation keyframe at the playhead."
+                  >
+                    <Plus size={11} /> Add at playhead
+                  </button>
+                  {activePropertyTrack &&
+                    selectedPropertyFrame &&
+                    selectedMomentIndex !== null && (
+                      <label className="timeline-property-editor">
+                        {
+                          PROPERTY_TRACKS.find(
+                            (track) => track.id === activePropertyTrack,
+                          )?.label
                         }
-                        aria-pressed={selectedMomentIndex === index}
-                        onClick={() => {
-                          setSelectedMoment({
-                            layerId: selectedTimingLayer.id,
-                            index,
-                          });
-                          onSeek(absolute);
-                        }}
-                        title={`Size ${Math.round(frame.scaleX * 100)}% × ${Math.round(frame.scaleY * 100)}%, opacity ${Math.round(frame.opacity * 100)}%, rotation ${Math.round(frame.rotation)}°`}
-                      >
-                        {Math.round(absolute)}
-                        {activePropertyTrack
-                          ? ` · ${Math.round(
-                              propertyTrackValue(frame, activePropertyTrack),
-                            )}${propertyTrackUnit(activePropertyTrack)}`
-                          : ""}
-                      </button>
-                    );
-                  })}
-                  <small>
-                    ms · {activePropertyTrack ?? "size / opacity / rotation"}
-                  </small>
-                </span>
-              )}
+                        <input
+                          aria-label={`Selected moment ${activePropertyTrack}`}
+                          type="number"
+                          min={activePropertyTrack === "rotation" ? -1080 : 0}
+                          max={
+                            activePropertyTrack === "rotation"
+                              ? 1080
+                              : activePropertyTrack === "opacity"
+                                ? 100
+                                : 400
+                          }
+                          step={activePropertyTrack === "rotation" ? 1 : 0.5}
+                          value={
+                            Math.round(
+                              propertyTrackValue(
+                                selectedPropertyFrame,
+                                activePropertyTrack,
+                              ) * 100,
+                            ) / 100
+                          }
+                          disabled={lockedIds.has(selectedTimingLayer.id)}
+                          onChange={(event) =>
+                            onLayerChange(
+                              layerAfterTimelinePropertyChange(
+                                selectedTimingLayer,
+                                selectedMomentIndex,
+                                activePropertyTrack,
+                                Number(event.target.value),
+                              ),
+                            )
+                          }
+                        />
+                        {propertyTrackUnit(activePropertyTrack)}
+                      </label>
+                    )}
+                  {selectedTimingLayer.keyframes.enabled && (
+                    <span
+                      className="timeline-moment-list"
+                      aria-label="Property moments"
+                    >
+                      {selectedTimingLayer.keyframes.frames.map(
+                        (frame, index) => {
+                          const absolute =
+                            selectedStart +
+                            frame.time * selectedTimingLayer.timing.duration;
+                          return (
+                            <button
+                              key={`${frame.time}-${index}`}
+                              type="button"
+                              className={
+                                selectedMomentIndex === index
+                                  ? "is-selected"
+                                  : ""
+                              }
+                              aria-pressed={selectedMomentIndex === index}
+                              onClick={() => {
+                                setSelectedMoment({
+                                  layerId: selectedTimingLayer.id,
+                                  index,
+                                });
+                                onSeek(absolute);
+                              }}
+                              title={`Size ${Math.round(frame.scaleX * 100)}% × ${Math.round(frame.scaleY * 100)}%, opacity ${Math.round(frame.opacity * 100)}%, rotation ${Math.round(frame.rotation)}°`}
+                            >
+                              {Math.round(absolute)}
+                              {activePropertyTrack
+                                ? ` · ${Math.round(
+                                    propertyTrackValue(
+                                      frame,
+                                      activePropertyTrack,
+                                    ),
+                                  )}${propertyTrackUnit(activePropertyTrack)}`
+                                : ""}
+                            </button>
+                          );
+                        },
+                      )}
+                      <small>
+                        ms ·{" "}
+                        {activePropertyTrack ?? "size / opacity / rotation"}
+                      </small>
+                    </span>
+                  )}
+                </div>
+              </details>
             </>
           )}
           {selectedTimingLayers.length > 1 && (
@@ -1412,27 +1733,90 @@ export function Timeline({
               <Boxes size={12} /> {group.name}
             </button>
           ))}
-          {layers.map((layer) => (
-            <button
-              key={layer.id}
-              type="button"
-              className={
-                effectiveTimingIds.includes(layer.id) ? "is-selected" : ""
-              }
-              onClick={(event) =>
-                selectForTiming(
-                  layer.id,
-                  event.shiftKey || event.ctrlKey || event.metaKey,
-                )
-              }
-              title="Click to select. Shift/Ctrl/Cmd-click selects several layers for choreography tools."
-            >
-              <span
-                className={`layer-type-dot layer-type-dot--${layer.type}`}
-              />
-              {layer.name}
-            </button>
-          ))}
+          {displayedLayers.map((layer) => {
+            const effectClips = layer.appearance.effectClips;
+            const effectsExpanded = expandedEffectLayers.has(layer.id);
+            const effectCountLabel = `${effectClips.length} ${effectClips.length === 1 ? "effect" : "effects"}`;
+            return (
+              <div className="timeline-layer-label-group" key={layer.id}>
+                <div
+                  className={`timeline-layer-label ${effectiveTimingIds.includes(layer.id) ? "is-selected" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="timeline-layer-label__select"
+                    aria-label={layer.name}
+                    onClick={(event) =>
+                      selectForTiming(
+                        layer.id,
+                        event.shiftKey || event.ctrlKey || event.metaKey,
+                      )
+                    }
+                    title="Click to select. Shift/Ctrl/Cmd-click selects several layers for choreography tools."
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`layer-type-dot layer-type-dot--${layer.type}`}
+                    />
+                    <span>{layer.name}</span>
+                  </button>
+                  {effectClips.length > 0 && (
+                    <button
+                      type="button"
+                      className="timeline-layer-fx-toggle"
+                      aria-label={`${effectsExpanded ? "Collapse" : "Expand"} ${effectCountLabel} for ${layer.name}`}
+                      aria-expanded={effectsExpanded}
+                      aria-controls={`timeline-effect-lanes-${layer.id}`}
+                      title={`${effectCountLabel} timed inside each copy of ${layer.name}`}
+                      onClick={() =>
+                        setExpandedEffectLayerIds((current) =>
+                          current.includes(layer.id)
+                            ? current.filter((id) => id !== layer.id)
+                            : [...current, layer.id],
+                        )
+                      }
+                    >
+                      <span>FX</span>
+                      <strong>{effectClips.length}</strong>
+                      <i aria-hidden="true">›</i>
+                    </button>
+                  )}
+                </div>
+                {effectsExpanded && effectClips.length > 0 && (
+                  <div
+                    id={`timeline-effect-lanes-${layer.id}`}
+                    className="timeline-effect-labels"
+                    role="group"
+                    aria-label={`Effects inside each copy of ${layer.name}`}
+                  >
+                    {effectClips.map((clip) => {
+                      const label = renderingEffectLabel(clip.effect);
+                      const enabled =
+                        layer.appearance.effects[clip.effect].enabled;
+                      const selected =
+                        selectedId === layer.id &&
+                        selectedEffectClipId === clip.id;
+                      return (
+                        <button
+                          key={clip.id}
+                          type="button"
+                          className={`timeline-effect-label ${selected ? "is-selected" : ""}`}
+                          aria-label={`Select ${label} effect on ${layer.name}${enabled ? "" : ", off"}`}
+                          aria-pressed={selected}
+                          onClick={() => selectEffectClip(layer.id, clip.id)}
+                          title={`${label} timing repeats inside each copy of ${layer.name}`}
+                        >
+                          <span aria-hidden="true">FX</span>
+                          <span>{label}</span>
+                          {!enabled && <small>Off</small>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div
           ref={trackRef}
@@ -1548,7 +1932,7 @@ export function Timeline({
               </div>
             );
           })}
-          {layers.map((layer) => {
+          {displayedLayers.map((layer) => {
             const preview =
               dragPreview?.layerId === layer.id ? dragPreview : null;
             const groupDelay =
@@ -1556,128 +1940,273 @@ export function Timeline({
             const layerDelay = preview?.delay ?? layer.timing.delay;
             const delay = layerDelay + groupDelay;
             const layerDuration = preview?.duration ?? layer.timing.duration;
+            const effectClips = layer.appearance.effectClips;
+            const effectsExpanded = expandedEffectLayers.has(layer.id);
             return (
-              <div
-                key={layer.id}
-                className={`timeline-track ${layer.startMode === "triggered" ? "is-triggered" : ""} ${effectiveTimingIds.includes(layer.id) ? "is-selected" : ""} ${lockedIds.has(layer.id) ? "is-locked" : ""}`}
-              >
-                <span
-                  className={`timeline-bar timeline-bar--${layer.type} ${layer.type === "emitter" ? "is-repeating" : ""} ${preview ? "is-dragging" : ""}`}
-                  style={{
-                    left: percent(delay, duration),
-                    width: percent(
-                      Math.min(layerDuration, duration - delay),
-                      duration,
-                    ),
-                  }}
-                  role="slider"
-                  tabIndex={lockedIds.has(layer.id) ? -1 : 0}
-                  aria-disabled={lockedIds.has(layer.id)}
-                  aria-label={
-                    layer.startMode === "triggered"
-                      ? `Change ${layer.name} delay after trigger`
-                      : `Move ${layer.name} on timeline`
-                  }
-                  aria-valuemin={0}
-                  aria-valuemax={Math.max(
-                    0,
-                    duration - Math.min(50, layerDuration),
-                  )}
-                  aria-valuenow={Math.round(delay)}
-                  aria-valuetext={
-                    layer.startMode === "triggered"
-                      ? `Starts ${Math.round(delay)} milliseconds after its trigger`
-                      : `Starts at ${Math.round(delay)} milliseconds`
-                  }
-                  onKeyDown={(event) => moveWithKeyboard(event, layer)}
-                  onPointerDown={(event) => startDrag(event, layer, "move")}
-                  title={
-                    layer.startMode === "triggered"
-                      ? `${layer.name}: relative timing — waits ${Math.round(delay)} ms after each trigger and lasts ${Math.round(layerDuration)} ms. Drag to change the event-relative delay.`
-                      : `${layer.name}: starts at ${Math.round(delay)} ms and lasts ${Math.round(layerDuration)} ms. Drag to move it.`
-                  }
+              <div className="timeline-layer-track-group" key={layer.id}>
+                <div
+                  className={`timeline-track ${layer.startMode === "triggered" ? "is-triggered" : ""} ${effectiveTimingIds.includes(layer.id) ? "is-selected" : ""} ${lockedIds.has(layer.id) ? "is-locked" : ""}`}
                 >
-                  <i
-                    className="timeline-handle start"
-                    onPointerDown={(event) => startDrag(event, layer, "start")}
-                  />
-                  <small>
-                    {preview
-                      ? `${Math.round(delay)}–${Math.round(delay + layerDuration)} ms`
-                      : layer.startMode === "triggered"
-                        ? `After event · ${layer.name}`
-                        : layer.name}
-                  </small>
-                  {layer.type !== "emitter" &&
-                    layer.events
-                      .filter((layerEvent) => layerEvent.enabled)
-                      .map((layerEvent) => {
-                        const position =
-                          layerEvent.trigger === "start"
-                            ? 0
-                            : layerEvent.trigger === "percentage"
-                              ? layerEvent.percentage * 100
-                              : 100;
-                        const targetName =
-                          layers.find(
-                            (candidate) =>
-                              candidate.id === layerEvent.targetLayerId,
-                          )?.name ?? "missing layer";
+                  <span
+                    className={`timeline-bar timeline-bar--${layer.type} ${layer.type === "emitter" ? "is-repeating" : ""} ${preview ? "is-dragging" : ""}`}
+                    style={{
+                      left: percent(delay, duration),
+                      width: percent(
+                        Math.min(layerDuration, duration - delay),
+                        duration,
+                      ),
+                    }}
+                    role="slider"
+                    tabIndex={lockedIds.has(layer.id) ? -1 : 0}
+                    aria-disabled={lockedIds.has(layer.id)}
+                    aria-label={
+                      layer.startMode === "triggered"
+                        ? `Change ${layer.name} delay after trigger`
+                        : `Move ${layer.name} on timeline`
+                    }
+                    aria-valuemin={0}
+                    aria-valuemax={Math.max(
+                      0,
+                      duration - Math.min(50, layerDuration),
+                    )}
+                    aria-valuenow={Math.round(delay)}
+                    aria-valuetext={
+                      layer.startMode === "triggered"
+                        ? `Starts ${Math.round(delay)} milliseconds after its trigger`
+                        : `Starts at ${Math.round(delay)} milliseconds`
+                    }
+                    onKeyDown={(event) => moveWithKeyboard(event, layer)}
+                    onPointerDown={(event) => startDrag(event, layer, "move")}
+                    title={
+                      layer.startMode === "triggered"
+                        ? `${layer.name}: relative timing — waits ${Math.round(delay)} ms after each trigger and lasts ${Math.round(layerDuration)} ms. Drag to change the event-relative delay.`
+                        : `${layer.name}: starts at ${Math.round(delay)} ms and lasts ${Math.round(layerDuration)} ms. Drag to move it.`
+                    }
+                  >
+                    <i
+                      className="timeline-handle start"
+                      onPointerDown={(event) =>
+                        startDrag(event, layer, "start")
+                      }
+                    />
+                    <small>
+                      {preview
+                        ? `${Math.round(delay)}–${Math.round(delay + layerDuration)} ms`
+                        : layer.startMode === "triggered"
+                          ? `After event · ${layer.name}`
+                          : layer.name}
+                    </small>
+                    {layer.type !== "emitter" &&
+                      layer.events
+                        .filter((layerEvent) => layerEvent.enabled)
+                        .map((layerEvent) => {
+                          const position =
+                            layerEvent.trigger === "start"
+                              ? 0
+                              : layerEvent.trigger === "percentage"
+                                ? layerEvent.percentage * 100
+                                : 100;
+                          const targetName =
+                            layers.find(
+                              (candidate) =>
+                                candidate.id === layerEvent.targetLayerId,
+                            )?.name ?? "missing layer";
+                          return (
+                            <i
+                              key={layerEvent.id}
+                              className="timeline-event-pin"
+                              style={{ left: `${position}%` }}
+                              title={`${layerEvent.trigger === "percentage" ? `${Math.round(layerEvent.percentage * 100)}%` : layerEvent.trigger}: ${layerEvent.action} ${targetName}`}
+                            />
+                          );
+                        })}
+                    {layer.keyframes.enabled &&
+                      layer.keyframes.frames.map((frame, index) => {
+                        const previewTime =
+                          keyframeDragPreview?.layerId === layer.id &&
+                          keyframeDragPreview.index === index
+                            ? keyframeDragPreview.time
+                            : frame.time;
+                        const fixed =
+                          index === 0 ||
+                          index === layer.keyframes.frames.length - 1;
+                        const trackedValue = activePropertyTrack
+                          ? ` · ${Math.round(
+                              propertyTrackValue(frame, activePropertyTrack),
+                            )}${propertyTrackUnit(activePropertyTrack)}`
+                          : "";
                         return (
-                          <i
-                            key={layerEvent.id}
-                            className="timeline-event-pin"
-                            style={{ left: `${position}%` }}
-                            title={`${layerEvent.trigger === "percentage" ? `${Math.round(layerEvent.percentage * 100)}%` : layerEvent.trigger}: ${layerEvent.action} ${targetName}`}
+                          <button
+                            type="button"
+                            role="slider"
+                            key={`${index}-${frame.time}`}
+                            className={`timeline-keyframe ${fixed ? "is-fixed" : ""} ${selectedId === layer.id && selectedMomentIndex === index ? "is-selected" : ""}`}
+                            style={{ left: `${previewTime * 100}%` }}
+                            aria-label={`${fixed ? "Fixed" : "Move"} keyframe ${index + 1} for ${layer.name}`}
+                            aria-valuemin={0}
+                            aria-valuemax={layer.timing.duration}
+                            aria-valuenow={Math.round(
+                              previewTime * layer.timing.duration,
+                            )}
+                            title={`${Math.round(delay + previewTime * layer.timing.duration)} ms absolute · ${Math.round(previewTime * layer.timing.duration)} ms into layer${trackedValue}${fixed ? " (fixed)" : " — drag to move"}`}
+                            tabIndex={fixed ? -1 : 0}
+                            onPointerDown={(event) => {
+                              if (selectedId === layer.id)
+                                setSelectedMoment({ layerId: layer.id, index });
+                              startKeyframeDrag(event, layer, index);
+                            }}
+                            onKeyDown={(event) =>
+                              moveKeyframeWithKeyboard(event, layer, index)
+                            }
                           />
                         );
                       })}
-                  {layer.keyframes.enabled &&
-                    layer.keyframes.frames.map((frame, index) => {
-                      const previewTime =
-                        keyframeDragPreview?.layerId === layer.id &&
-                        keyframeDragPreview.index === index
-                          ? keyframeDragPreview.time
-                          : frame.time;
-                      const fixed =
-                        index === 0 ||
-                        index === layer.keyframes.frames.length - 1;
-                      const trackedValue = activePropertyTrack
-                        ? ` · ${Math.round(
-                            propertyTrackValue(frame, activePropertyTrack),
-                          )}${propertyTrackUnit(activePropertyTrack)}`
-                        : "";
+                    <i
+                      className="timeline-handle end"
+                      onPointerDown={(event) => startDrag(event, layer, "end")}
+                    />
+                  </span>
+                </div>
+                {effectsExpanded && effectClips.length > 0 && (
+                  <div className="timeline-effect-tracks">
+                    {effectClips.map((clip) => {
+                      const clipPreview =
+                        effectClipDragPreview?.layerId === layer.id &&
+                        effectClipDragPreview.clipId === clip.id
+                          ? effectClipDragPreview
+                          : null;
+                      const clipStart = clipPreview?.start ?? clip.start;
+                      const clipEnd = clipPreview?.end ?? clip.end;
+                      const absoluteStart = delay + clipStart * layerDuration;
+                      const clipDuration =
+                        Math.max(0.001, clipEnd - clipStart) * layerDuration;
+                      const label = renderingEffectLabel(clip.effect);
+                      const selected =
+                        selectedId === layer.id &&
+                        selectedEffectClipId === clip.id;
+                      const enabled =
+                        layer.appearance.effects[clip.effect].enabled;
+                      const locked = lockedIds.has(layer.id);
                       return (
-                        <button
-                          type="button"
-                          role="slider"
-                          key={`${index}-${frame.time}`}
-                          className={`timeline-keyframe ${fixed ? "is-fixed" : ""} ${selectedId === layer.id && selectedMomentIndex === index ? "is-selected" : ""}`}
-                          style={{ left: `${previewTime * 100}%` }}
-                          aria-label={`${fixed ? "Fixed" : "Move"} keyframe ${index + 1} for ${layer.name}`}
-                          aria-valuemin={0}
-                          aria-valuemax={layer.timing.duration}
-                          aria-valuenow={Math.round(
-                            previewTime * layer.timing.duration,
-                          )}
-                          title={`${Math.round(delay + previewTime * layer.timing.duration)} ms absolute · ${Math.round(previewTime * layer.timing.duration)} ms into layer${trackedValue}${fixed ? " (fixed)" : " — drag to move"}`}
-                          tabIndex={fixed ? -1 : 0}
-                          onPointerDown={(event) => {
-                            if (selectedId === layer.id)
-                              setSelectedMoment({ layerId: layer.id, index });
-                            startKeyframeDrag(event, layer, index);
-                          }}
-                          onKeyDown={(event) =>
-                            moveKeyframeWithKeyboard(event, layer, index)
-                          }
-                        />
+                        <div
+                          key={clip.id}
+                          className={`timeline-effect-track ${selected ? "is-selected" : ""}`}
+                        >
+                          <div
+                            className={`timeline-effect-clip ${selected ? "is-selected" : ""} ${enabled ? "" : "is-disabled"} ${clipPreview ? "is-dragging" : ""}`}
+                            style={{
+                              left: percent(absoluteStart, duration),
+                              width: percent(clipDuration, duration),
+                            }}
+                          >
+                            <button
+                              type="button"
+                              role="slider"
+                              className="timeline-effect-clip__body"
+                              tabIndex={locked ? -1 : 0}
+                              aria-disabled={locked}
+                              aria-label={`Move ${label} effect inside each copy of ${layer.name}`}
+                              aria-valuemin={0}
+                              aria-valuemax={Math.max(
+                                0,
+                                Math.round(layerDuration - clipDuration),
+                              )}
+                              aria-valuenow={Math.round(
+                                clipStart * layerDuration,
+                              )}
+                              aria-valuetext={`Starts ${Math.round(clipStart * layerDuration)} milliseconds into each copy and lasts ${Math.round(clipDuration)} milliseconds`}
+                              title={`${label}: ${Math.round(clipStart * layerDuration)}–${Math.round(clipEnd * layerDuration)} ms inside each copy · drag to move`}
+                              onPointerDown={(event) =>
+                                startEffectClipDrag(event, layer, clip, "move")
+                              }
+                              onKeyDown={(event) =>
+                                moveEffectClipWithKeyboard(
+                                  event,
+                                  layer,
+                                  clip,
+                                  "move",
+                                )
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (event.detail === 0)
+                                  selectEffectClip(layer.id, clip.id);
+                              }}
+                            >
+                              <span>{label}</span>
+                            </button>
+                            {clip.fadeIn > 0 && (
+                              <span
+                                className="timeline-effect-fade timeline-effect-fade--in"
+                                style={{ width: `${clip.fadeIn * 100}%` }}
+                                aria-hidden="true"
+                              />
+                            )}
+                            {clip.fadeOut > 0 && (
+                              <span
+                                className="timeline-effect-fade timeline-effect-fade--out"
+                                style={{ width: `${clip.fadeOut * 100}%` }}
+                                aria-hidden="true"
+                              />
+                            )}
+                            <button
+                              type="button"
+                              role="slider"
+                              className="timeline-effect-handle start"
+                              tabIndex={locked ? -1 : 0}
+                              aria-disabled={locked}
+                              aria-label={`Resize start of ${label} effect inside each copy of ${layer.name}`}
+                              aria-valuemin={0}
+                              aria-valuemax={Math.round(
+                                clipEnd * layerDuration,
+                              )}
+                              aria-valuenow={Math.round(
+                                clipStart * layerDuration,
+                              )}
+                              onPointerDown={(event) =>
+                                startEffectClipDrag(event, layer, clip, "start")
+                              }
+                              onKeyDown={(event) =>
+                                moveEffectClipWithKeyboard(
+                                  event,
+                                  layer,
+                                  clip,
+                                  "start",
+                                )
+                              }
+                            />
+                            <button
+                              type="button"
+                              role="slider"
+                              className="timeline-effect-handle end"
+                              tabIndex={locked ? -1 : 0}
+                              aria-disabled={locked}
+                              aria-label={`Resize end of ${label} effect inside each copy of ${layer.name}`}
+                              aria-valuemin={Math.round(
+                                clipStart * layerDuration,
+                              )}
+                              aria-valuemax={Math.round(layerDuration)}
+                              aria-valuenow={Math.round(
+                                clipEnd * layerDuration,
+                              )}
+                              onPointerDown={(event) =>
+                                startEffectClipDrag(event, layer, clip, "end")
+                              }
+                              onKeyDown={(event) =>
+                                moveEffectClipWithKeyboard(
+                                  event,
+                                  layer,
+                                  clip,
+                                  "end",
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
                       );
                     })}
-                  <i
-                    className="timeline-handle end"
-                    onPointerDown={(event) => startDrag(event, layer, "end")}
-                  />
-                </span>
+                  </div>
+                )}
               </div>
             );
           })}

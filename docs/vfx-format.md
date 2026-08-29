@@ -8,7 +8,7 @@ The `.vvfx` file is UTF-8 JSON. It contains editor metadata, embedded image data
 
 ```json
 {
-  "formatVersion": 17,
+  "formatVersion": 18,
   "metadata": {
     "id": "project-...",
     "name": "Simple Magic Impact",
@@ -276,6 +276,51 @@ its horizontal scale to the connection length. Sprite-sheet frame width,
 uploaded image width, or a safe 128 px fallback supplies the source length.
 Other layer types normalize to `beam: null`; Beam layers use `spawn: null`.
 
+Version 18 adds `appearance.effectClips`, an explicit timing list for the
+curated Experimental rendering effects. A layer stores at most one clip for
+each effect and at most eight clips total. Each clip contains:
+
+- `id`: a stable, unique layer-local identifier;
+- `effect`: `visualMask`, `blur`, `outerGlow`, `brightnessExposure`,
+  `animatedShine`, `spatialGradient`, `directionalDissolve`, or `spriteWarp`;
+- `start` and `end`: normalized positions inside each copy's lifetime;
+- `fadeIn` and `fadeOut`: normalized fractions of that clip's own length; and
+- `fadeEasing`: `linear`, `smooth`, `ease-in`, or `ease-out`; and
+- `progressMode`: `chronological` for authored clips, or the migration-only
+  `legacy-transform` mode described below.
+
+For example, an outer glow that arrives briefly near the start of every copy
+can use:
+
+```json
+{
+  "appearance": {
+    "effectClips": [
+      {
+        "id": "effect-outer-glow",
+        "effect": "outerGlow",
+        "start": 0.1,
+        "end": 0.55,
+        "fadeIn": 0.15,
+        "fadeOut": 0.25,
+        "fadeEasing": "smooth",
+        "progressMode": "chronological"
+      }
+    ]
+  }
+}
+```
+
+Authored clip timing follows raw chronological copy progress, independent of
+transform easing and yoyo. Marker-less clips from draft Version 18 files are
+accepted and normalized to `chronological`. When Version 17 or older projects
+are migrated, full-life directional-dissolve clips instead receive
+`legacy-transform` so they retain the eased/yoyo transform progress used before
+effect clips existed. Repeats and emitter/burst instances reuse the same local
+clip inside every copy. A clip controls the strength of its matching effect
+settings; it does not become a separate drawable layer or receive its own
+z-order.
+
 For example, a spawn layer can use a separate silhouette asset and fire smoke
 at accepted copy endpoints:
 
@@ -349,7 +394,7 @@ For example, an animated or spawn layer may contain:
 
 ### Optional-feature state
 
-Current project v17 keeps most optional behavior blocks structurally present so
+Current project v18 keeps most optional behavior blocks structurally present so
 old projects normalize to one predictable shape. Their `enabled` flag has an
 intentional meaning:
 
@@ -375,6 +420,11 @@ remain disabled after `.vvfx` export/import, save/load, template use, and
 undo/redo. Removed entries and references do not reappear after those
 boundaries. Derived evaluator values are never serialized back into the layer.
 
+Rendering effects pair a required settings block with an optional matching
+`effectClips` entry. Disable preserves both the tuned block and its clip. Remove
+replaces the block with its canonical disabled defaults and removes the clip.
+Undo/Redo restores or reapplies that complete pair as one authored change.
+
 ### Layer categories
 
 Every layer has identity, image assignment, visibility, attachment, transform,
@@ -399,8 +449,9 @@ Only `burst` and `emitter` layers contain a non-null `spawn` object. Only a
 - spawn line length and arc radius: pixels;
 - gravity: pixels per second squared;
 - scale and opacity: normalized numbers (`1` means 100%);
-- color-stop time, behavior `drag`, envelope stages, gradient coordinates, and
-  dissolve progress: normalized numbers from zero to one;
+- color-stop time, behavior `drag`, envelope stages, gradient coordinates,
+  rendering-effect clip timing/fades, and dissolve progress: normalized numbers
+  from zero to one;
 - tint: `#rrggbb` or `null`;
 - random values: maximum signed variation, except delay which varies from zero to its maximum.
 
@@ -411,7 +462,7 @@ Runtime export removes preview background, editor selection/solo state, browser 
 ```json
 {
   "format": "vvfx-runtime",
-  "formatVersion": 15,
+  "formatVersion": 16,
   "name": "Simple Magic Impact",
   "duration": 3000,
   "seed": 8421,
@@ -420,7 +471,10 @@ Runtime export removes preview background, editor selection/solo state, browser 
 }
 ```
 
-Runtime layers add an explicit numeric `depth` based on their editor order.
+Runtime layers add an explicit numeric `depth` based on their stored
+back-to-front order. The editor displays that order conventionally in reverse:
+the top row is frontmost and the bottom row is backmost. Nested FX clips remain
+owned by their parent layer and do not add another depth entry.
 `attachTo` references another layer ID or is `null`. Asset sources remain
 embedded for this local version, while runtime options may map asset IDs to
 texture keys already loaded by a game. Effect groups are flattened into layer
@@ -428,23 +482,32 @@ position/timing during export. Preview background, custom color, grid, zoom,
 selection, eye visibility, and Solo state are omitted. The layer `enabled`
 flag remains the game-facing playback switch.
 
+The downloadable Runtime JSON is serialized compactly because it is a game
+asset rather than an editable document. An uploaded image's bounded
+`alphaMask` sample is included only while at least one exported spawn layer
+retains that image as its silhouette choice. Artwork and visual-mask references
+still retain their complete asset source and layer references, but do not carry
+an unused CPU spawn grid. Both active and stored spawn-silhouette choices keep
+their grid so disable/re-enable state remains exact.
+
 Runtime JSON intentionally retains disabled feature blocks and their tuned
 values with `enabled: false`. This lets the runtime consume the same normalized
 shape while guaranteeing the feature contributes no evaluated behavior and
 creates no feature-owned transient objects. Removed events and nullable
 references are absent; required blocks have canonical disabled defaults.
-Generated Phaser TypeScript embeds this exact definition and calls the same
+Advanced TypeScript embeds this exact definition and calls the same
 runtime, so it does not maintain a second lifecycle implementation.
 
 ### Phaser runtime usage
 
-Build local `@vvfx/phaser-runtime` v0.15.0 with `npm run build:runtime`, then
-add `packages/phaser-runtime` to a Phaser game as a local package. Runtime JSON
-can be played directly:
+Build `@vvfx/phaser-runtime` 0.16.0 with `npm run build:runtime`, then add
+`packages/phaser-runtime` or its packed tarball to a Phaser game as a local
+package. This private/local package reads supported Runtime JSON versions 1
+through 16 and writes Runtime v16. Runtime JSON can be played directly:
 
 ```ts
 import { playVvfx } from "@vvfx/phaser-runtime";
-import impact from "./impact.runtime.json";
+import impact from "./impact.vvfx-runtime.json";
 
 await playVvfx(scene, impact, {
   originX: player.x,
@@ -530,14 +593,29 @@ world-space `beamEndpoints`/`setEndpoints(...)` overrides. The same evaluator
 fits preview and runtime sprites, so moving endpoints do not require rewriting
 or reloading Runtime JSON.
 
-### Generated Phaser TypeScript
+Runtime version 16 adds project-v18 `appearance.effectClips`. Preview, media
+capture, Advanced TypeScript, and the package runtime evaluate the same
+per-copy start/end and fade weights from raw chronological lifetime progress.
+Marker-less Runtime v16 drafts normalize to `chronological`. Runtime versions 1
+through 15 create full-life clips for enabled effects and tuned disabled
+effects; migrated directional dissolves are marked `legacy-transform` to retain
+their previous eased/yoyo progression, while all other migrated clips remain
+chronological. This preserves both the old visual result and later
+disable/re-enable behavior.
 
-The Phaser TypeScript tab is a runtime-backed export, not a hand-written tween
-approximation. It embeds a `VvfxRuntimeDefinition`, imports `playVvfx` and the
-runtime types from `@vvfx/phaser-runtime`, and exports a typed play function.
-The function accepts world origin, texture/frame mappings, optional Beam
-endpoints, seed override, depth, looping, and auto-destroy options, then
-returns `Promise<VvfxEffect>`.
+### Advanced TypeScript
+
+The Advanced TypeScript tab is a runtime-backed standalone wrapper file, not a
+hand-written tween approximation. It embeds a `VvfxRuntimeDefinition`, imports
+`playVvfx` and the runtime types from `@vvfx/phaser-runtime`, and exports a typed
+play function. The function accepts world origin, texture/frame mappings, seed
+override, depth, looping, and auto-destroy options, then returns
+`Promise<VvfxEffect>`. It imports and exposes `BeamEndpoints` only when the
+embedded definition actually contains a Beam layer.
+
+Runtime JSON is the recommended default for a shared game-side effect library.
+Use Advanced TypeScript when a self-contained typed source file is more useful
+than a common loader; both routes evaluate the same definition.
 
 This keeps burst/emitter scheduling, color/behavior evaluation, paths, trails,
 keyframes, attachments, frame animation, cleanup, and future runtime fixes on
@@ -556,7 +634,7 @@ groups referenced by those layers:
 {
   "format": "vvfx-template",
   "formatVersion": 2,
-  "projectFormatVersion": 17,
+  "projectFormatVersion": 18,
   "id": "template-...",
   "name": "Enemy hit",
   "description": "Short blue impact",
@@ -583,7 +661,8 @@ summarizes included layers/assets and any parent or event links that leave the
 selected scope; those outside links are omitted. Orphan groups are pruned.
 Insertion appends fresh ordinary editable layers and remaps group, layer,
 attachment, silhouette-asset, and internal event IDs. Compatible assets are
-reused; conflicting asset IDs receive fresh IDs.
+reused; conflicting asset IDs receive fresh IDs. Per-layer rendering-effect
+clips and their timing/fades are preserved with the copied appearance settings.
 
 Exporting one card writes the raw document above as `.vvfx-template`.
 `.vvfx-templates` is a library pack of up to 100 entries:
@@ -615,8 +694,8 @@ a future project format is rejected rather than guessed.
 
 ## Compatibility
 
-The current editor emits project `formatVersion: 17`; versions 1 through 17 are
-accepted, with versions 1 through 16 normalized to the current shape. Version 1
+The current editor emits project `formatVersion: 18`; versions 1 through 18 are
+accepted, with versions 1 through 17 normalized to the current shape. Version 1
 receives still-image frame defaults, versions 1 and 2 receive disabled
 motion-trail defaults, versions 1 through 3 receive disabled motion-path
 defaults, and all older versions receive a safe custom easing curve. Versions 1
@@ -641,9 +720,15 @@ dissolve settings, preserving the straight-wipe appearance.
 Version 15 receives a disabled visual-mask default with no mask asset reference.
 Version 16 receives `beam: null` on its existing layer types; migration never
 converts an existing image into a Beam automatically.
+Version 17 receives one explicit full-life rendering-effect clip for every
+enabled or tuned-disabled effect. Default disabled effects remain absent from
+the clip list. Current-format defensive normalization applies the same
+reconciliation if hand-edited v18 data contains settings but omits the matching
+clip.
 
-Runtime JSON is `formatVersion: 15`; versions 1 through 15 inclusive are
-accepted and normalized. Effect
+Runtime JSON is `formatVersion: 16`; versions 1 through 16 inclusive are
+accepted and normalized. Runtime versions 1 through 15 receive the same
+full-life rendering-effect clip migration. Effect
 group position and timing remain flattened into ordinary layer values during
 export. Unknown future versions are rejected rather than guessed. Runtime
 consumers should check both `format` and `formatVersion` before creating effects.

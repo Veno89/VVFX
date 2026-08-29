@@ -17,6 +17,13 @@ describe("export preflight profiles", () => {
     expect(report.checks).toContainEqual(
       expect.objectContaining({ id: "content", severity: "error" }),
     );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "placement",
+        severity: "pass",
+        label: "Point placement only",
+      }),
+    );
   });
 
   it("warns for a mobile-heavy effect without blocking a valid export", () => {
@@ -32,6 +39,22 @@ describe("export preflight profiles", () => {
     expect(report.status).toBe("warning");
     expect(report.checks).toContainEqual(
       expect.objectContaining({ id: "sprites", severity: "warning" }),
+    );
+  });
+
+  it("reports endpoint capability only when the export contains a Beam layer", () => {
+    const project = createEmptyProject("Endpoint effect");
+    project.layers.push(createLayer("beam", "Bolt", "builtin-spark"));
+
+    const report = analyzeExportPreflight(project, "balanced");
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "placement",
+        severity: "pass",
+        label: "Point + endpoint placement",
+        detail: expect.stringMatching(/1 Beam layer/),
+      }),
     );
   });
 });

@@ -1,5 +1,6 @@
 import type {
   EvaluatedRenderingEffects,
+  RenderingEffectClip,
   RenderingEffectsSettings,
 } from "./renderingEffects";
 import type { AssetAlphaMask } from "./alphaMask";
@@ -141,6 +142,7 @@ export interface AppearanceSettings {
   blendMode: BlendMode;
   colorOverLifetime: ColorOverLifetimeSettings;
   effects: RenderingEffectsSettings;
+  effectClips: RenderingEffectClip[];
 }
 export interface ColorStop {
   time: number;
@@ -333,7 +335,7 @@ export interface TimelineAuthoringSettings {
   notes: string;
 }
 export interface VfxProject {
-  formatVersion: 17;
+  formatVersion: 18;
   metadata: {
     id: string;
     name: string;
@@ -363,6 +365,14 @@ export interface EvaluatedInstance {
   selected: boolean;
   frame: number | null;
   trailIndex: number | null;
+  /** Normalized source-frame crop applied after evaluation, or null for all pixels. */
+  sourceCrop: NormalizedSourceCrop | null;
+}
+export interface NormalizedSourceCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 /** Endpoint coordinates are local to the effect origin during evaluation. */
 export interface BeamEndpoints {

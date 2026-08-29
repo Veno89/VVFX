@@ -27,8 +27,9 @@ import {
 } from "../previewRecording";
 import { downloadBlob, downloadText, safeFilename } from "../download";
 import {
-  createRuntimeDefinition,
+  analyzeRuntimeExportCapabilities,
   generatePhaserCode,
+  serializeRuntimeDefinition,
 } from "../../vfx/exporters";
 import { serializeProject } from "../../vfx/serialization";
 import { hasEnabledRenderingEffects } from "../../vfx/renderingEffects";
@@ -112,7 +113,7 @@ export function ExportDialog({
     try {
       return {
         values: {
-          runtime: JSON.stringify(createRuntimeDefinition(project), null, 2),
+          runtime: serializeRuntimeDefinition(project),
           phaser: generatePhaserCode(project),
           project: serializeProject(project),
         },
@@ -132,6 +133,10 @@ export function ExportDialog({
   const integrityError = preparedExports.error;
   const content = tab === "preview" ? "" : values[tab];
   const base = safeFilename(project.metadata.name);
+  const runtimeCapabilities = useMemo(
+    () => analyzeRuntimeExportCapabilities(project),
+    [project],
+  );
   const previewSize =
     PREVIEW_SIZES.find((preset) => preset.id === previewSizeId) ??
     PREVIEW_SIZES[0];
@@ -139,12 +144,16 @@ export function ExportDialog({
     tab === "preview"
       ? "Export the clean Phaser preview at normal speed, without editor guides. Choose WebM video or an animated GIF plus a centered size and aspect preset."
       : tab === "runtime"
-        ? "Exact game-ready settings for the local @vvfx/phaser-runtime package, without editor-only state."
+        ? `Recommended for game integration: drop this exact definition into your effect library and play it with @vvfx/phaser-runtime. ${runtimeCapabilities.beamEndpoints ? `It contains ${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}, so the game can supply world-space endpoints.` : "It has no Beam layers, so it plays at an origin x/y and does not advertise endpoint fitting."}`
         : tab === "phaser"
-          ? "Exact runtime-backed Phaser TypeScript. It embeds this effect definition and calls the local @vvfx/phaser-runtime helper, so preview features are not silently omitted."
+          ? `Advanced standalone source-file wrapper. It embeds the Runtime JSON and calls @vvfx/phaser-runtime; use it when you want one typed helper file instead of your game's shared effect loader. ${runtimeCapabilities.beamEndpoints ? "Its helper accepts world-space Beam endpoints." : "Because this effect has no Beam layers, its helper intentionally exposes only point placement."}`
           : "The complete editable project, including uploaded images. Re-import this .vvfx file to continue later.";
   const extension =
-    tab === "runtime" ? ".runtime.json" : tab === "phaser" ? ".ts" : ".vvfx";
+    tab === "runtime"
+      ? ".vvfx-runtime.json"
+      : tab === "phaser"
+        ? ".ts"
+        : ".vvfx";
   const hasExportableLayer = project.layers.some(
     (layer) => layer.enabled && layer.visible && layer.assetId,
   );
@@ -318,6 +327,9 @@ export function ExportDialog({
             disabled={recording}
           >
             <FileJson size={15} /> Runtime JSON
+            <small className="export-tab-badge" aria-hidden="true">
+              Recommended
+            </small>
           </button>
           <button
             id={exportTabId("phaser")}
@@ -331,7 +343,7 @@ export function ExportDialog({
             onKeyDown={moveTabFocus}
             disabled={recording}
           >
-            <FileCode2 size={15} /> Phaser code
+            <FileCode2 size={15} /> Advanced TypeScript
           </button>
           <button
             id={exportTabId("project")}

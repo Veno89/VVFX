@@ -175,6 +175,7 @@ if (!validation.ok) throw new Error(validation.error ?? "Runtime validation fail
     `import type Phaser from "phaser";
 import {
   type BeamEndpoints,
+  type BeamFit,
   type VvfxEffect,
   type VvfxEffectOptions,
   type VvfxRuntimeDefinition,
@@ -184,10 +185,17 @@ import {
 
 declare const scene: Phaser.Scene;
 const endpoints: BeamEndpoints = { startX: 0, startY: 0, endX: 100, endY: 0 };
-const options: VvfxEffectOptions = { beamEndpoints: endpoints, autoplay: false };
+const beamFit: BeamFit = "crop";
+const options: VvfxEffectOptions = {
+  beamEndpoints: endpoints,
+  beamFit,
+  beamThicknessScale: 0.75,
+  maxDurationMs: 420,
+  autoplay: false,
+};
 const definition: VvfxRuntimeDefinition = {
   format: "vvfx-runtime",
-  formatVersion: 15,
+  formatVersion: 16,
   name: "Typed consumer smoke",
   duration: 1000,
   seed: 1,

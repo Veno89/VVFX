@@ -10,7 +10,7 @@ import {
   evaluateInstanceSpatialState,
 } from "./instanceEvaluation";
 import { lerp } from "./interpolation";
-import { isSupportedVfxNumber } from "./inputLimits";
+import { isSupportedVfxNumber, MAX_VFX_SCALE } from "./inputLimits";
 import { canonicalizeProjectLayerCapabilities } from "./layerLifecycle";
 import { finiteLayerCycleCount } from "./limits";
 import { resolveProjectGroups } from "./groups";
@@ -33,6 +33,19 @@ export interface EvaluationDiagnostics {
   scheduleCompilations?: number;
 }
 
+export type BeamFit = "stretch" | "crop";
+
+/** Runtime-only Beam presentation controls; these never mutate project data. */
+export interface BeamEvaluationOptions {
+  beamFit?: BeamFit;
+  beamThicknessScale?: number;
+}
+
+interface ResolvedBeamEvaluationOptions {
+  beamFit: BeamFit;
+  beamThicknessScale: number;
+}
+
 export interface ProjectEvaluator {
   readonly project: VfxProject;
   evaluate(
@@ -40,7 +53,33 @@ export interface ProjectEvaluator {
     selectedId: string | null,
     beamEndpoints?: Readonly<Record<string, BeamEndpoints>>,
     diagnostics?: EvaluationDiagnostics,
+    beamOptions?: BeamEvaluationOptions,
   ): EvaluatedInstance[];
+}
+
+function ownOptionValue(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveBeamEvaluationOptions(
+  options: BeamEvaluationOptions | undefined,
+): ResolvedBeamEvaluationOptions {
+  const fit = ownOptionValue(options, "beamFit");
+  const thickness = ownOptionValue(options, "beamThicknessScale");
+  return {
+    beamFit: fit === "crop" ? "crop" : "stretch",
+    beamThicknessScale:
+      isSupportedVfxNumber(thickness) && thickness >= 0
+        ? Math.min(MAX_VFX_SCALE, thickness)
+        : 1,
+  };
 }
 
 function containsOnlySupportedNumbers(
@@ -62,6 +101,7 @@ function containsOnlySupportedNumbers(
 }
 
 function isSafeEvaluatedInstance(instance: EvaluatedInstance): boolean {
+  const crop = instance.sourceCrop;
   return (
     [
       instance.x,
@@ -75,7 +115,13 @@ function isSafeEvaluatedInstance(instance: EvaluatedInstance): boolean {
     (instance.frame === null || isSupportedVfxNumber(instance.frame)) &&
     (instance.trailIndex === null ||
       isSupportedVfxNumber(instance.trailIndex)) &&
-    containsOnlySupportedNumbers(instance.effects)
+    containsOnlySupportedNumbers(instance.effects) &&
+    (crop === null ||
+      ([crop.x, crop.y, crop.width, crop.height].every(
+        (value) => isSupportedVfxNumber(value) && value >= 0 && value <= 1,
+      ) &&
+        crop.x + crop.width <= 1 &&
+        crop.y + crop.height <= 1))
   );
 }
 
@@ -90,6 +136,7 @@ function evaluateOne(
   spawnTime: number,
   time: number,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
+  beamOptions: ResolvedBeamEvaluationOptions,
 ): EvaluatedInstance | null {
   const spatial = evaluateInstanceSpatialState(
     project,
@@ -102,8 +149,15 @@ function evaluateOne(
     time,
   );
   if (!spatial) return null;
-  const { seed, elapsed, lifetimeProgress, progress, behavior, keyed } =
-    spatial;
+  const {
+    seed,
+    duration,
+    elapsed,
+    lifetimeProgress,
+    progress,
+    behavior,
+    keyed,
+  } = spatial;
   const scaleStart = Math.max(
     0,
     layer.transform.startScale +
@@ -131,7 +185,7 @@ function evaluateOne(
           ) + randomScale,
         ) * behavior.scaleMultiplier
       : lerp(scaleStart, scaleEnd, progress) * behavior.scaleMultiplier;
-  const scaleY = keyed
+  let scaleY = keyed
     ? Math.max(0, keyed.scaleY + randomScale) * behavior.scaleMultiplier
     : layer.transform.separateScale
       ? Math.max(
@@ -146,6 +200,7 @@ function evaluateOne(
   let x = spatial.x;
   let y = spatial.y;
   let rotation = spatial.rotation;
+  let sourceCrop: EvaluatedInstance["sourceCrop"] = null;
   if (layer.type === "beam") {
     const suppliedEndpoints = Object.prototype.hasOwnProperty.call(
       beamEndpoints,
@@ -168,10 +223,24 @@ function evaluateOne(
       1,
       asset?.spriteSheet?.frameWidth ?? asset?.width ?? 128,
     );
+    const targetLength = Math.hypot(deltaX, deltaY);
+    const authoredLength = Math.hypot(layer.beam.endX, layer.beam.endY);
     x = (endpoints.startX + endpoints.endX) / 2;
     y = (endpoints.startY + endpoints.endY) / 2;
     rotation = (Math.atan2(deltaY, deltaX) * 180) / Math.PI;
-    scaleX = Math.hypot(deltaX, deltaY) / sourceWidth;
+    if (
+      suppliedEndpoints &&
+      beamOptions.beamFit === "crop" &&
+      authoredLength > 0 &&
+      targetLength < authoredLength
+    ) {
+      const width = targetLength / authoredLength;
+      scaleX = authoredLength / sourceWidth;
+      sourceCrop = { x: (1 - width) / 2, y: 0, width, height: 1 };
+    } else {
+      scaleX = targetLength / sourceWidth;
+    }
+    scaleY *= beamOptions.beamThicknessScale;
   }
   const frame = spriteFrameAtTime(
     project.assets.find((asset) => asset.id === layer.assetId),
@@ -212,13 +281,19 @@ function evaluateOne(
     tintStrength: layer.appearance.tintStrength,
     blendMode: layer.appearance.blendMode,
     effects: evaluateRenderingEffects(layer.appearance.effects, {
-      lifetimeProgress: progress,
+      lifetimeProgress: Math.max(
+        0,
+        Math.min(1, elapsed / Math.max(1, duration)),
+      ),
+      dissolveProgress: progress,
       elapsedMs: Math.max(0, elapsed),
       seed,
+      clips: layer.appearance.effectClips,
     }),
     selected: selectedId === layer.id,
     frame,
     trailIndex: null,
+    sourceCrop,
   };
 }
 
@@ -307,6 +382,7 @@ export function createProjectEvaluator(project: VfxProject): ProjectEvaluator {
       selectedId,
       beamEndpoints = {},
       diagnostics,
+      beamOptions,
     ): EvaluatedInstance[] {
       let schedule = scheduleCache.get(time);
       const compiled = !schedule;
@@ -334,6 +410,7 @@ export function createProjectEvaluator(project: VfxProject): ProjectEvaluator {
         time,
         selectedId,
         beamEndpoints,
+        resolveBeamEvaluationOptions(beamOptions),
         diagnostics,
       );
     },
@@ -346,12 +423,14 @@ export function evaluateProject(
   selectedId: string | null,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>> = {},
   diagnostics?: EvaluationDiagnostics,
+  beamOptions?: BeamEvaluationOptions,
 ): EvaluatedInstance[] {
   return createProjectEvaluator(project).evaluate(
     time,
     selectedId,
     beamEndpoints,
     diagnostics,
+    beamOptions,
   );
 }
 
@@ -362,6 +441,7 @@ function evaluateResolvedProject(
   time: number,
   selectedId: string | null,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
+  beamOptions: ResolvedBeamEvaluationOptions,
   diagnostics?: EvaluationDiagnostics,
 ): EvaluatedInstance[] {
   const originals: EvaluatedInstance[] = [];
@@ -383,6 +463,7 @@ function evaluateResolvedProject(
       schedule,
       time,
       beamEndpoints,
+      beamOptions,
       evaluationBudget,
       capacity,
     );
@@ -427,6 +508,7 @@ function evaluateResolvedProject(
             schedule,
             time,
             beamEndpoints,
+            beamOptions,
             evaluationBudget,
             capacity,
           ))
@@ -464,6 +546,7 @@ function evaluateLayer(
   schedule: LayerActivationSchedule,
   renderTime: number,
   beamEndpoints: Readonly<Record<string, BeamEndpoints>>,
+  beamOptions: ResolvedBeamEvaluationOptions,
   evaluationBudget: { remaining: number },
   maximumInstances: number,
 ): EvaluatedInstance[] {
@@ -494,6 +577,7 @@ function evaluateLayer(
       spawnTime,
       time,
       beamEndpoints,
+      beamOptions,
     );
   };
   if (instanceLimit === 0 || evaluationBudget.remaining <= 0) return instances;

@@ -76,6 +76,7 @@ export { validateRuntimeDefinition } from "./definition";
 export { loadVvfxAssets } from "./textures";
 export { VvfxEffect } from "./VvfxEffect";
 export type {
+  BeamFit,
   RuntimeValidationResult,
   VvfxEffectOptions,
   VvfxRuntimeAsset,

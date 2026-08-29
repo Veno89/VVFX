@@ -16,9 +16,9 @@ VFX model + deterministic evaluator ---- serialization / exports
 Phaser preview bridge and @vvfx/phaser-runtime
 ```
 
-Project files currently use format version 17. Clean game-facing runtime
-definitions use format version 15, and the local `@vvfx/phaser-runtime` package
-is version 0.15.0.
+The current source uses project format version 18 and clean game-facing runtime
+format version 16. The private/local `@vvfx/phaser-runtime` package is version
+0.16.0 and requires Phaser 4.2.1 or newer and below 5.
 
 ## Main modules
 
@@ -26,7 +26,7 @@ is version 0.15.0.
 
 This directory has no React dependency.
 
-- `types.ts` defines project v17, assets, settings, the discriminated layer
+- `types.ts` defines project v18, assets, settings, the discriminated layer
   union, and evaluated instances.
 - `defaults.ts` contains safe defaults, four built-in procedural practice
   assets, and the complete Magic Impact example.
@@ -39,7 +39,7 @@ This directory has no React dependency.
   cells by opacity threshold and stable seed, maps the bounded grid to world
   dimensions while preserving aspect ratio, and supplies capped editor-guide
   samples. Its maximum is 64 x 64 / 4,096 alpha bytes.
-- `renderingEffects.ts` owns safe defaults, deterministic lifetime values,
+- `renderingEffects.ts` owns safe defaults, deterministic per-copy clip weights,
   WebGL capability checks, Phaser 4 FilterList synchronization, custom render
   nodes for masks/gradient/shine/noisy erosion, bounded padding/pass estimates,
   shared deterministic noise resources, effect ordering, cleanup, and Canvas
@@ -75,16 +75,17 @@ This directory has no React dependency.
 - `presets.ts` contains guided single-layer presets and complete-effect
   compositions used by both the layer menu and learning material.
 - `serialization.ts` treats project imports as untrusted, validates references,
-  rejects attachment/event cycles, clamps unsafe values, and fills safe v17
+  rejects attachment/event cycles, clamps unsafe values, and fills safe v18
   defaults.
 - `templates.ts` owns template/pack v2 creation, v1 migration, project-version
   gating, dependency summaries, bounded embedded-asset validation, raw single
   and pack serialization, content-relative Timeline anchors, and insertion
   remapping for asset, layer, group, attachment, mask, and event-target IDs.
-- `exporters.ts` creates runtime v15 and the supported exact Phaser TypeScript
-  integration. Generated TypeScript embeds the definition and calls
-  `playVvfx`; an explicitly named standalone generator remains only as an
-  educational approximation.
+- `exporters.ts` creates compact runtime v16, reports point/endpoint capability,
+  and creates the exact Advanced TypeScript wrapper. The wrapper embeds the
+  definition, conditionally exposes Beam endpoints, and calls `playVvfx`; an
+  explicitly named standalone generator remains only as an educational
+  approximation.
 
 ### `src/preview`
 
@@ -120,7 +121,8 @@ keyboard controls, and persistence. UI is split by responsibility:
 
 - asset and layer panels;
 - preview and transport controls;
-- a progressively disclosed Inspector;
+- a progressively disclosed Inspector plus a compact selected-layer Effect
+  toolbelt and contextual Effect Inspector;
 - visual easing comparison, graph scrubbing, and custom curve controls;
 - transform-keyframe cards plus draggable Timeline diamonds and exact
   playhead-inserted property moments;
@@ -132,13 +134,17 @@ keyboard controls, and persistence. UI is split by responsibility:
 - image-silhouette spawn controls and bounded per-copy finish events, disclosed
   inside the existing Spawn and Layer events sections rather than as parallel
   animation systems;
+- nested per-layer FX Timeline lanes with move/resize handles, keyboard timing,
+  exact start/end and fade controls, and four fade shapes;
 - a clearly labeled Experimental rendering section for selected Phaser WebGL
   sprite effects plus explicit Canvas fallback guidance;
 - saved editor-only timing markers/notes, millisecond and frame snapping,
   keyboard nudging, and batch alignment/staggering;
-- browser-local layer search, folders, editing locks, announced Move up/down
-  commands in a viewport-clamped Actions popup, Timeline zoom/work ranges, and
-  persistent accessible panel splitters;
+- Timeline work-range and timing-plan tools behind a secondary options popover,
+  with detailed property moments in an on-demand disclosure;
+- browser-local layer search, folders, editing locks, conventional top-is-front
+  stacking commands in a viewport-clamped Actions popup, Timeline zoom/work
+  ranges, and persistent accessible panel splitters;
 - effect-group membership, shared positioning, and draggable group timing
   bars;
 - first-run onboarding, a hands-on first-effect lesson, product-boundary
@@ -184,8 +190,8 @@ safe defaults.
 
 ### `packages/phaser-runtime`
 
-The local `@vvfx/phaser-runtime` package (v0.15.0) validates runtime v15, loads
-embedded or mapped Phaser textures, and plays effects through the same
+`@vvfx/phaser-runtime` 0.16.0 validates runtime v16,
+loads embedded or mapped Phaser textures, and plays effects through the same
 deterministic evaluator used by the editor preview. Its `VvfxEffect` handle
 owns scene update registration, sprite reuse, world-origin positioning, Beam
 endpoint overrides, pause/restart controls, completion, and cleanup. When
@@ -194,10 +200,11 @@ applies exported Experimental sprite effects. Canvas fallback skips those
 controllers while retaining the ordinary sprite and all deterministic
 behavior. The production bundle contains no React or editor UI.
 
-The generated Phaser TypeScript export is a small typed wrapper around this
-package. Because it embeds the runtime definition and calls `playVvfx`, it does
-not need separate emitter, randomness, behavior, path, trail, frame, or cleanup
-logic that could drift away from the preview.
+The Advanced TypeScript export is a small typed wrapper around this package.
+Because it embeds the runtime definition and calls `playVvfx`, it does not need
+separate emitter, randomness, behavior, path, trail, frame, or cleanup logic
+that could drift away from the preview. Runtime JSON remains the recommended
+boundary for games with a shared effect loader.
 
 ### `src/persistence`
 
@@ -214,6 +221,19 @@ for explicit removal instead of being silently deleted. Oversized libraries
 report their exact record count while validating only a bounded repair window;
 complete export is disabled until all records can be included. There is no
 server-side storage.
+
+Recovery writes use a latest-only queue: if editing outruns IndexedDB, Vvfx
+commits the newest pending project after the active write instead of serializing
+every obsolete intermediate draft. Project and template dialogs keep bounded
+metadata while closed and load complete embedded records only for visible
+library work, releasing those large values again on close.
+
+Long-session preview ownership follows the same rule. One Phaser game/canvas is
+reused across ordinary restarts, sprite and filter state is reconciled from the
+current project, inactive rendering controllers are released, and alpha-mask
+threshold lookup is bounded. The request-animation-frame clock is exposed
+through a narrow playback store so Preview/Timeline subscribers update at 60
+FPS without forcing unrelated editor panels to render on every tick.
 
 ## Playback and determinism
 
@@ -233,6 +253,9 @@ progress but remains normalized so the endpoint is preserved. Gravity,
 repeating sway, and seeded organic movement add deterministic offsets. Optional
 behavior envelopes multiply pulse, flicker, wobble, or gravity strength over
 the same per-copy lifetime; they do not create a second project Timeline.
+Rendering-effect clips also use each copy's raw, linear lifetime progress. Their
+start/end range and fade weights are independent of transform easing and yoyo,
+and the same local clip repeats for every spawned or repeated copy.
 Events compile activation origins before layer evaluation, so direct seeking
 and stepped playback agree. Copy-finish events carry each original copy's
 resolved final position into an independent, bounded target activation; target
@@ -253,6 +276,13 @@ playback. Groups are authoring structures; export resolves their shared X/Y and
 delay into ordinary layer values. Asset data remains embedded for portability,
 while games can provide `assetKeys` and `assetFrames` mappings for preloaded
 textures.
+
+Layer arrays remain back-to-front model data for compatibility and stable
+runtime depth assignment. The layer panel and Timeline deliberately display
+that array in reverse: the top visible row is frontmost and the bottom row is
+backmost. Rendering-effect clips are modifiers owned by their parent layer and
+never receive an independent depth; authors who need separate glow artwork
+behind a core image use a separate layer below it.
 
 ## Optional-feature lifecycle
 
@@ -292,6 +322,9 @@ save/load, templates, Runtime JSON, and the runtime-backed Phaser TypeScript
 path preserve the same distinction. Runtime JSON intentionally retains
 disabled configuration with `enabled: false`; removed list entries and
 references are absent, while required blocks contain canonical defaults.
+For rendering effects, disabling preserves both tuned settings and the clip;
+removing resets the settings and removes that clip. Undo/Redo restores or
+reapplies the complete pair atomically.
 
 Transient cleanup belongs to the system that created the transient state.
 `PhaserPreview.tsx` and `VvfxEffect` must reconcile sprites, trail samples,
@@ -313,7 +346,7 @@ therefore return live object and registration counts to their baseline.
   feature-specific ceilings.
 - IDs use a bounded 128-character ASCII grammar and reject JavaScript
   prototype-reserved names. Human-facing project, layer, group, and asset names
-  are limited to 120 characters. Duplicate structural IDs and broken current-v17
+  are limited to 120 characters. Duplicate structural IDs and broken current-v18
   entries are rejected instead of silently discarded.
 - Uploaded and embedded images must be canonical base64 PNG or WebP data URLs
   whose declared MIME type matches their bytes. Static PNG/WebP container
@@ -406,9 +439,14 @@ evaluation.
 
 Project `formatVersion` migrations normalize old and untrusted data before it
 reaches the editor. Runtime export has its own version because it intentionally
-omits preview/editor state. Both runtime JSON and generated Phaser TypeScript
+omits preview/editor state. Both runtime JSON and Advanced TypeScript
 resolve group offsets and omit editor-only concepts, so game integrations do
 not depend on the workspace shell.
+
+Runtime serialization also removes alpha-sample grids from assets that are used
+only as artwork or visual masks. It preserves the complete asset/reference and
+keeps grids for both active and stored spawn-silhouette choices, which is the
+only runtime behavior that consumes those CPU samples.
 
 Project v12/runtime v10 add a deliberately small Experimental rendering layer
 over Phaser's WebGL sprite effects: blur, outer glow, brightness/exposure,
@@ -464,6 +502,19 @@ the Beam to moving world-space targets without mutating or reparsing the
 definition. This is deliberately one fitted sprite, not a spline mesh,
 segmented ribbon, or procedural branching system.
 
+Project v18/runtime v16 add explicit per-copy clips for the curated rendering
+effects. Each layer stores at most one clip per effect with normalized
+start/end, fade-in/fade-out fractions, and a linear, smooth, ease-in, or
+ease-out fade shape. The persisted `progressMode` is `chronological` for newly
+authored clips and for marker-less project-v18/runtime-v16 drafts. Project v17
+and Runtime v15 imports create a full-life clip for every enabled or
+tuned-disabled effect; migrated directional dissolves use `legacy-transform`
+to retain their old eased/yoyo transform progress, while other effects remain
+chronological. This preserves both legacy appearance and the disable/re-enable
+contract. Templates serialize and preserve the same clips, and preview, media
+capture, Runtime JSON, and generated Phaser TypeScript all share their
+evaluation.
+
 Phaser's sprite effects have no Canvas counterpart. The defined fallback is the
 ordinary undistorted sprite, never a missing layer or an export-time omission.
 For visual masks and noisy erosion this is specifically the ordinary unmasked,
@@ -481,7 +532,7 @@ alpha grid remains CPU spawn-position data and is not fed into the visual-mask
 or erosion shaders. The [capability matrix](capability-matrix.md) records this
 boundary.
 
-No lighting-aware material setting is serialized in project v17/runtime v15.
+No lighting-aware material setting is serialized in project v18/runtime v16.
 Phaser 4 lighting reads scene-owned LightsManager state, camera-culled lights,
 a game-configured maximum light count, and normal maps paired with diffuse
 textures. Those host resources cannot be inferred safely from a portable

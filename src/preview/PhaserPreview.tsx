@@ -14,7 +14,10 @@ import {
   alphaMaskOverlaySamples,
   alphaMaskWorldDimensions,
 } from "../vfx/alphaMask";
-import { applySpriteSheetFrames } from "../vfx/phaserFrames";
+import {
+  applySpriteSheetFrames,
+  syncNormalizedSourceCrop,
+} from "../vfx/phaserFrames";
 import { VVFX_INTERNAL_MISSING_TEXTURE_KEY } from "../vfx/inputLimits";
 import {
   clearPhaserRenderingEffects,
@@ -32,11 +35,15 @@ import {
   layerPositionAfterPreviewDrag,
   pathPointAfterPreviewDrag,
 } from "./dragPosition";
-import { destroyStalePreviewSprites } from "./spriteLifecycle";
+import {
+  applyPreviewRestartRevision,
+  destroyStalePreviewSprites,
+} from "./spriteLifecycle";
 
 interface PhaserPreviewProps {
   project: VfxProject;
   time: number;
+  restartRevision?: number;
   selectedId: string | null;
   onMoveLayer: (layerId: string, x: number, y: number) => void;
   onMovePathPoint: (
@@ -344,12 +351,14 @@ export function syncPreviewRenderingEffects(
   sprite: Phaser.GameObjects.Image,
   effects: EvaluatedRenderingEffects,
   resolveAssetFrame?: PhaserRenderingAssetFrameResolver,
+  timeMs?: number,
 ) {
   return syncPhaserRenderingEffects({
     scene,
     sprite,
     effects,
     resolveAssetFrame,
+    timeMs,
   });
 }
 
@@ -368,6 +377,7 @@ export function resolvePreviewRenderingAssetFrame(
 export function PhaserPreview({
   project,
   time,
+  restartRevision = 0,
   selectedId,
   onMoveLayer,
   onMovePathPoint,
@@ -388,6 +398,7 @@ export function PhaserPreview({
   const lastPerformanceSampleAtRef = useRef(Number.NEGATIVE_INFINITY);
   const lastPerformanceSignatureRef = useRef("");
   const idlePerformanceTimerRef = useRef<number | null>(null);
+  const lastRestartRevisionRef = useRef(restartRevision);
   const [textureRevision, setTextureRevision] = useState(0);
   const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
   const lockedIds = useMemo(() => new Set(lockedLayerIds), [lockedLayerIds]);
@@ -503,6 +514,12 @@ export function PhaserPreview({
     const live = liveRef.current;
     if (!live) return;
     const { scene, sprites, grid, overlay, pathHandles } = live;
+    lastRestartRevisionRef.current = applyPreviewRestartRevision(
+      lastRestartRevisionRef.current,
+      restartRevision,
+      sprites.values(),
+      pathHandles.values(),
+    );
     const width = scene.scale.width;
     const height = scene.scale.height;
     const display = previewDisplayState(
@@ -617,6 +634,7 @@ export function PhaserPreview({
         sprite.setTexture(texture, instance.frame ?? "__BASE");
       }
 
+      syncNormalizedSourceCrop(sprite, instance.sourceCrop);
       const sourceLayer = project.layers.find(
         (layer) => layer.id === instance.layerId,
       );
@@ -653,6 +671,7 @@ export function PhaserPreview({
         sprite,
         instance.effects,
         resolveRenderingAssetFrame,
+        time,
       );
     });
 
@@ -1026,6 +1045,7 @@ export function PhaserPreview({
     stressCopies,
     textureRevision,
     time,
+    restartRevision,
   ]);
 
   return (

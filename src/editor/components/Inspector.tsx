@@ -34,6 +34,7 @@ import { canAttachLayer } from "../../vfx/attachments";
 import { enabledIncomingLayerEvents } from "../../vfx/layerLifecycle";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
 import { boundedLayerRepeat, MAX_LAYER_REPEATS } from "../../vfx/limits";
+import type { RenderingEffectKey } from "../../vfx/renderingEffects";
 import type {
   BehaviorEnvelopeSettings,
   VfxAsset,
@@ -63,6 +64,7 @@ import {
   maximumAlphaMaskValue,
 } from "../../vfx/alphaMask";
 import { EasingCurveEditor } from "./EasingCurveEditor";
+import { EffectToolbelt } from "./EffectToolbelt";
 import { ExperimentalRenderingSection } from "./ExperimentalRenderingSection";
 import { FlipbookPreview } from "./FlipbookPreview";
 import {
@@ -300,6 +302,9 @@ export function Inspector({
   onPaste,
   canPaste,
   locked = false,
+  selectedEffectClipId = null,
+  onAddEffect,
+  onSelectEffect,
 }: {
   layer: VfxLayer | null;
   assets: VfxAsset[];
@@ -311,6 +316,9 @@ export function Inspector({
   onPaste: () => void;
   canPaste: boolean;
   locked?: boolean;
+  selectedEffectClipId?: string | null;
+  onAddEffect?: (effect: RenderingEffectKey) => void;
+  onSelectEffect?: (clipId: string) => void;
 }) {
   const fieldIdPrefix = useId();
   if (!layer) {
@@ -601,6 +609,20 @@ export function Inspector({
             ))}
           </select>
         </div>
+
+        {onAddEffect && onSelectEffect && (
+          <EffectToolbelt
+            layerName={layer.name}
+            clips={layer.appearance.effectClips.map((clip) => ({
+              id: clip.id,
+              effect: clip.effect,
+              enabled: layer.appearance.effects[clip.effect].enabled,
+            }))}
+            selectedClipId={selectedEffectClipId}
+            onAdd={onAddEffect}
+            onSelect={onSelectEffect}
+          />
+        )}
 
         {selectedAsset && !selectedAsset.builtIn && (
           <SettingsSection title="Sprite frames" icon={<Film size={15} />}>
@@ -2092,11 +2114,13 @@ export function Inspector({
           </SelectField>
         </SettingsSection>
 
-        <ExperimentalRenderingSection
-          effects={layer.appearance.effects}
-          assets={assets}
-          onChange={(effects) => setAppearance({ effects })}
-        />
+        {(!onAddEffect || !onSelectEffect) && (
+          <ExperimentalRenderingSection
+            effects={layer.appearance.effects}
+            assets={assets}
+            onChange={(effects) => setAppearance({ effects })}
+          />
+        )}
 
         {layer.type !== "static" && (
           <SettingsSection title="Behaviors" icon={<Activity size={15} />}>

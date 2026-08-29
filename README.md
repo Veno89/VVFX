@@ -50,6 +50,10 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 - Beam endpoint authoring with a draggable preview handle, automatic rotation
   and length fitting for left-to-right artwork, plus Phaser world-space
   `setEndpoints(...)` updates for moving targets.
+- Undoable **Change type** actions for one layer or a multi-selection. Shared
+  timing, appearance, effects, links, and stack position survive conversion;
+  changing artwork to Beam seeds sensible endpoints instead of forcing a
+  rebuild.
 - Position, separate or uniform scale, opacity, rotation, movement, visual
   easing presets, editable cubic curves, delay, duration, repeats, yoyo, tint,
   tint strength, and normal/additive blending.
@@ -85,8 +89,10 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   copy-finish events can also play a layer at each original copy's resolved
   final position; finite Triggered-only targets are recommended.
 - Optional named Phaser atlas frames with game-side texture/frame mapping.
-- Layer rename, reordering, eye visibility, enable/disable, Solo, duplicate,
-  delete, settings copy/paste, attachment, and stable direct preview dragging.
+- Conventional layer stacking with the top row rendered frontmost, plus
+  Bring forward, Send backward, Bring to front, and Send to back actions. Layer
+  rename, eye visibility, enable/disable, Solo, duplicate, delete, settings
+  copy/paste, attachment, and stable direct preview dragging remain available.
 - Browser-local layer search, folders, editing locks, keyboard reordering, and
   per-project Timeline zoom/work ranges. Resizable asset, layer, preview,
   Inspector, and Timeline regions persist without changing project data.
@@ -94,7 +100,11 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   membership controls, and draggable group Timeline bars.
 - Timeline layer bars with draggable start/duration handles, exact millisecond
   Start/End/Duration fields, frame-aware snapping, and intermediate keyframe
-  diamonds.
+  diamonds. Expand a layer's FX badge for nested effect clips that can be moved
+  or resized without turning effects into separate visual layers.
+- Timeline work-range and timing-plan tools live behind **More**, while detailed
+  property moments expand only when needed; primary transport, snap, zoom, and
+  selected timing stay visible without the former wall of controls.
 - Saved named timing markers, pasted-feedback-to-marker extraction, 1/10 ms
   keyboard nudging, and multi-layer move/align/stagger choreography.
 - Reset buttons that restore slider defaults.
@@ -113,13 +123,19 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 - Optional Effect Performance details with live/peak sprites, creation rate,
   estimated duration and spawn pressure, friendly warnings, and guarded
   1/10/25/50-copy stress previews.
-- Runtime JSON plus generated Phaser TypeScript. The TypeScript embeds the exact
-  runtime definition and calls `playVvfx` from `@vvfx/phaser-runtime`.
+- Recommended compact Runtime JSON for drop-in game integration, plus an
+  Advanced TypeScript wrapper when a standalone typed helper file is useful.
+  Both call the exact `@vvfx/phaser-runtime` evaluator.
 - Export preflight profiles for mobile, balanced gameplay, and showcase targets
-  report content/reference errors plus sprite, WebGL-pass, image, and duration
-  budgets before game-facing exports are downloaded.
+  report content/reference errors, point-versus-endpoint placement capability,
+  and sprite, WebGL-pass, image, and duration budgets before game-facing exports
+  are downloaded.
 - Clean local WebM (30 FPS) and GIF (15 FPS) export using the active Timeline
   range, with editor guides removed automatically.
+- A compact Effect toolbelt on the selected layer and a contextual Effect
+  Inspector for adding, selecting, tuning, disabling, or removing effects. Each
+  effect has a per-copy Timeline clip with exact timing, fade-in/fade-out, and a
+  selectable fade shape.
 - Clearly marked Experimental WebGL rendering for blur, outer glow,
   brightness/exposure, animated shine, two-color spatial gradients,
   still-image visual clipping masks, straight-wipe dissolve, seeded noisy
@@ -188,15 +204,58 @@ game:
 npm run build:runtime
 ```
 
-Runtime JSON can be passed directly to `playVvfx`. The generated Phaser
-TypeScript tab instead embeds that same definition in a typed play function.
-Both are exact evaluator paths; the generated file is not a separate set of
-approximate tweens. Map asset IDs to textures already loaded by the game with
-`assetKeys`, and optionally override atlas frames with `assetFrames`.
+Runtime JSON is the recommended integration boundary: give the
+`*.vvfx-runtime.json` file a stable effect ID, commit it with the game, and pass
+it directly to `playVvfx`. Replacing that one file is enough to update an
+authored effect. The **Advanced
+TypeScript** tab embeds the same definition in a typed helper file for projects
+that do not use a shared loader. Both are exact evaluator paths; the generated
+file is not a separate set of approximate tweens. Map asset IDs to textures
+already loaded by the game with `assetKeys`, and optionally override atlas
+frames with `assetFrames`.
 
-Current formats are editable project **v17** and Runtime JSON **v15**. The local
-`@vvfx/phaser-runtime` package is **v0.15.0**. Older supported formats are
-normalized during import; unknown future versions are rejected.
+Every export can play at an origin x/y. Endpoint options appear only when the
+effect actually contains a Beam layer. Ordinary animated-image effects do not
+advertise a `beamEndpoints` option that cannot affect them.
+
+For a shared game-side effect library, the intended loop is:
+
+1. Export **Runtime JSON** and give the file a stable name such as
+   `meteor-strike.vvfx-runtime.json`.
+2. Place it in the game's effect catalog and preload the catalog once per
+   Phaser scene.
+3. Play point effects at x/y and Beam effects between world-space endpoints.
+4. Replace the same JSON file after later Vvfx edits; weapon logic and imports
+   do not need to change.
+
+Embedded images make the first integration portable. A production game may map
+asset IDs to already-loaded texture keys to avoid decoding duplicate artwork.
+For short dynamic Beams, runtime `beamFit: "crop"` uses a centered part of the
+source instead of squeezing every source pixel; `beamThicknessScale` tunes only
+the cross-axis size, and `maxDurationMs` can trim an unused authored tail. These
+are game-side playback options and do not modify the export.
+
+The current unreleased source emits editable project **v18** and Runtime JSON
+**v16**. Older supported formats are normalized during import; project v17 and
+Runtime v15 effects receive explicit full-life clips so they keep their prior
+appearance. Unknown future versions are rejected.
+
+The private/local `@vvfx/phaser-runtime` package is **v0.16.0**. It emits
+Runtime JSON v16, accepts supported exports from v1 through v16, and requires
+Phaser `>=4.2.1 <5`. The assigned version identifies the local folder/tarball
+artifact; the package has not been published to a registry.
+
+## Long-session behavior
+
+Vvfx keeps one preview game/canvas alive across normal playback restarts,
+reconciles sprites and WebGL controllers instead of stacking them, and bounds
+mask-related caches. The 60 FPS playback clock is isolated to Preview and
+Timeline consumers so editing unrelated controls does not re-render the entire
+workspace every frame. Recovery autosaves serialize the latest pending change,
+and saved-project/template dialogs release full embedded image data when they
+close. These are implementation safeguards; the Effect Performance panel and
+stress preview remain the tools for judging whether an individual effect is too
+expensive for its target game.
 
 ## Development commands
 
@@ -258,6 +317,9 @@ docs/                    Architecture, format, capability, guide, and roadmap
 - Additive blending brightens overlaps but does not create a blur halo. The
   Experimental outer-glow and blur controls are WebGL-only and safely disappear
   on Canvas while leaving the source sprite visible.
+- Rendering-effect clips time a modifier on its parent layer; they do not create
+  another z-order entry. Use separate artwork on a lower layer when a painted
+  halo must sit behind a lightning core or other foreground image.
 - Experimental straight-wipe dissolve and noisy erosion remove sprite pixels
   only in WebGL. Canvas keeps the ordinary, un-eroded sprite, so add a normal
   opacity fade when the fallback must still disappear. Gradient and warp feed
@@ -285,8 +347,9 @@ docs/                    Architecture, format, capability, guide, and roadmap
   target no longer fits that beginner-safe pattern.
 - Preview background, grid, zoom, selection, eye visibility, and Solo are not
   game-runtime data. Use **Enabled** to control exported playback.
-- Generated Phaser TypeScript requires the local `@vvfx/phaser-runtime`
-  package. Games must preload texture keys supplied through `assetKeys`.
+- Advanced TypeScript requires the local `@vvfx/phaser-runtime` package. Games
+  must preload texture keys supplied through `assetKeys`; use the recommended
+  Runtime JSON route for a reusable game-side effect library.
 - WebM uses the browser's native encoder and requires a current Chrome, Edge,
   or Firefox build. GIF is the fallback, with a compact palette and
   transparency.

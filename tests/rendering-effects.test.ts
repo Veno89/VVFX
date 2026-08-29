@@ -5,10 +5,13 @@ import {
   VVFX_RENDERING_NOISE_TEXTURE,
   clearPhaserRenderingEffects,
   createDefaultRenderingEffects,
+  createRenderingEffectClip,
   enabledRenderingEffects,
   ensureRenderingNoiseTexture,
   evaluateRenderingEffects,
   hasEnabledRenderingEffects,
+  migrateLegacyRenderingEffectClips,
+  normalizeRenderingEffectClips,
   normalizeRenderingEffects,
   renderingEffectPadding,
   renderingEffectPassCost,
@@ -376,6 +379,149 @@ describe("experimental rendering values", () => {
     expect(result.controllers.directionalDissolveProgress).toBeCloseTo(1 / 12);
   });
 
+  it("preserves legacy eased dissolve progression for migrated full-life clips", () => {
+    const settings = createDefaultRenderingEffects();
+    settings.directionalDissolve.enabled = true;
+    settings.directionalDissolve.start = 0.2;
+    settings.directionalDissolve.end = 0.8;
+
+    const result = evaluateRenderingEffects(settings, {
+      lifetimeProgress: 0.5,
+      dissolveProgress: 0.25,
+      elapsedMs: 500,
+      seed: 7,
+      clips: migrateLegacyRenderingEffectClips(settings),
+    });
+
+    expect(result.controllers.directionalDissolveProgress).toBeCloseTo(1 / 12);
+  });
+
+  it("uses chronological progress for newly authored full-life dissolves", () => {
+    const settings = createDefaultRenderingEffects();
+    settings.directionalDissolve.enabled = true;
+    settings.directionalDissolve.start = 0.2;
+    settings.directionalDissolve.end = 0.8;
+
+    const result = evaluateRenderingEffects(settings, {
+      lifetimeProgress: 0.5,
+      dissolveProgress: 0.25,
+      elapsedMs: 500,
+      seed: 7,
+      clips: [
+        createRenderingEffectClip(
+          "directionalDissolve",
+          "effect-directionalDissolve",
+        ),
+      ],
+    });
+
+    expect(result.controllers.directionalDissolveProgress).toBeCloseTo(0.5);
+  });
+
+  it("normalizes temporal clips and migrates only authored legacy effects", () => {
+    const settings = createDefaultRenderingEffects();
+    settings.outerGlow.enabled = true;
+    settings.blur.strength = 2;
+
+    expect(migrateLegacyRenderingEffectClips(settings)).toEqual([
+      createRenderingEffectClip("blur", "effect-blur"),
+      createRenderingEffectClip("outerGlow", "effect-outerGlow"),
+    ]);
+    const legacyDissolveSettings = createDefaultRenderingEffects();
+    legacyDissolveSettings.directionalDissolve.enabled = true;
+    expect(migrateLegacyRenderingEffectClips(legacyDissolveSettings)).toEqual([
+      {
+        ...createRenderingEffectClip(
+          "directionalDissolve",
+          "effect-directionalDissolve",
+        ),
+        progressMode: "legacy-transform",
+      },
+    ]);
+    expect(
+      normalizeRenderingEffectClips(
+        [
+          {
+            id: "timed-glow",
+            effect: "outerGlow",
+            start: 0.8,
+            end: 0.2,
+            fadeIn: 0.75,
+            fadeOut: 0.75,
+            fadeEasing: "ease-out",
+          },
+          { id: "duplicate", effect: "outerGlow", start: 0, end: 1 },
+          { id: "unknown", effect: "sceneRefraction", start: 0, end: 1 },
+        ],
+        settings,
+        { migrateLegacy: false },
+      ),
+    ).toEqual([
+      {
+        id: "timed-glow",
+        effect: "outerGlow",
+        start: 0.2,
+        end: 0.8,
+        fadeIn: 0.5,
+        fadeOut: 0.5,
+        fadeEasing: "ease-out",
+        progressMode: "chronological",
+      },
+    ]);
+    expect(
+      normalizeRenderingEffectClips([], settings).map((clip) => clip.effect),
+    ).toEqual(["blur", "outerGlow"]);
+  });
+
+  it("evaluates effect fade weights in linear copy-lifetime time", () => {
+    const settings = createDefaultRenderingEffects();
+    settings.outerGlow.enabled = true;
+    const clip = {
+      ...createRenderingEffectClip("outerGlow", "timed-glow"),
+      start: 0.2,
+      end: 0.8,
+      fadeIn: 0.25,
+      fadeOut: 0.25,
+      fadeEasing: "linear" as const,
+    };
+    const weightAt = (lifetimeProgress: number) =>
+      evaluateRenderingEffects(settings, {
+        lifetimeProgress,
+        elapsedMs: lifetimeProgress * 1_000,
+        seed: 1,
+        clips: [clip],
+      }).weights.outerGlow;
+
+    expect(weightAt(0.1)).toBe(0);
+    expect(weightAt(0.2)).toBe(0);
+    expect(weightAt(0.275)).toBeCloseTo(0.5);
+    expect(weightAt(0.5)).toBe(1);
+    expect(weightAt(0.725)).toBeCloseTo(0.5);
+    expect(weightAt(0.8)).toBe(0);
+    expect(weightAt(0.9)).toBe(0);
+  });
+
+  it("progresses dissolve inside its clip and restores it outside", () => {
+    const settings = createDefaultRenderingEffects();
+    settings.directionalDissolve.enabled = true;
+    const clip = {
+      ...createRenderingEffectClip("directionalDissolve", "timed-dissolve"),
+      start: 0.25,
+      end: 0.75,
+    };
+    const progressAt = (lifetimeProgress: number) =>
+      evaluateRenderingEffects(settings, {
+        lifetimeProgress,
+        elapsedMs: lifetimeProgress * 1_000,
+        seed: 1,
+        clips: [clip],
+      }).controllers.directionalDissolveProgress;
+
+    expect(progressAt(0.1)).toBe(0);
+    expect(progressAt(0.5)).toBeCloseTo(0.5);
+    expect(progressAt(0.9)).toBe(0);
+  });
+
   it("keeps noise erosion static on direct seek and varies it per copy seed", () => {
     const settings = createDefaultRenderingEffects();
     settings.directionalDissolve.enabled = true;
@@ -480,9 +626,111 @@ describe("experimental rendering values", () => {
     ).toBeCloseTo(0.5);
     expect(instance.effects.controllers.brightnessMultiplier).toBe(1.5);
   });
+
+  it("keeps clip timing linear when layer transform easing is non-linear", () => {
+    const project = createEmptyProject("Timed glow");
+    const layer = createLayer("animated", "Glow", "builtin-ring");
+    layer.timing.duration = 1_000;
+    layer.timing.easing = "slow-fast";
+    layer.appearance.effects.outerGlow.enabled = true;
+    layer.appearance.effectClips = [
+      {
+        ...createRenderingEffectClip("outerGlow", "timed-glow"),
+        start: 0.2,
+        end: 0.3,
+      },
+    ];
+    project.layers = [layer];
+
+    expect(
+      evaluateProject(project, 250, null)[0].effects.weights.outerGlow,
+    ).toBe(1);
+  });
+
+  it("advances clips across a static layer's authored lifetime", () => {
+    const project = createEmptyProject("Static timed glow");
+    const layer = createLayer("static", "Glow", "builtin-ring");
+    layer.timing.duration = 1_000;
+    layer.appearance.effects.outerGlow.enabled = true;
+    layer.appearance.effectClips = [
+      {
+        ...createRenderingEffectClip("outerGlow", "static-glow"),
+        start: 0.2,
+        end: 0.3,
+      },
+    ];
+    project.layers = [layer];
+
+    expect(
+      evaluateProject(project, 250, null)[0].effects.weights.outerGlow,
+    ).toBe(1);
+  });
 });
 
 describe("shared Phaser 4 filter adapter", () => {
+  it("uses explicit shine time for deterministic seeks and keeps the legacy fallback", () => {
+    const explicit = fakeScene(true);
+    const explicitSprite = fakeSprite(explicit.camera);
+    const settings = createDefaultRenderingEffects();
+    settings.animatedShine.enabled = true;
+    const effects = evaluateRenderingEffects(settings, {
+      lifetimeProgress: 0.25,
+      elapsedMs: 250,
+      seed: 1,
+    });
+
+    syncPhaserRenderingEffects({
+      scene: explicit.scene,
+      sprite: explicitSprite.sprite,
+      effects,
+      timeMs: 250,
+    });
+    const explicitNode = explicit.nodes.get("VvfxAnimatedShineFilter") as {
+      setupUniforms: (
+        controller: unknown,
+        context: { width: number; height: number },
+      ) => void;
+    };
+    const explicitController = explicitSprite.list.find(
+      (filter) => filter.renderNode === "VvfxAnimatedShineFilter",
+    );
+    explicitNode.setupUniforms(explicitController, { width: 128, height: 64 });
+    expect(explicit.setUniform).toHaveBeenCalledWith("time", 0.25);
+
+    syncPhaserRenderingEffects({
+      scene: explicit.scene,
+      sprite: explicitSprite.sprite,
+      effects,
+      timeMs: 500,
+    });
+    explicitNode.setupUniforms(explicitController, { width: 128, height: 64 });
+    expect(explicit.setUniform).toHaveBeenLastCalledWith("intensity", 1);
+    expect(explicit.uniforms.get("time")).toBe(0.5);
+    expect(explicitSprite.filterList.add).toHaveBeenCalledTimes(1);
+
+    const fallback = fakeScene(true);
+    const fallbackSprite = fakeSprite(fallback.camera);
+    syncPhaserRenderingEffects({
+      scene: fallback.scene,
+      sprite: fallbackSprite.sprite,
+      effects,
+    });
+    const fallbackNode = fallback.nodes.get("VvfxAnimatedShineFilter") as {
+      setupUniforms: (
+        controller: unknown,
+        context: { width: number; height: number },
+      ) => void;
+    };
+    const fallbackController = fallbackSprite.list.find(
+      (filter) => filter.renderNode === "VvfxAnimatedShineFilter",
+    );
+    fallbackNode.setupUniforms(fallbackController, {
+      width: 128,
+      height: 64,
+    });
+    expect(fallback.uniforms.get("time")).toBe(1.25);
+  });
+
   it("warns once and becomes a safe no-op on Canvas", () => {
     const { scene, camera } = fakeScene(false);
     const { sprite, filterList, enableFilters } = fakeSprite(camera);
@@ -520,6 +768,14 @@ describe("shared Phaser 4 filter adapter", () => {
       lifetimeProgress: 0.75,
       elapsedMs: 750,
       seed: 8421,
+      clips: [
+        {
+          ...createRenderingEffectClip("outerGlow", "timed-glow"),
+          start: 0.5,
+          fadeIn: 1,
+          fadeEasing: "linear",
+        },
+      ],
     });
     syncPhaserRenderingEffects({ scene, sprite, effects: replay });
 
@@ -532,11 +788,12 @@ describe("shared Phaser 4 filter adapter", () => {
     expect(filterList.addGlow).toHaveBeenCalledTimes(1);
     expect(list).toHaveLength(7);
     expect(controllers.wipe.progress).toBeCloseTo(0.75);
+    expect(controllers.glow.outerStrength).toBeCloseTo(1.5);
     expect(colorMatrix.brightness).toHaveBeenLastCalledWith(1);
     const shine = list.find(
       (filter) => filter.renderNode === "VvfxAnimatedShineFilter",
     );
-    expect(shine).toMatchObject({ speed: 0.5 });
+    expect(shine).toMatchObject({ speed: 0.5, intensity: 1 });
     expect(filterList.remove).not.toHaveBeenCalled();
 
     const changed = createDefaultRenderingEffects();
@@ -558,6 +815,71 @@ describe("shared Phaser 4 filter adapter", () => {
     clearPhaserRenderingEffects(sprite);
     expect(filterList.remove).toHaveBeenCalledTimes(14);
     expect(list).toHaveLength(0);
+  });
+
+  it("releases timed effect filters outside their clip without fade-frame churn", () => {
+    const { scene, camera } = fakeScene(true);
+    const { sprite, filterList, list } = fakeSprite(camera);
+    const settings = createDefaultRenderingEffects();
+    settings.outerGlow.enabled = true;
+    const authoredSettings = structuredClone(settings);
+    const clip = {
+      ...createRenderingEffectClip("outerGlow", "timed-glow"),
+      start: 0.25,
+      end: 0.75,
+      fadeIn: 0.5,
+      fadeOut: 0.5,
+      fadeEasing: "linear" as const,
+    };
+    const syncAt = (lifetimeProgress: number) =>
+      syncPhaserRenderingEffects({
+        scene,
+        sprite,
+        effects: evaluateRenderingEffects(settings, {
+          lifetimeProgress,
+          elapsedMs: lifetimeProgress * 1_000,
+          seed: 1,
+          clips: [clip],
+        }),
+      });
+
+    expect(syncAt(0.2)).toMatchObject({ applied: false, passCost: 1 });
+    expect(filterList.addGlow).not.toHaveBeenCalled();
+    expect(filterList.remove).not.toHaveBeenCalled();
+
+    expect(syncAt(0.3)).toMatchObject({ applied: true, passCost: 1 });
+    syncAt(0.5);
+    syncAt(0.7);
+    expect(filterList.addGlow).toHaveBeenCalledTimes(1);
+    expect(filterList.remove).not.toHaveBeenCalled();
+    expect(list).toHaveLength(1);
+
+    expect(syncAt(0.75)).toMatchObject({ applied: false, passCost: 1 });
+    syncAt(0.9);
+    expect(filterList.remove).toHaveBeenCalledTimes(1);
+    expect(list).toHaveLength(0);
+    expect(settings).toEqual(authoredSettings);
+  });
+
+  it("detects in-place authored setting changes without per-frame serialization", () => {
+    const { scene, camera } = fakeScene(true);
+    const { sprite, filterList, list } = fakeSprite(camera);
+    const settings = createDefaultRenderingEffects();
+    settings.outerGlow.enabled = true;
+    const evaluate = () =>
+      evaluateRenderingEffects(settings, {
+        lifetimeProgress: 0.5,
+        elapsedMs: 500,
+        seed: 1,
+      });
+
+    syncPhaserRenderingEffects({ scene, sprite, effects: evaluate() });
+    settings.outerGlow.outerStrength = 6;
+    syncPhaserRenderingEffects({ scene, sprite, effects: evaluate() });
+
+    expect(filterList.addGlow).toHaveBeenCalledTimes(2);
+    expect(filterList.remove).toHaveBeenCalledTimes(1);
+    expect(list).toHaveLength(1);
   });
 
   it("registers and configures a resolved visual mask before authored filters", () => {

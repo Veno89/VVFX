@@ -113,6 +113,37 @@ export interface RenderingEffectsSettings {
   spriteWarp: SpriteWarpEffectSettings;
 }
 
+export type RenderingEffectKey = keyof RenderingEffectsSettings;
+
+export type RenderingEffectFadeEasing =
+  "linear" | "smooth" | "ease-in" | "ease-out";
+
+/**
+ * Chooses the time source used by effect-specific animation controllers.
+ * Current clips always use chronological copy-lifetime time. The legacy mode
+ * exists only so migrated directional dissolves retain their pre-v18 eased and
+ * yoyo-aware transform progression.
+ */
+export type RenderingEffectClipProgressMode =
+  "chronological" | "legacy-transform";
+
+/**
+ * A normalized timing window inside one copy of the parent layer. Fade values
+ * are fractions of this clip's own duration, rather than layer-lifetime values.
+ */
+export interface RenderingEffectClip {
+  id: string;
+  effect: RenderingEffectKey;
+  start: number;
+  end: number;
+  fadeIn: number;
+  fadeOut: number;
+  fadeEasing: RenderingEffectFadeEasing;
+  progressMode: RenderingEffectClipProgressMode;
+}
+
+export type RenderingEffectWeights = Record<RenderingEffectKey, number>;
+
 export interface RenderingEffectControllerValues {
   brightnessMultiplier: number;
   shineSpeed: number;
@@ -128,14 +159,18 @@ export interface RenderingEffectControllerValues {
 
 export interface EvaluatedRenderingEffects {
   settings: RenderingEffectsSettings;
+  weights: RenderingEffectWeights;
   controllers: RenderingEffectControllerValues;
 }
 
 export interface RenderingEffectsEvaluationInput {
-  /** Pass the layer's canonical, already-eased lifetime progress. */
+  /** Pass the copy's linear, normalized lifetime progress. */
   lifetimeProgress: number;
+  /** Optional legacy/eased progress used by migrated dissolve settings. */
+  dissolveProgress?: number;
   elapsedMs: number;
   seed: number;
+  clips?: readonly RenderingEffectClip[];
 }
 
 export type RenderingEffectName =
@@ -147,6 +182,59 @@ export type RenderingEffectName =
   | "spatial-gradient"
   | "directional-dissolve"
   | "sprite-warp";
+
+export const RENDERING_EFFECT_KEYS = [
+  "visualMask",
+  "blur",
+  "outerGlow",
+  "brightnessExposure",
+  "animatedShine",
+  "spatialGradient",
+  "directionalDissolve",
+  "spriteWarp",
+] as const satisfies readonly RenderingEffectKey[];
+
+export const RENDERING_EFFECT_NAMES = [
+  "visual-mask",
+  "blur",
+  "outer-glow",
+  "brightness-exposure",
+  "animated-shine",
+  "spatial-gradient",
+  "directional-dissolve",
+  "sprite-warp",
+] as const satisfies readonly RenderingEffectName[];
+
+export const MAX_RENDERING_EFFECT_CLIPS = RENDERING_EFFECT_KEYS.length;
+
+const EFFECT_NAME_BY_KEY: Readonly<
+  Record<RenderingEffectKey, RenderingEffectName>
+> = {
+  visualMask: "visual-mask",
+  blur: "blur",
+  outerGlow: "outer-glow",
+  brightnessExposure: "brightness-exposure",
+  animatedShine: "animated-shine",
+  spatialGradient: "spatial-gradient",
+  directionalDissolve: "directional-dissolve",
+  spriteWarp: "sprite-warp",
+};
+
+const EFFECT_KEY_BY_NAME = Object.fromEntries(
+  Object.entries(EFFECT_NAME_BY_KEY).map(([key, name]) => [name, key]),
+) as Readonly<Record<RenderingEffectName, RenderingEffectKey>>;
+
+export function renderingEffectNameForKey(
+  key: RenderingEffectKey,
+): RenderingEffectName {
+  return EFFECT_NAME_BY_KEY[key];
+}
+
+export function renderingEffectKeyForName(
+  name: RenderingEffectName,
+): RenderingEffectKey {
+  return EFFECT_KEY_BY_NAME[name];
+}
 
 export const VVFX_RENDERING_NOISE_TEXTURE = "__vvfx-rendering-noise-v1";
 export const MAX_RENDERING_EFFECT_PADDING = 64;
@@ -355,6 +443,7 @@ uniform float speed;
 uniform float time;
 uniform float lineWidth;
 uniform float gradient;
+uniform float intensity;
 varying vec2 outTexCoord;
 void main ()
 {
@@ -364,7 +453,7 @@ void main ()
     float edge = uv.x * gradient;
     float shine = smoothstep(edge - lineWidth, edge, uv.y) -
         smoothstep(edge, edge + lineWidth, uv.y);
-    gl_FragColor = texture + shine * vec4(1.15, 0.85, 0.85, 1.0) * texture;
+    gl_FragColor = texture + shine * intensity * vec4(1.15, 0.85, 0.85, 1.0) * texture;
 }`;
 
 export const DEFAULT_RENDERING_EFFECTS: Readonly<RenderingEffectsSettings> = {
@@ -454,6 +543,22 @@ export function createDefaultRenderingEffects(): RenderingEffectsSettings {
   };
 }
 
+export function createRenderingEffectClip(
+  effect: RenderingEffectKey,
+  id: string,
+): RenderingEffectClip {
+  return {
+    id,
+    effect,
+    start: 0,
+    end: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    fadeEasing: "smooth",
+    progressMode: "chronological",
+  };
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -467,6 +572,157 @@ const normalizedColor = (value: unknown, fallback: string) =>
   typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
     ? value.toLowerCase()
     : fallback;
+
+const isRenderingEffectKey = (value: unknown): value is RenderingEffectKey =>
+  typeof value === "string" &&
+  (RENDERING_EFFECT_KEYS as readonly string[]).includes(value);
+
+function renderingEffectIsConfigured(
+  settings: RenderingEffectsSettings,
+  key: RenderingEffectKey,
+): boolean {
+  const current = settings[key] as unknown as Record<string, unknown>;
+  const defaults = DEFAULT_RENDERING_EFFECTS[key] as unknown as Record<
+    string,
+    unknown
+  >;
+  return Object.keys(defaults).some(
+    (field) => field !== "enabled" && current[field] !== defaults[field],
+  );
+}
+
+/**
+ * Builds explicit full-life clips for pre-v18 settings. Tuned disabled effects
+ * get a clip too, so enabling them later restores both their settings and time.
+ */
+export function migrateLegacyRenderingEffectClips(
+  settings: RenderingEffectsSettings,
+): RenderingEffectClip[] {
+  return RENDERING_EFFECT_KEYS.flatMap((effect) =>
+    settings[effect].enabled || renderingEffectIsConfigured(settings, effect)
+      ? [
+          {
+            ...createRenderingEffectClip(effect, `effect-${effect}`),
+            progressMode:
+              effect === "directionalDissolve"
+                ? "legacy-transform"
+                : "chronological",
+          },
+        ]
+      : [],
+  );
+}
+
+/** Adds full-life clips for authored settings without disturbing timed clips. */
+export function reconcileRenderingEffectClips(
+  settings: RenderingEffectsSettings,
+  clips: readonly RenderingEffectClip[],
+  createId: (effect: RenderingEffectKey) => string = (effect) =>
+    `effect-${effect}`,
+  options: { legacyTransformProgress?: boolean } = {},
+): RenderingEffectClip[] {
+  const reconciled = clips.map((clip) => ({ ...clip }));
+  const usedIds = new Set(reconciled.map((clip) => clip.id));
+  for (const effect of RENDERING_EFFECT_KEYS) {
+    if (
+      (!settings[effect].enabled &&
+        !renderingEffectIsConfigured(settings, effect)) ||
+      reconciled.some((clip) => clip.effect === effect)
+    )
+      continue;
+    const baseId = createId(effect);
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    reconciled.push({
+      ...createRenderingEffectClip(effect, id),
+      progressMode:
+        options.legacyTransformProgress && effect === "directionalDissolve"
+          ? "legacy-transform"
+          : "chronological",
+    });
+    usedIds.add(id);
+  }
+  return reconciled;
+}
+
+export function normalizeRenderingEffectClips(
+  value: unknown,
+  settings: RenderingEffectsSettings,
+  options: {
+    migrateLegacy?: boolean;
+    legacyTransformProgress?: boolean;
+  } = {},
+): RenderingEffectClip[] {
+  const clips: RenderingEffectClip[] = [];
+  const seenEffects = new Set<RenderingEffectKey>();
+  const seenIds = new Set<string>();
+  const candidates = Array.isArray(value)
+    ? value.slice(0, MAX_RENDERING_EFFECT_CLIPS)
+    : [];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate) || !isRenderingEffectKey(candidate.effect))
+      continue;
+    const effect = candidate.effect;
+    if (seenEffects.has(effect)) continue;
+    const fallbackId = `effect-${effect}`;
+    let id =
+      typeof candidate.id === "string" && candidate.id.trim().length > 0
+        ? candidate.id.trim().slice(0, 160)
+        : fallbackId;
+    if (seenIds.has(id)) id = fallbackId;
+    if (seenIds.has(id)) continue;
+
+    let start = clamp01(finiteNumber(candidate.start, 0));
+    let end = clamp01(finiteNumber(candidate.end, 1));
+    if (end < start) [start, end] = [end, start];
+    if (end - start < 0.001) {
+      if (end < 1) end = Math.min(1, start + 0.001);
+      else start = Math.max(0, end - 0.001);
+    }
+    let fadeIn = clamp01(finiteNumber(candidate.fadeIn, 0));
+    let fadeOut = clamp01(finiteNumber(candidate.fadeOut, 0));
+    const fadeTotal = fadeIn + fadeOut;
+    if (fadeTotal > 1) {
+      fadeIn /= fadeTotal;
+      fadeOut /= fadeTotal;
+    }
+    const fadeEasing: RenderingEffectFadeEasing = [
+      "linear",
+      "smooth",
+      "ease-in",
+      "ease-out",
+    ].includes(String(candidate.fadeEasing))
+      ? (candidate.fadeEasing as RenderingEffectFadeEasing)
+      : "smooth";
+    const progressMode: RenderingEffectClipProgressMode = [
+      "chronological",
+      "legacy-transform",
+    ].includes(String(candidate.progressMode))
+      ? (candidate.progressMode as RenderingEffectClipProgressMode)
+      : options.legacyTransformProgress && effect === "directionalDissolve"
+        ? "legacy-transform"
+        : "chronological";
+    clips.push({
+      id,
+      effect,
+      start,
+      end,
+      fadeIn,
+      fadeOut,
+      fadeEasing,
+      progressMode,
+    });
+    seenEffects.add(effect);
+    seenIds.add(id);
+  }
+  return options.migrateLegacy === false
+    ? clips
+    : reconcileRenderingEffectClips(settings, clips, undefined, options);
+}
 
 /**
  * Restores missing legacy fields and bounds imported values before they can
@@ -725,6 +981,72 @@ const clamp = (value: number, minimum: number, maximum: number) =>
 
 const clamp01 = (value: number) => clamp(value, 0, 1);
 
+const createRenderingEffectWeights = (value = 0): RenderingEffectWeights => ({
+  visualMask: value,
+  blur: value,
+  outerGlow: value,
+  brightnessExposure: value,
+  animatedShine: value,
+  spatialGradient: value,
+  directionalDissolve: value,
+  spriteWarp: value,
+});
+
+function easeRenderingEffectFade(
+  progress: number,
+  easing: RenderingEffectFadeEasing,
+): number {
+  const value = clamp01(progress);
+  if (easing === "ease-in") return value * value;
+  if (easing === "ease-out") return 1 - (1 - value) * (1 - value);
+  if (easing === "smooth") return value * value * (3 - 2 * value);
+  return value;
+}
+
+export function evaluateRenderingEffectClipWeight(
+  clip: RenderingEffectClip,
+  lifetimeProgress: number,
+): number {
+  const progress = clamp01(lifetimeProgress);
+  if (progress < clip.start || progress > clip.end) return 0;
+  const local = clamp01(
+    (progress - clip.start) / Math.max(0.0001, clip.end - clip.start),
+  );
+  const attack =
+    clip.fadeIn > 0
+      ? easeRenderingEffectFade(local / clip.fadeIn, clip.fadeEasing)
+      : 1;
+  const release =
+    clip.fadeOut > 0
+      ? easeRenderingEffectFade((1 - local) / clip.fadeOut, clip.fadeEasing)
+      : 1;
+  return clamp01(Math.min(attack, release));
+}
+
+export function evaluateRenderingEffectWeights(
+  settings: RenderingEffectsSettings,
+  clips: readonly RenderingEffectClip[],
+  lifetimeProgress: number,
+): RenderingEffectWeights {
+  const weights = createRenderingEffectWeights();
+  for (const effect of RENDERING_EFFECT_KEYS) {
+    if (!settings[effect].enabled) continue;
+    const matching = clips.filter((clip) => clip.effect === effect);
+    weights[effect] =
+      matching.length === 0
+        ? 1
+        : matching.reduce(
+            (maximum, clip) =>
+              Math.max(
+                maximum,
+                evaluateRenderingEffectClipWeight(clip, lifetimeProgress),
+              ),
+            0,
+          );
+  }
+  return weights;
+}
+
 export function enabledRenderingEffects(
   settings: RenderingEffectsSettings,
 ): RenderingEffectName[] {
@@ -772,17 +1094,34 @@ export function evaluateRenderingEffects(
   input: RenderingEffectsEvaluationInput,
 ): EvaluatedRenderingEffects {
   const progress = clamp01(input.lifetimeProgress);
+  const weights = evaluateRenderingEffectWeights(
+    settings,
+    input.clips ?? [],
+    progress,
+  );
   const dissolve = settings.directionalDissolve;
+  const dissolveClip = input.clips?.find(
+    (clip) => clip.effect === "directionalDissolve",
+  );
+  const dissolveLifetimeProgress =
+    dissolveClip && dissolveClip.progressMode !== "legacy-transform"
+      ? clamp01(
+          (progress - dissolveClip.start) /
+            Math.max(0.0001, dissolveClip.end - dissolveClip.start),
+        )
+      : clamp01(input.dissolveProgress ?? progress);
   const dissolveStart = clamp01(Math.min(dissolve.start, dissolve.end));
   const dissolveEnd = clamp01(Math.max(dissolve.start, dissolve.end));
-  const directionalDissolveProgress = clamp01(
-    (progress - dissolveStart) / Math.max(0.0001, dissolveEnd - dissolveStart),
-  );
+  const directionalDissolveProgress =
+    clamp01(
+      (dissolveLifetimeProgress - dissolveStart) /
+        Math.max(0.0001, dissolveEnd - dissolveStart),
+    ) * weights.directionalDissolve;
   const warp = settings.spriteWarp;
   const seededX = 0.8 + seededRandom(input.seed, 701) * 0.4;
   const seededY = 0.8 + seededRandom(input.seed, 702) * 0.4;
-  let displacementX = warp.amountX * seededX;
-  let displacementY = warp.amountY * seededY;
+  let displacementX = warp.amountX * seededX * weights.spriteWarp;
+  let displacementY = warp.amountY * seededY * weights.spriteWarp;
 
   if (warp.mode === "heat-shimmer") {
     const seconds = Math.max(0, input.elapsedMs) / 1_000;
@@ -796,20 +1135,25 @@ export function evaluateRenderingEffects(
 
   return {
     settings,
+    weights,
     controllers: {
-      brightnessMultiplier: clamp(
-        settings.brightnessExposure.brightness *
-          2 ** settings.brightnessExposure.exposure,
-        0,
-        4,
-      ),
+      brightnessMultiplier:
+        1 +
+        (clamp(
+          settings.brightnessExposure.brightness *
+            2 ** settings.brightnessExposure.exposure,
+          0,
+          4,
+        ) -
+          1) *
+          weights.brightnessExposure,
       shineSpeed: clamp(settings.animatedShine.speed, -4, 4),
       shineLineWidth: clamp(settings.animatedShine.lineWidth, 0.01, 1),
       shineGradient: clamp(settings.animatedShine.gradient, 0.1, 12),
       directionalDissolveProgress,
       dissolveNoiseOffsetX: seededRandom(input.seed, 705) * 64,
       dissolveNoiseOffsetY: seededRandom(input.seed, 706) * 64,
-      barrelAmount: clamp(1 + warp.barrel, 0.25, 2),
+      barrelAmount: clamp(1 + warp.barrel * weights.spriteWarp, 0.25, 2),
       displacementX: clamp(displacementX, -0.1, 0.1),
       displacementY: clamp(displacementY, -0.1, 0.1),
     },
@@ -1037,7 +1381,7 @@ class VvfxNoiseErosionController extends VvfxFilterController {
 class VvfxSpatialGradientController extends VvfxFilterController {
   readonly colorA: readonly number[];
   readonly colorB: readonly number[];
-  readonly alpha: number;
+  alpha: number;
   readonly fromX: number;
   readonly fromY: number;
   readonly toX: number;
@@ -1064,17 +1408,23 @@ class VvfxAnimatedShineController extends VvfxFilterController {
   speed: number;
   lineWidth: number;
   gradient: number;
+  intensity: number;
+  timeMs: number | null;
 
   constructor(
     camera: Phaser.Cameras.Scene2D.Camera,
     speed: number,
     lineWidth: number,
     gradient: number,
+    intensity: number,
+    timeMs: number | null,
   ) {
     super(camera, VVFX_ANIMATED_SHINE_FILTER);
     this.speed = speed;
     this.lineWidth = lineWidth;
     this.gradient = gradient;
+    this.intensity = intensity;
+    this.timeMs = timeMs;
   }
 }
 
@@ -1274,7 +1624,8 @@ function ensureVvfxFilterRenderNodes(
         drawingContext: Phaser.Renderer.WebGL.DrawingContext,
       ) {
         const shine = controller as unknown as VvfxAnimatedShineController;
-        const time = shine.camera?.scene.sys.game.loop.time ?? 0;
+        const time =
+          shine.timeMs ?? shine.camera?.scene.sys.game.loop.time ?? 0;
         this.programManager.setUniform("resolution", [
           drawingContext.width,
           drawingContext.height,
@@ -1283,6 +1634,7 @@ function ensureVvfxFilterRenderNodes(
         this.programManager.setUniform("speed", shine.speed);
         this.programManager.setUniform("lineWidth", shine.lineWidth);
         this.programManager.setUniform("gradient", shine.gradient);
+        this.programManager.setUniform("intensity", shine.intensity);
       }
     }
 
@@ -1312,7 +1664,9 @@ function ensureVvfxFilterRenderNodes(
 }
 
 interface PhaserRenderingEffectHandles {
-  signature: string;
+  settingsSnapshot: RenderingEffectsSettings;
+  activeEffects: number;
+  visualMaskResolved: boolean;
   supported: boolean;
   applied: boolean;
   filterList: Phaser.GameObjects.Components.FilterList;
@@ -1320,8 +1674,11 @@ interface PhaserRenderingEffectHandles {
   visualMask?: VvfxVisualMaskController;
   colorMatrix?: Phaser.Display.ColorMatrix;
   shine?: VvfxAnimatedShineController;
+  gradient?: VvfxSpatialGradientController;
   barrel?: Phaser.Filters.Barrel;
   displacement?: Phaser.Filters.Displacement;
+  blur?: Phaser.Filters.Blur;
+  glow?: Phaser.Filters.Glow;
   directionalDissolve?: Phaser.Filters.Wipe;
   noiseErosion?: VvfxNoiseErosionController;
 }
@@ -1331,11 +1688,68 @@ const handlesBySprite = new WeakMap<
   PhaserRenderingEffectHandles
 >();
 
-function renderingEffectSignature(
+function snapshotRenderingEffectsSettings(
   settings: RenderingEffectsSettings,
-  visualMaskFrame: Phaser.Textures.Frame | null,
-) {
-  return `${JSON.stringify(settings)}:${visualMaskFrame ? "resolved" : "missing"}`;
+): RenderingEffectsSettings {
+  return {
+    visualMask: { ...settings.visualMask },
+    blur: { ...settings.blur },
+    outerGlow: { ...settings.outerGlow },
+    brightnessExposure: { ...settings.brightnessExposure },
+    animatedShine: { ...settings.animatedShine },
+    spatialGradient: { ...settings.spatialGradient },
+    directionalDissolve: { ...settings.directionalDissolve },
+    spriteWarp: { ...settings.spriteWarp },
+  };
+}
+
+/**
+ * Phaser receives immutable settings during ordinary preview/runtime playback,
+ * but this structural comparison also keeps the public adapter correct for a
+ * caller that mutates an existing settings object. Unlike JSON.stringify, it
+ * does not serialize every effect on every rendered copy and frame.
+ */
+function renderingEffectsSettingsEqual(
+  current: RenderingEffectsSettings,
+  snapshot: RenderingEffectsSettings,
+): boolean {
+  for (const effect of RENDERING_EFFECT_KEYS) {
+    const currentSettings = current[effect] as unknown as Record<
+      string,
+      unknown
+    >;
+    const snapshotSettings = snapshot[effect] as unknown as Record<
+      string,
+      unknown
+    >;
+    for (const field in currentSettings) {
+      if (
+        Object.prototype.hasOwnProperty.call(currentSettings, field) &&
+        currentSettings[field] !== snapshotSettings[field]
+      )
+        return false;
+    }
+    for (const field in snapshotSettings) {
+      if (
+        Object.prototype.hasOwnProperty.call(snapshotSettings, field) &&
+        !Object.prototype.hasOwnProperty.call(currentSettings, field)
+      )
+        return false;
+    }
+  }
+  return true;
+}
+
+function activeRenderingEffectMask(
+  settings: RenderingEffectsSettings,
+  weights: RenderingEffectWeights,
+): number {
+  let mask = 0;
+  for (let index = 0; index < RENDERING_EFFECT_KEYS.length; index += 1) {
+    const effect = RENDERING_EFFECT_KEYS[index];
+    if (settings[effect].enabled && weights[effect] > 0) mask |= 1 << index;
+  }
+  return mask;
 }
 
 export interface PhaserRenderingEffectsResult {
@@ -1367,18 +1781,23 @@ export function syncPhaserRenderingEffects({
   scene,
   sprite,
   effects,
+  timeMs,
   resolveAssetFrame,
   onWarning,
 }: {
   scene: Phaser.Scene;
   sprite: Phaser.GameObjects.Image;
   effects: EvaluatedRenderingEffects;
+  /** Explicit effect time for deterministic seeking and restarts. */
+  timeMs?: number;
   resolveAssetFrame?: PhaserRenderingAssetFrameResolver;
   onWarning?: (message: string) => void;
 }): PhaserRenderingEffectsResult {
-  const { settings, controllers } = effects;
+  const { settings, controllers, weights } = effects;
+  const effectTimeMs = Number.isFinite(timeMs) ? (timeMs as number) : null;
   const passCost = renderingEffectPassCost(settings);
-  if (!hasEnabledRenderingEffects(settings)) {
+  const activeEffects = activeRenderingEffectMask(settings, weights);
+  if (activeEffects === 0) {
     clearPhaserRenderingEffects(sprite);
     return { supported: true, applied: false, passCost };
   }
@@ -1402,8 +1821,9 @@ export function syncPhaserRenderingEffects({
   }
 
   const visualMaskSettings = settings.visualMask;
+  const visualMaskActive = visualMaskSettings.enabled && weights.visualMask > 0;
   let visualMaskFrame: Phaser.Textures.Frame | null = null;
-  if (visualMaskSettings.enabled && visualMaskSettings.maskAssetId) {
+  if (visualMaskActive && visualMaskSettings.maskAssetId) {
     try {
       visualMaskFrame =
         resolveAssetFrame?.(visualMaskSettings.maskAssetId) ?? null;
@@ -1411,7 +1831,7 @@ export function syncPhaserRenderingEffects({
       visualMaskFrame = null;
     }
   }
-  if (visualMaskSettings.enabled && !visualMaskFrame) {
+  if (visualMaskActive && !visualMaskFrame) {
     warnOnce(
       scene,
       `visual-mask-source:${visualMaskSettings.maskAssetId ?? "unset"}`,
@@ -1420,12 +1840,18 @@ export function syncPhaserRenderingEffects({
     );
   }
 
-  const signature = renderingEffectSignature(settings, visualMaskFrame);
   let handles = handlesBySprite.get(sprite);
-  if (!handles || handles.signature !== signature) {
+  if (
+    !handles ||
+    handles.activeEffects !== activeEffects ||
+    handles.visualMaskResolved !== Boolean(visualMaskFrame) ||
+    !renderingEffectsSettingsEqual(settings, handles.settingsSnapshot)
+  ) {
     if (handles) clearPhaserRenderingEffects(sprite);
     handles = {
-      signature,
+      settingsSnapshot: snapshotRenderingEffectsSettings(settings),
+      activeEffects,
+      visualMaskResolved: Boolean(visualMaskFrame),
       supported: true,
       applied: false,
       filterList,
@@ -1442,18 +1868,18 @@ export function syncPhaserRenderingEffects({
     };
 
     const dissolve = settings.directionalDissolve;
-    const needsNoiseErosion = dissolve.enabled && dissolve.pattern === "noise";
+    const dissolveActive = dissolve.enabled && weights.directionalDissolve > 0;
+    const needsNoiseErosion = dissolveActive && dissolve.pattern === "noise";
     const needsCustomFilters =
       Boolean(visualMaskFrame) ||
       needsNoiseErosion ||
-      settings.spatialGradient.enabled ||
-      settings.animatedShine.enabled;
+      (settings.spatialGradient.enabled && weights.spatialGradient > 0) ||
+      (settings.animatedShine.enabled && weights.animatedShine > 0);
     const customFiltersReady = needsCustomFilters
       ? ensureVvfxFilterRenderNodes(scene, onWarning)
       : true;
     if (!customFiltersReady) handles.supported = false;
-    if (visualMaskSettings.enabled && !visualMaskFrame)
-      handles.supported = false;
+    if (visualMaskActive && !visualMaskFrame) handles.supported = false;
 
     if (visualMaskFrame && customFiltersReady) {
       handles.visualMask = addCustom(
@@ -1467,7 +1893,7 @@ export function syncPhaserRenderingEffects({
       handles.applied = true;
     }
 
-    if (settings.brightnessExposure.enabled) {
+    if (settings.brightnessExposure.enabled && weights.brightnessExposure > 0) {
       const colorMatrixFilter = track(filterList.addColorMatrix());
       handles.colorMatrix = colorMatrixFilter.colorMatrix;
       handles.colorMatrix.brightness(controllers.brightnessMultiplier);
@@ -1475,16 +1901,18 @@ export function syncPhaserRenderingEffects({
     }
 
     const gradient = settings.spatialGradient;
-    if (gradient.enabled && customFiltersReady) {
-      addCustom(new VvfxSpatialGradientController(filterList.camera, gradient));
+    if (gradient.enabled && weights.spatialGradient > 0 && customFiltersReady) {
+      handles.gradient = addCustom(
+        new VvfxSpatialGradientController(filterList.camera, gradient),
+      );
       handles.applied = true;
     }
 
     const warp = settings.spriteWarp;
-    if (warp.enabled && warp.mode === "barrel") {
+    if (warp.enabled && weights.spriteWarp > 0 && warp.mode === "barrel") {
       handles.barrel = track(filterList.addBarrel(controllers.barrelAmount));
       handles.applied = true;
-    } else if (warp.enabled) {
+    } else if (warp.enabled && weights.spriteWarp > 0) {
       const noiseTexture = ensureRenderingNoiseTexture(scene);
       if (noiseTexture) {
         handles.displacement = track(
@@ -1505,7 +1933,7 @@ export function syncPhaserRenderingEffects({
       }
     }
 
-    if (dissolve.enabled && dissolve.pattern === "directional") {
+    if (dissolveActive && dissolve.pattern === "directional") {
       handles.directionalDissolve = track(
         filterList.addWipe(
           clamp(dissolve.softness, 0.01, 0.5),
@@ -1523,21 +1951,23 @@ export function syncPhaserRenderingEffects({
     }
 
     const shine = settings.animatedShine;
-    if (shine.enabled && customFiltersReady) {
+    if (shine.enabled && weights.animatedShine > 0 && customFiltersReady) {
       handles.shine = addCustom(
         new VvfxAnimatedShineController(
           filterList.camera,
           controllers.shineSpeed,
           controllers.shineLineWidth,
           controllers.shineGradient,
+          weights.animatedShine,
+          effectTimeMs,
         ),
       );
       handles.applied = true;
     }
 
     const blur = settings.blur;
-    if (blur.enabled) {
-      track(
+    if (blur.enabled && weights.blur > 0) {
+      handles.blur = track(
         filterList.addBlur(
           Math.max(0, Math.min(2, Math.floor(blur.quality))) as BlurQuality,
           clamp(blur.offsetX, -12, 12),
@@ -1551,8 +1981,8 @@ export function syncPhaserRenderingEffects({
     }
 
     const glow = settings.outerGlow;
-    if (glow.enabled) {
-      track(
+    if (glow.enabled && weights.outerGlow > 0) {
+      handles.glow = track(
         filterList.addGlow(
           colorNumber(glow.color),
           clamp(glow.outerStrength, 0, 8),
@@ -1576,7 +2006,8 @@ export function syncPhaserRenderingEffects({
     handles.visualMask.offsetY = visualMaskSettings.offsetY;
     handles.visualMask.scale = visualMaskSettings.scale;
     handles.visualMask.rotation = visualMaskSettings.rotation;
-    handles.visualMask.strength = visualMaskSettings.strength;
+    handles.visualMask.strength =
+      visualMaskSettings.strength * weights.visualMask;
   }
   if (handles.colorMatrix) {
     handles.colorMatrix.reset();
@@ -1586,10 +2017,23 @@ export function syncPhaserRenderingEffects({
     handles.shine.speed = controllers.shineSpeed;
     handles.shine.lineWidth = controllers.shineLineWidth;
     handles.shine.gradient = controllers.shineGradient;
+    handles.shine.intensity = weights.animatedShine;
+    handles.shine.timeMs = effectTimeMs;
   }
+  if (handles.gradient)
+    handles.gradient.alpha =
+      1 - settings.spatialGradient.strength * weights.spatialGradient;
   if (handles.displacement) {
     handles.displacement.x = controllers.displacementX;
     handles.displacement.y = controllers.displacementY;
+  }
+  if (handles.blur)
+    handles.blur.strength = settings.blur.strength * weights.blur;
+  if (handles.glow) {
+    handles.glow.outerStrength =
+      settings.outerGlow.outerStrength * weights.outerGlow;
+    handles.glow.innerStrength =
+      settings.outerGlow.innerStrength * weights.outerGlow;
   }
   if (handles.directionalDissolve)
     handles.directionalDissolve.progress =

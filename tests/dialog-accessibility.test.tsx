@@ -153,7 +153,7 @@ describe("dialog keyboard accessibility", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Runtime JSON" }));
     expect(screen.getByRole("button", { name: "Copy" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Download .runtime.json" }),
+      screen.getByRole("button", { name: "Download .vvfx-runtime.json" }),
     ).toBeDisabled();
   });
 
@@ -316,6 +316,9 @@ describe("dialog keyboard accessibility", () => {
     const runtimeTab = within(tablist).getByRole("tab", {
       name: "Runtime JSON",
     });
+    const advancedTab = within(tablist).getByRole("tab", {
+      name: "Advanced TypeScript",
+    });
     const projectTab = within(tablist).getByRole("tab", {
       name: "Vvfx project",
     });
@@ -326,6 +329,7 @@ describe("dialog keyboard accessibility", () => {
     expect(previewTab).toHaveAttribute("tabindex", "0");
     expect(runtimeTab).toHaveAttribute("aria-selected", "false");
     expect(runtimeTab).toHaveAttribute("tabindex", "-1");
+    expect(advancedTab).toHaveAttribute("aria-selected", "false");
     expect(previewTab).toHaveAttribute("aria-controls", panel.id);
     expect(panel).toHaveAttribute("aria-labelledby", previewTab.id);
 
@@ -337,6 +341,9 @@ describe("dialog keyboard accessibility", () => {
     panel = screen.getByRole("tabpanel", { name: "Runtime JSON" });
     expect(runtimeTab).toHaveAttribute("aria-controls", panel.id);
     expect(panel).toHaveAttribute("aria-labelledby", runtimeTab.id);
+    expect(
+      screen.getByText(/Recommended for game integration/),
+    ).toHaveTextContent(/no Beam layers/);
 
     fireEvent.keyDown(runtimeTab, { key: "End" });
     await waitFor(() => expect(projectTab).toHaveFocus());
@@ -754,6 +761,7 @@ describe("popup keyboard accessibility", () => {
   it("routes Timing plan focus, semantics, Escape, and note commits", () => {
     const layer = createLayer("animated", "Timed flash");
     const onTimelineChange = vi.fn();
+    const onViewChange = vi.fn();
     render(
       <Timeline
         layers={[layer]}
@@ -770,11 +778,53 @@ describe("popup keyboard accessibility", () => {
         onDurationChange={vi.fn()}
         timeline={{ markers: [], notes: "Original timing note" }}
         onTimelineChange={onTimelineChange}
+        workStart={20}
+        workEnd={800}
+        onViewChange={onViewChange}
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: "Timing plan" });
-    trigger.focus();
+    expect(
+      screen.getByRole("spinbutton", { name: "Composition duration" }),
+    ).toHaveValue(1000);
+    expect(screen.queryByText(/^Arrow: 1 ms/)).toBeNull();
+    const propertySummary = screen
+      .getByText("Property moments", { exact: true })
+      .closest("summary");
+    const propertyDetails = propertySummary?.closest("details");
+    expect(propertyDetails).not.toHaveAttribute("open");
+    fireEvent.click(propertySummary!);
+    expect(propertyDetails).toHaveAttribute("open");
+    expect(
+      within(propertyDetails!).getByRole("combobox", {
+        name: "Timeline property track",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(propertySummary!);
+
+    const optionsTrigger = screen.getByRole("button", {
+      name: "More timeline options",
+    });
+    optionsTrigger.focus();
+    expect(optionsTrigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(optionsTrigger);
+
+    const options = screen.getByRole("dialog", { name: "Timeline options" });
+    expect(options).toHaveAttribute("aria-modal", "false");
+    expect(optionsTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(optionsTrigger).toHaveAttribute("aria-controls", options.id);
+
+    const workRange = within(options).getByRole("region", {
+      name: "Work range",
+    });
+    expect(workRange).toHaveTextContent("20–800ms");
+    fireEvent.click(within(workRange).getByRole("button", { name: "Set in" }));
+    expect(onViewChange).toHaveBeenCalledWith({ workStart: 120 });
+
+    const trigger = within(options).getByRole("button", {
+      name: "Timing plan",
+    });
     expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
@@ -804,6 +854,13 @@ describe("popup keyboard accessibility", () => {
       markers: [],
       notes: "40–120 ms ring expands and vanishes",
     });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(
+      screen.queryByRole("dialog", { name: "Timeline options" }),
+    ).toBeNull();
+    expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(optionsTrigger).toHaveFocus();
   });
 
   it("lets hover-only and focused HelpTips own Escape without closing their dialog", () => {

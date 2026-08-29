@@ -23,6 +23,8 @@ export declare class VvfxEffect {
   private readonly baseDepth;
   private readonly loop;
   private readonly autoDestroy;
+  private readonly beamOptions;
+  private readonly maxDurationMs;
   private readonly assetKeys;
   private readonly assetFrames;
   private readonly assetsById;

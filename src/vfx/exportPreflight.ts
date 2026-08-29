@@ -1,4 +1,5 @@
 import { referencedAssetIds } from "./assetReferences";
+import { analyzeRuntimeExportCapabilities } from "./exporters";
 import { analyzeProjectPerformance } from "./performance";
 import { inspectPortableImageDataUrl } from "./portableImage";
 import { hasEnabledRenderingEffects } from "./renderingEffects";
@@ -116,6 +117,7 @@ export function analyzeExportPreflight(
     (layer) =>
       layer.enabled && hasEnabledRenderingEffects(layer.appearance.effects),
   );
+  const runtimeCapabilities = analyzeRuntimeExportCapabilities(project);
   const checks: ExportPreflightCheck[] = [];
   checks.push(
     activeLayers.length > 0
@@ -153,6 +155,22 @@ export function analyzeExportPreflight(
       label: "Image references",
       detail: `${referencedAssets.length} referenced image${referencedAssets.length === 1 ? "" : "s"}; unused library images are excluded from runtime export.`,
     });
+  checks.push(
+    runtimeCapabilities.beamEndpoints
+      ? {
+          id: "placement",
+          severity: "pass",
+          label: "Point + endpoint placement",
+          detail: `${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}; the game may supply world-space endpoints.`,
+        }
+      : {
+          id: "placement",
+          severity: "pass",
+          label: "Point placement only",
+          detail:
+            "No Beam layers. This effect plays at an origin x/y; endpoint fitting is intentionally unavailable.",
+        },
+  );
   checks.push({
     id: "sprites",
     severity:

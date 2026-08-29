@@ -34,7 +34,13 @@ import {
   normalizeKeyframes,
 } from "./keyframes";
 import { normalizeFrameAnimation, normalizeSpriteSheet } from "./spriteSheet";
-import { normalizeRenderingEffects } from "./renderingEffects";
+import {
+  MAX_RENDERING_EFFECT_CLIPS,
+  RENDERING_EFFECT_KEYS,
+  normalizeRenderingEffectClips,
+  normalizeRenderingEffects,
+  reconcileRenderingEffectClips,
+} from "./renderingEffects";
 import {
   findLayerAttachmentCycle,
   maximumLayerAttachmentDepth,
@@ -99,7 +105,7 @@ const stringOr = (value: unknown, fallback: string) =>
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value));
 
-const CURRENT_PROJECT_FORMAT_VERSION = 17;
+const CURRENT_PROJECT_FORMAT_VERSION = 18;
 const MAX_TIMELINE_NOTES_LENGTH = 12_000;
 const MAX_TIMELINE_MARKER_LABEL_LENGTH = 120;
 
@@ -292,7 +298,11 @@ function normalizeLayerEvents(value: unknown): LayerEvent[] {
   });
 }
 
-function normalizeLayer(value: unknown, index: number): VfxLayer | null {
+function normalizeLayer(
+  value: unknown,
+  index: number,
+  legacyTransformProgress = false,
+): VfxLayer | null {
   if (!isRecord(value)) return null;
   const type = value.type;
   if (
@@ -307,6 +317,7 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
   const timing = isRecord(value.timing) ? value.timing : {};
   const customEasing = isRecord(timing.customEasing) ? timing.customEasing : {};
   const appearance = isRecord(value.appearance) ? value.appearance : {};
+  const normalizedEffects = normalizeRenderingEffects(appearance.effects);
   const colorOverLifetime = isRecord(appearance.colorOverLifetime)
     ? appearance.colorOverLifetime
     : {};
@@ -494,7 +505,12 @@ function normalizeLayer(value: unknown, index: number): VfxLayer | null {
             : DEFAULT_COLOR_OVER_LIFETIME.enabled,
         stops: normalizeColorStops(colorOverLifetime.stops),
       },
-      effects: normalizeRenderingEffects(appearance.effects),
+      effects: normalizedEffects,
+      effectClips: normalizeRenderingEffectClips(
+        appearance.effectClips,
+        normalizedEffects,
+        { legacyTransformProgress },
+      ),
     },
     behavior: {
       pulse: {
@@ -1029,12 +1045,13 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
     input.formatVersion !== 14 &&
     input.formatVersion !== 15 &&
     input.formatVersion !== 16 &&
-    input.formatVersion !== 17
+    input.formatVersion !== 17 &&
+    input.formatVersion !== 18
   )
     return {
       ok: false,
       error:
-        "This project uses a Vvfx format version that this app cannot open yet. Versions 1 through 17 are supported.",
+        "This project uses a Vvfx format version that this app cannot open yet. Versions 1 through 18 are supported.",
     };
   if (!Array.isArray(input.layers) || !Array.isArray(input.assets)) {
     return {
@@ -1214,6 +1231,92 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
     const appearance = isRecord(rawLayer.appearance)
       ? rawLayer.appearance
       : null;
+    const effectClips = appearance?.effectClips;
+    if (
+      strictCurrentFormat &&
+      effectClips !== undefined &&
+      (!Array.isArray(effectClips) ||
+        !isDenseArray(effectClips) ||
+        effectClips.length > MAX_RENDERING_EFFECT_CLIPS)
+    )
+      return {
+        ok: false,
+        error: `A layer's effect-clip list is missing or damaged.`,
+      };
+    if (Array.isArray(effectClips)) {
+      const clipIds = new Set<string>();
+      const clipEffects = new Set<string>();
+      for (const clip of effectClips) {
+        if (!isRecord(clip) || !isSafeVfxId(clip.id))
+          return {
+            ok: false,
+            error: "A layer contains an unsafe effect-clip identifier.",
+          };
+        if (clipIds.has(clip.id))
+          return {
+            ok: false,
+            error: "Two effect clips on a layer share the same identifier.",
+          };
+        clipIds.add(clip.id);
+        if (!strictCurrentFormat) continue;
+        if (
+          !(RENDERING_EFFECT_KEYS as readonly unknown[]).includes(clip.effect)
+        )
+          return {
+            ok: false,
+            error: "An effect clip names an unknown rendering effect.",
+          };
+        if (clipEffects.has(clip.effect as string))
+          return {
+            ok: false,
+            error: "Two effect clips on a layer target the same effect.",
+          };
+        clipEffects.add(clip.effect as string);
+        for (const field of ["start", "end", "fadeIn", "fadeOut"] as const) {
+          const fieldValue = clip[field];
+          if (typeof fieldValue !== "number" || !Number.isFinite(fieldValue))
+            return {
+              ok: false,
+              error: `An effect clip's ${field} must be a finite number.`,
+            };
+          if (fieldValue < 0 || fieldValue > 1)
+            return {
+              ok: false,
+              error: `An effect clip's ${field} must be between 0 and 1.`,
+            };
+        }
+        if ((clip.end as number) - (clip.start as number) < 0.001)
+          return {
+            ok: false,
+            error:
+              "An effect clip's end must be at least 0.001 after its start.",
+          };
+        if ((clip.fadeIn as number) + (clip.fadeOut as number) > 1)
+          return {
+            ok: false,
+            error:
+              "An effect clip's fade-in and fade-out cannot exceed its duration.",
+          };
+        if (
+          !["linear", "smooth", "ease-in", "ease-out"].includes(
+            clip.fadeEasing as string,
+          )
+        )
+          return {
+            ok: false,
+            error: "An effect clip has an unknown fade easing.",
+          };
+        if (
+          clip.progressMode !== undefined &&
+          clip.progressMode !== "chronological" &&
+          clip.progressMode !== "legacy-transform"
+        )
+          return {
+            ok: false,
+            error: "An effect clip has an unknown progress mode.",
+          };
+      }
+    }
     const effects =
       appearance && isRecord(appearance.effects) ? appearance.effects : null;
     const visualMask =
@@ -1229,7 +1332,10 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
         error: "A layer contains an unsafe visual-mask image reference.",
       };
   }
-  const layers = input.layers.map(normalizeLayer);
+  const legacyTransformProgress = input.formatVersion <= 17;
+  const layers = input.layers.map((layer, index) =>
+    normalizeLayer(layer, index, legacyTransformProgress),
+  );
   if (layers.some((layer) => layer === null)) {
     return {
       ok: false,
@@ -1617,7 +1723,7 @@ function validateProjectUnchecked(input: unknown): ValidationResult {
   const now = new Date().toISOString();
   const previewDuration = clamp(numberOr(preview.duration, 3000), 500, 30_000);
   const project: VfxProject = {
-    formatVersion: 17,
+    formatVersion: 18,
     metadata: {
       id: stringOr(metadata.id, `project-${Date.now()}`),
       name: normalizedImportedName(metadata.name, "Imported Vvfx project"),
@@ -1718,6 +1824,18 @@ function canonicalBoundaryProject(project: VfxProject): unknown {
           return { ...group, name: name || fallbackName };
         })
       : project.groups,
+    layers: Array.isArray(project.layers)
+      ? project.layers.map((layer) => ({
+          ...layer,
+          appearance: {
+            ...layer.appearance,
+            effectClips: reconcileRenderingEffectClips(
+              layer.appearance.effects,
+              layer.appearance.effectClips,
+            ),
+          },
+        }))
+      : project.layers,
   };
 }
 
@@ -1777,7 +1895,7 @@ export function validateCurrentProject(
       error: "This project does not contain valid Vvfx project data.",
       path: "project",
     };
-  if (project.formatVersion !== 17)
+  if (project.formatVersion !== 18)
     return {
       ok: false,
       error:

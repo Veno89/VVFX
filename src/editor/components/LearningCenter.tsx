@@ -116,7 +116,7 @@ export const TOUR_STEPS: TourStep[] = [
     eyebrow: "6 · Keep your work",
     title: "Save locally, load later, or export for a game",
     description:
-      "Save stores the editable project in this browser. Load reopens it. Export creates a portable .vvfx file, runtime JSON, or readable Phaser code.",
+      "Save stores the editable project in this browser. Load reopens it. Export creates a portable .vvfx file, recommended .vvfx-runtime.json, or an Advanced TypeScript wrapper.",
     detail:
       "Use both Save and an occasional .vvfx export if the project matters to you.",
     icon: <Save size={22} />,
@@ -883,7 +883,8 @@ export function TutorialCenter({
                 Experimental effects are real, usable controls. They save with
                 the project and export to the Phaser runtime, but they use the
                 GPU and still need feedback across different browsers, devices,
-                and game scenes.
+                and game scenes. Add them from the selected layer’s Effects
+                toolbelt, then time them in its nested Timeline lanes.
               </p>
               <div className="learning-note learning-note--wide">
                 <ImageIcon size={16} />
@@ -922,7 +923,8 @@ export function TutorialCenter({
                   <strong>Projects and game export</strong>
                   <p>
                     Experimental settings are stored in .vvfx files, Runtime
-                    JSON, and runtime-backed Phaser TypeScript.
+                    JSON, and runtime-backed Phaser TypeScript. Their timing and
+                    fades repeat inside each copy of the parent layer.
                   </p>
                 </article>
                 <article role="listitem">
@@ -941,6 +943,16 @@ export function TutorialCenter({
                   that sprite. True refraction or heat haze that bends the game
                   scene is decision-deferred because it needs explicit
                   game-camera capture and multi-camera rules.
+                </p>
+              </div>
+              <div className="learning-note learning-note--wide learning-note--experimental">
+                <Timer size={16} />
+                <p>
+                  <strong>How effect timing works:</strong> select a layer and
+                  use Add effect in the right rail. Its FX count expands into
+                  subordinate Timeline lanes; drag a clip or its edge handles,
+                  then set exact fades in the focused effect Inspector. These
+                  lanes describe time, not front/back layer depth.
                 </p>
               </div>
               <div className="learning-note learning-note--wide learning-note--experimental">
@@ -971,8 +983,8 @@ export function TutorialCenter({
                   <strong>Clip with another image</strong>
                   <p>
                     A still mask crops every copy of the selected layer. The
-                    mask follows that copy for its existing lifetime instead of
-                    adding another Timeline.
+                    mask follows its timed effect clip inside that copy without
+                    changing the parent layer’s own duration.
                   </p>
                 </article>
                 <article role="listitem">

@@ -115,6 +115,7 @@ export function alphaMaskThresholdByte(threshold: number): number {
 }
 
 const eligibleCache = new WeakMap<AssetAlphaMask, Map<number, number[]>>();
+const MAX_CACHED_THRESHOLDS_PER_MASK = 16;
 
 /** Returns one cached row-major list per mask and quantized threshold. */
 export function eligibleAlphaMaskIndices(
@@ -128,11 +129,19 @@ export function eligibleAlphaMaskIndices(
     eligibleCache.set(mask, byThreshold);
   }
   const cached = byThreshold.get(thresholdByte);
-  if (cached) return cached;
+  if (cached) {
+    byThreshold.delete(thresholdByte);
+    byThreshold.set(thresholdByte, cached);
+    return cached;
+  }
   const indices = mask.alpha.flatMap((alpha, index) =>
     alpha >= thresholdByte ? [index] : [],
   );
   byThreshold.set(thresholdByte, indices);
+  if (byThreshold.size > MAX_CACHED_THRESHOLDS_PER_MASK) {
+    const oldestThreshold = byThreshold.keys().next().value;
+    if (oldestThreshold !== undefined) byThreshold.delete(oldestThreshold);
+  }
   return indices;
 }
 

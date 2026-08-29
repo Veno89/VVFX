@@ -9,8 +9,9 @@ and precomputed image silhouettes, seeded randomness, artwork-forward
 alignment, bounded copy-finish spatial events,
 attachments, whole-image color over time, pulse, flicker, legacy repeating
 sway, gravity, behavior strength envelopes, slowdown, tint, blending, and the
-500-sprite safety limit. Endpoint-fitted Beam layers can use authored points or
-world-space endpoints supplied by the game.
+500-sprite safety limit. Curated rendering effects use explicit per-copy clips
+with start/end timing and fade weights. Endpoint-fitted Beam layers can use
+authored points or world-space endpoints supplied by the game.
 
 The package also applies Vvfx's clearly marked Experimental Phaser WebGL sprite
 effects: blur, outer glow, brightness/exposure, animated shine, two-color
@@ -25,6 +26,13 @@ From the Vvfx repository, build it with `npm run build:runtime`. This produces
 the JavaScript bundle and regenerates the package declarations from the same
 TypeScript source. A local Phaser game can then install the package folder, for
 example with `npm install ../Vvfx/packages/phaser-runtime`.
+
+To prepare and install the assigned local tarball instead:
+
+```bash
+npm pack ./packages/phaser-runtime --pack-destination ./artifacts/runtime
+npm install ./artifacts/runtime/vvfx-phaser-runtime-0.16.0.tgz
+```
 
 Before sharing a runtime build, run `npm run test:runtime-package`. The check
 creates the real npm tarball, installs it into an isolated consumer, validates
@@ -59,6 +67,9 @@ const lightning = await playVvfx(this, chainLink, {
     endX: target.x,
     endY: target.y,
   },
+  beamFit: "crop",
+  beamThicknessScale: 0.75,
+  maxDurationMs: 420,
 });
 
 lightning.setEndpoints(caster.x, caster.y, target.x, target.y);
@@ -67,6 +78,15 @@ lightning.setEndpoints(caster.x, caster.y, target.x, target.y);
 Without a layer ID, `setEndpoints` updates every Beam layer in the effect so a
 core and glow can stay aligned. Pass a Beam layer ID as the fifth argument for
 one layer, or call `clearEndpoints()` to restore authored endpoints.
+
+Beam playback stretches all source pixels by default, preserving existing
+exports and integrations. Set `beamFit: "crop"` to keep the artwork's authored
+horizontal pixel density when dynamic endpoints are closer than its authored
+Beam length. The runtime uses a centered source crop for shorter links; links
+longer than the authored length still stretch to reach both endpoints.
+`beamThicknessScale` multiplies only a Beam's evaluated vertical scale, so it
+can match a game's character or enemy size without changing endpoint-fitted
+length. Both controls are playback-only and never mutate Runtime JSON.
 
 Embedded PNG/WebP data and Vvfx built-in shapes load automatically. A game can
 replace embedded sources with its own preloaded Phaser textures:
@@ -113,10 +133,14 @@ candidate source where possible, and rejects late callbacks; any decode that
 still finishes is not installed as a Phaser texture and cannot create an
 effect.
 
-Package version 0.15.0 emits runtime format version 15 and accepts versions 1
-through 15. Older exports are migrated with safe defaults for capabilities
-that did not yet exist. Project JSON uses its own version number; the current
-project format is version 17.
+Package 0.16.0 emits runtime format version 16 and accepts
+versions 1 through 16. Older exports are migrated with safe defaults for
+capabilities that did not yet exist. Project JSON uses its own version number;
+the current project format is version 18.
+
+The package remains private and intended for local folder or tarball
+installation. Assigning version 0.16.0 identifies the Runtime v16 artifact; it
+does not imply that the package has been published to a registry.
 
 Package 0.15 migrates rendering integration from Phaser 3 PreFX pipelines to
 Phaser 4 filter lists and render nodes. The Runtime JSON schema remains version
@@ -152,6 +176,23 @@ Runtime v15 adds project-v17 Beam layers. Authored endpoint B is stored as a
 local offset from the layer position (A). Runtime endpoint overrides are
 world-space and feed the same evaluator used by the editor preview; the
 definition is not mutated when `setEndpoints(...)` is called.
+
+Runtime v16 adds project-v18 `appearance.effectClips`. Each curated rendering
+effect can have one normalized per-copy start/end range, fade-in/fade-out
+fractions, and a linear, smooth, ease-in, or ease-out fade shape. Timing follows
+raw chronological copy progress rather than transform easing or yoyo; new clips
+persist `progressMode: "chronological"`, and marker-less Runtime v16 drafts
+normalize to that mode. Repeated, burst, and emitter copies each replay the same
+local clip. Runtime versions 1 through 15 receive full-life clips for enabled
+and tuned-disabled effects. Migrated directional dissolves use the internal
+`legacy-transform` marker to retain their former eased/yoyo progression; other
+effects remain chronological. Their prior appearance and disable/re-enable
+behavior are therefore preserved.
+
+Runtime `depth` remains derived from the stored back-to-front layer array. The
+editor presents that stack conventionally with the frontmost layer at the top.
+An effect clip modifies only its parent sprite and has no independent depth; a
+painted glow that must sit behind a core image needs its own lower layer.
 
 The current runtime deliberately has no lighting-aware material setting. It
 does not enable `scene.lights`, change ambient light, create or destroy game
@@ -189,12 +230,20 @@ await playVvfx(scene, impact, {
 });
 ```
 
-Effects play once and clean themselves up by default. Set `loop: true` to keep
-replaying or `autoDestroy: false` when the same handle should be restarted.
+Effects play once and clean themselves up by default. Set `maxDurationMs` to a
+positive finite duration when a one-shot should clean up before an authored
+idle tail ends. The cap never extends an effect and is ignored by looping
+playback. Invalid fit, scale, and duration values fall back to the existing safe
+defaults. Set `loop: true` to keep replaying or `autoDestroy: false` when the
+same handle should be restarted.
 
-The editor's generated Phaser TypeScript is a small, exact wrapper around this
-package: it embeds the Runtime JSON definition and calls `playVvfx`. Pass
-`assetKeys` for preloaded game textures. Preview background, grid, zoom,
-selection, and editor-only visibility never enter the runtime definition.
-The export includes only images referenced by a layer, including stored choices
-for disabled visual-mask and spawn-mask features.
+The editor recommends compact Runtime JSON as the stable boundary for a shared
+game-side effect library. Its Advanced TypeScript option is a small, exact
+wrapper around this package: it embeds the same definition and calls
+`playVvfx`. That wrapper includes `BeamEndpoints` only if its definition has a
+Beam layer. Pass `assetKeys` for preloaded game textures. Preview background,
+grid, zoom, selection, and editor-only visibility never enter the runtime
+definition. The export includes only images referenced by a layer, including
+stored choices for disabled visual-mask and spawn-mask features. CPU alpha
+samples are retained for active or stored spawn silhouettes and omitted from
+assets used only as artwork or visual masks.

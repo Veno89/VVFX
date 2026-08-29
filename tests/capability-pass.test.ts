@@ -388,7 +388,7 @@ describe("runtime-backed export boundary", () => {
     const runtime = createRuntimeDefinition(project);
     const serialized = JSON.stringify(runtime);
 
-    expect(runtime.formatVersion).toBe(15);
+    expect(runtime.formatVersion).toBe(16);
     expect(runtime.layers).toHaveLength(1);
     expect(runtime.layers[0]).not.toHaveProperty("visible");
     expect(runtime.layers[0]).not.toHaveProperty("solo");

@@ -328,9 +328,9 @@ export function PreviewPanel({
       </div>
       <div className="preview-canvas-shell">
         <PhaserPreview
-          key={restartRevision}
           project={project}
           time={time}
+          restartRevision={restartRevision}
           selectedId={selectedId}
           onMoveLayer={onMoveLayer}
           onMovePathPoint={onMovePathPoint}

@@ -15,14 +15,18 @@ const hashText = (value: string) => {
   return hash >>> 0;
 };
 
-function frameBackground(asset: VfxAsset, frame: number): CSSProperties {
+function frameBackground(
+  asset: VfxAsset,
+  frame: number,
+  backgroundImage: string,
+): CSSProperties {
   if (!asset.spriteSheet) return {};
   const grid = spriteSheetGrid(asset, asset.spriteSheet);
   const column = frame % grid.columns;
   const row = Math.floor(frame / grid.columns);
   return {
     aspectRatio: `${asset.spriteSheet.frameWidth} / ${asset.spriteSheet.frameHeight}`,
-    backgroundImage: `url(${JSON.stringify(asset.dataUrl)})`,
+    backgroundImage,
     backgroundPosition: `${grid.columns === 1 ? 0 : (column / (grid.columns - 1)) * 100}% ${grid.rows === 1 ? 0 : (row / (grid.rows - 1)) * 100}%`,
     backgroundRepeat: "no-repeat",
     backgroundSize: `${grid.columns * 100}% ${grid.rows * 100}%`,
@@ -39,6 +43,10 @@ export function FlipbookPreview({
   const sequence = useMemo(
     () => spriteFrameSequence(asset, animation),
     [animation, asset],
+  );
+  const backgroundImage = useMemo(
+    () => `url(${JSON.stringify(asset.dataUrl)})`,
+    [asset.dataUrl],
   );
   const randomStart = animation.randomStartFrame
     ? Math.floor(seededRandom(hashText(asset.id), 73) * sequence.length)
@@ -84,7 +92,7 @@ export function FlipbookPreview({
       <div className="flipbook-preview__stage">
         <span
           className="flipbook-frame flipbook-frame--large"
-          style={frameBackground(asset, currentFrame)}
+          style={frameBackground(asset, currentFrame, backgroundImage)}
           role="img"
           aria-label={`Previewing frame ${currentFrame + 1}`}
         />
@@ -135,7 +143,7 @@ export function FlipbookPreview({
           >
             <span
               className="flipbook-frame"
-              style={frameBackground(asset, frame)}
+              style={frameBackground(asset, frame, backgroundImage)}
             />
             <small>{frame + 1}</small>
           </button>

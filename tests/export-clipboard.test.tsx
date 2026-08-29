@@ -96,7 +96,7 @@ describe("ExportDialog clipboard and WebM capability state", () => {
     expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
     expect(writeText).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("tab", { name: "Phaser code" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced TypeScript" }));
 
     expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
     expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
@@ -132,7 +132,7 @@ describe("ExportDialog clipboard and WebM capability state", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Runtime JSON" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Phaser code" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced TypeScript" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledTimes(2);
 
@@ -158,7 +158,7 @@ describe("ExportDialog clipboard and WebM capability state", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Runtime JSON" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Phaser code" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced TypeScript" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
 
     await act(async () =>

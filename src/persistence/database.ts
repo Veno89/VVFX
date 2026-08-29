@@ -1,6 +1,9 @@
 export const DB_NAME = "vvfx-local";
-export const DB_VERSION = 3;
+import { createStoredProjectSummary } from "./projectSummaries";
+
+export const DB_VERSION = 4;
 export const PROJECT_STORE = "projects";
+export const PROJECT_SUMMARY_STORE = "project-summaries";
 export const RECOVERY_STORE = "recovery";
 export const TEMPLATE_STORE = "templates";
 
@@ -18,6 +21,25 @@ export function openDatabase(): Promise<IDBDatabase> {
       }
       if (!request.result.objectStoreNames.contains(TEMPLATE_STORE)) {
         request.result.createObjectStore(TEMPLATE_STORE, { keyPath: "id" });
+      }
+      if (!request.result.objectStoreNames.contains(PROJECT_SUMMARY_STORE)) {
+        const summaries = request.result.createObjectStore(
+          PROJECT_SUMMARY_STORE,
+          { keyPath: "key" },
+        );
+        if (request.result.objectStoreNames.contains(PROJECT_STORE)) {
+          const projects = request.transaction?.objectStore(PROJECT_STORE);
+          const cursorRequest = projects?.openCursor();
+          if (cursorRequest)
+            cursorRequest.onsuccess = () => {
+              const cursor = cursorRequest.result;
+              if (!cursor) return;
+              summaries.put(
+                createStoredProjectSummary(cursor.primaryKey, cursor.value),
+              );
+              cursor.continue();
+            };
+        }
       }
     };
     request.onsuccess = () => resolve(request.result);

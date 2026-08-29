@@ -32,11 +32,17 @@ const projectPersistence = vi.hoisted(() => ({
   deleteInvalidRecoveryDraft: vi.fn().mockResolvedValue(undefined),
   deleteProject: vi.fn().mockResolvedValue(undefined),
   inspectStoredProjects: vi.fn().mockResolvedValue({
-    projects: [],
+    summaries: [],
     invalidRecords: [],
     totalRecords: 0,
     excessRecords: 0,
+    aggregateBytes: 0,
+    page: 0,
+    pageSize: 20,
+    totalPages: 1,
+    totalValidRecords: 0,
   }),
+  loadProject: vi.fn(),
   loadRecoveryDraft: vi.fn().mockResolvedValue(null),
   saveRecoveryDraft: vi.fn().mockResolvedValue(undefined),
   saveProject: vi.fn(async (project: unknown) => project),
@@ -74,10 +80,15 @@ beforeEach(() => {
   projectPersistence.deleteInvalidRecoveryDraft.mockClear();
   projectPersistence.inspectStoredProjects.mockReset();
   projectPersistence.inspectStoredProjects.mockResolvedValue({
-    projects: [],
+    summaries: [],
     invalidRecords: [],
     totalRecords: 0,
     excessRecords: 0,
+    aggregateBytes: 0,
+    page: 0,
+    pageSize: 20,
+    totalPages: 1,
+    totalValidRecords: 0,
   });
   projectPersistence.loadRecoveryDraft.mockClear();
   projectPersistence.loadRecoveryDraft.mockResolvedValue(null);
@@ -95,6 +106,46 @@ function openTimingPlan() {
 }
 
 describe("New project safety", () => {
+  it("keeps first-run editing usable when the localStorage getter is blocked", async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "localStorage",
+    );
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get: () => {
+        throw new Error("localStorage is blocked by browser policy");
+      },
+    });
+
+    try {
+      render(<VfxEditor />);
+
+      expect(
+        await screen.findByText(/Browser preferences are unavailable/i),
+      ).toBeVisible();
+      expect(
+        await screen.findByRole("dialog", {
+          name: /Build effects one understandable part at a time/i,
+        }),
+      ).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Close app tour" }));
+      expect(
+        screen.queryByRole("dialog", {
+          name: /Build effects one understandable part at a time/i,
+        }),
+      ).toBeNull();
+
+      const projectName = screen.getByRole("textbox", { name: "Project name" });
+      fireEvent.change(projectName, { target: { value: "Still editable" } });
+      expect(projectName).toHaveValue("Still editable");
+    } finally {
+      cleanup();
+      if (localStorageDescriptor)
+        Object.defineProperty(window, "localStorage", localStorageDescriptor);
+    }
+  });
+
   it("rechecks unsaved work after an asynchronous project file read", async () => {
     let resolveText!: (text: string) => void;
     const textPromise = new Promise<string>((resolve) => {
@@ -211,10 +262,15 @@ describe("New project safety", () => {
   it("surfaces corrupt project records and removes them only after confirmation", async () => {
     const corruptKey = "corrupt-project";
     projectPersistence.inspectStoredProjects.mockResolvedValueOnce({
-      projects: [],
+      summaries: [],
       invalidRecords: [{ key: corruptKey, reason: "Unsafe project ID." }],
       totalRecords: 1,
       excessRecords: 0,
+      aggregateBytes: 0,
+      page: 0,
+      pageSize: 20,
+      totalPages: 1,
+      totalValidRecords: 0,
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -235,10 +291,15 @@ describe("New project safety", () => {
 
   it("keeps a newer visible dialog above a slower dialog request", async () => {
     let resolveProjects!: (inspection: {
-      projects: never[];
+      summaries: never[];
       invalidRecords: never[];
       totalRecords: number;
       excessRecords: number;
+      aggregateBytes: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+      totalValidRecords: number;
     }) => void;
     projectPersistence.inspectStoredProjects.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -253,10 +314,15 @@ describe("New project safety", () => {
 
     await act(async () =>
       resolveProjects({
-        projects: [],
+        summaries: [],
         invalidRecords: [],
         totalRecords: 0,
         excessRecords: 0,
+        aggregateBytes: 0,
+        page: 0,
+        pageSize: 20,
+        totalPages: 1,
+        totalValidRecords: 0,
       }),
     );
 

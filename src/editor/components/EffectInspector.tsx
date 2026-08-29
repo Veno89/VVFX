@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import type {
   RenderingEffectFadeEasing,
   RenderingEffectKey,
-} from "../../vfx/renderingEffects";
+} from "../../vfx/renderingEffectsModel";
 import type { VfxAsset, VfxLayer } from "../../vfx/types";
 import { RangeField, SelectField, SettingsSection } from "./Controls";
 import { effectToolbeltDefinition } from "./EffectToolbelt";

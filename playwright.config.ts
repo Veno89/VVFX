@@ -31,5 +31,10 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "firefox",
+      grep: /@cross-browser/,
+      use: { ...devices["Desktop Firefox"] },
+    },
   ],
 });

@@ -9,6 +9,7 @@ export declare const MAX_TIMELINE_MARKERS = 100;
 export declare const MAX_ATTACHMENT_DEPTH = 32;
 export declare const MAX_MOTION_PATH_POINTS = 6;
 export declare const MAX_SAVED_PROJECTS = 100;
+export declare const MAX_SAVED_PROJECT_LIBRARY_BYTES: number;
 export declare const MAX_SAVED_TEMPLATES = 100;
 export declare const MAX_UPLOAD_FILES = 16;
 export declare const MAX_IMAGE_FILE_BYTES: number;

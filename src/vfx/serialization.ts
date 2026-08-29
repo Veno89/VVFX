@@ -40,7 +40,7 @@ import {
   normalizeRenderingEffectClips,
   normalizeRenderingEffects,
   reconcileRenderingEffectClips,
-} from "./renderingEffects";
+} from "./renderingEffectsModel";
 import {
   findLayerAttachmentCycle,
   maximumLayerAttachmentDepth,

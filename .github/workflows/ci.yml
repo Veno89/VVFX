@@ -19,9 +19,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22.13.0
           cache: npm
@@ -35,36 +35,38 @@ jobs:
         run: npm run lint
       - name: Type-check
         run: npm run typecheck
-      - name: Test
-        run: npm test
-      - name: Build editor and runtime
-        run: npm run build:all
+      - name: Test with production coverage gate
+        run: npm run test:coverage
       - name: Check generated runtime declarations
         run: npm run check:runtime-types
+      - name: Build editor and runtime
+        run: npm run build:all
+      - name: Check deterministic performance budgets
+        run: npm run check:performance-budgets
       - name: Test packed runtime consumer
         run: npm run test:runtime-package
 
   browser:
-    name: Chromium smoke
+    name: Chromium and Firefox smoke
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22.13.0
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium firefox
       - name: Run browser smoke tests
         run: npm run test:browser
       - name: Upload browser report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: playwright-report
           path: playwright-report

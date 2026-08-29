@@ -22,7 +22,7 @@ import type {
   EmitterLayer,
   BeamLayer,
 } from "./types";
-import { createDefaultRenderingEffects } from "./renderingEffects";
+import { createDefaultRenderingEffects } from "./renderingEffectsModel";
 import { MAX_VFX_NAME_LENGTH } from "./inputLimits";
 
 export const BUILT_IN_ASSETS: VfxAsset[] = [

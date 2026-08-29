@@ -23,14 +23,14 @@ import {
   clearPhaserRenderingEffects,
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
-} from "../vfx/renderingEffects";
+} from "../vfx/phaserRenderingEffects";
 import {
   countRecentCreations,
   replicateInstancesForStress,
   type PreviewPerformanceSample,
 } from "../vfx/performance";
 import { isSpawnLayer, type VfxProject } from "../vfx/types";
-import type { EvaluatedRenderingEffects } from "../vfx/renderingEffects";
+import type { EvaluatedRenderingEffects } from "../vfx/renderingEffectsModel";
 import {
   layerPositionAfterPreviewDrag,
   pathPointAfterPreviewDrag,
@@ -442,8 +442,12 @@ export function PhaserPreview({
     void import("phaser").then((module) => {
       if (cancelled || !mountRef.current) return;
       const PhaserLib = module.default;
+      const requestedRenderer = new URLSearchParams(window.location.search).get(
+        "renderer",
+      );
       const config: Phaser.Types.Core.GameConfig = {
-        type: PhaserLib.AUTO,
+        type:
+          requestedRenderer === "canvas" ? PhaserLib.CANVAS : PhaserLib.AUTO,
         parent: mountRef.current,
         width: 820,
         height: 470,

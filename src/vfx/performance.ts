@@ -4,7 +4,7 @@ import {
   enabledRenderingEffects,
   renderingEffectPassCost,
   type RenderingEffectName,
-} from "./renderingEffects";
+} from "./renderingEffectsModel";
 import type { EvaluatedInstance, VfxLayer, VfxProject } from "./types";
 
 export { MAX_EFFECT_INSTANCES };

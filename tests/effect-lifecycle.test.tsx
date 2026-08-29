@@ -10,6 +10,14 @@ import {
 import { evaluateProject } from "../src/vfx/engine";
 import { compileLayerActivations } from "../src/vfx/events";
 import {
+  changeSpawnShape,
+  disableBehaviorEnvelope,
+  removeKeyframes,
+  removeMotionPath,
+  resetKeyframes,
+  resetMotionPath,
+} from "../src/vfx/optionalStateLifecycle";
+import {
   createRuntimeDefinition,
   generatePhaserCode,
   generateStandalonePhaserCode,
@@ -197,13 +205,10 @@ const reversibleFeatures: ReversibleFeatureCase[] = [
       layer.motionPath.enabled = enabled;
     },
     remove: (layer) => {
-      layer.motionPath = structuredClone(canonicalLayer().motionPath);
+      layer.motionPath = removeMotionPath();
     },
     reset: (layer) => {
-      layer.motionPath = {
-        ...structuredClone(canonicalLayer().motionPath),
-        enabled: true,
-      };
+      layer.motionPath = resetMotionPath();
     },
     read: (layer) => layer.motionPath,
   },
@@ -252,13 +257,10 @@ const reversibleFeatures: ReversibleFeatureCase[] = [
       layer.keyframes.enabled = enabled;
     },
     remove: (layer) => {
-      layer.keyframes = structuredClone(canonicalLayer().keyframes);
+      layer.keyframes = removeKeyframes();
     },
     reset: (layer) => {
-      layer.keyframes = {
-        ...structuredClone(canonicalLayer().keyframes),
-        enabled: true,
-      };
+      layer.keyframes = resetKeyframes(layer.transform);
     },
     read: (layer) => layer.keyframes,
   },
@@ -305,7 +307,9 @@ function expectFeatureReversible(feature: ReversibleFeatureCase) {
   const reset = structuredClone(configured);
   feature.reset(reset);
   const defaultEnabled = lifecycleLayer();
-  feature.setEnabled(defaultEnabled, true);
+  if (feature.name === "property moments")
+    defaultEnabled.keyframes = resetKeyframes(defaultEnabled.transform);
+  else feature.setEnabled(defaultEnabled, true);
   expect(feature.read(reset)).toEqual(feature.read(defaultEnabled));
 
   const repeatedlyToggled = structuredClone(configured);
@@ -413,6 +417,36 @@ describe("optional effect reversibility", () => {
     addedAgain.random = structuredClone(configured.random);
     expect(evaluatedWithoutMutation(addedAgain, 500)).toEqual(
       configuredEvaluation,
+    );
+  });
+
+  it("disables an envelope without replacing its authored stages", () => {
+    const configured = {
+      enabled: true,
+      start: 0.13,
+      attackEnd: 0.31,
+      releaseStart: 0.68,
+      end: 0.92,
+    };
+
+    expect(disableBehaviorEnvelope(configured)).toEqual({
+      ...configured,
+      enabled: false,
+    });
+    expect(configured.enabled).toBe(true);
+  });
+
+  it("forgets a silhouette reference when another spawn shape is selected", () => {
+    const layer = createLayer("burst", "Silhouette copies", "builtin-ring");
+    layer.spawn.shape = "mask";
+    layer.spawn.maskAssetId = "prepared-silhouette";
+
+    const changed = changeSpawnShape(layer.spawn, "circle", null);
+
+    expect(changed).toMatchObject({ shape: "circle", maskAssetId: null });
+    expect(layer.spawn.maskAssetId).toBe("prepared-silhouette");
+    expect(changeSpawnShape(changed, "mask", "replacement-mask")).toMatchObject(
+      { shape: "mask", maskAssetId: "replacement-mask" },
     );
   });
 });

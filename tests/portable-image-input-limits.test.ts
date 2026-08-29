@@ -93,6 +93,27 @@ describe("portable embedded images", () => {
     ).toBe(false);
   });
 
+  it("rejects a malformed near-limit Base64 suffix without overflowing", () => {
+    const maximumBytes = 8 * 1024 * 1024;
+    const maximumEncodedLength = Math.ceil(maximumBytes / 3) * 4;
+    const malformed = `${"A".repeat(maximumEncodedLength - 4)}AAA!`;
+
+    expect(() =>
+      inspectPortableImageDataUrl(
+        `data:image/png;base64,${malformed}`,
+        "image/png",
+        maximumBytes,
+      ),
+    ).not.toThrow();
+    expect(
+      inspectPortableImageDataUrl(
+        `data:image/png;base64,${malformed}`,
+        "image/png",
+        maximumBytes,
+      ).ok,
+    ).toBe(false);
+  });
+
   it("rejects declared MIME types that disagree with the expected type or bytes", () => {
     expect(
       inspectPortableImageDataUrl(TINY_PNG_DATA_URL, "image/webp").ok,

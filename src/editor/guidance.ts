@@ -1,5 +1,5 @@
 import type { LayerType, VfxLayer } from "../vfx/types";
-import { hasEnabledRenderingEffects } from "../vfx/renderingEffects";
+import { hasEnabledRenderingEffects } from "../vfx/renderingEffectsModel";
 import { isSpawnLayer } from "../vfx/types";
 
 export const LAYER_TYPE_LABELS: Record<LayerType, string> = {

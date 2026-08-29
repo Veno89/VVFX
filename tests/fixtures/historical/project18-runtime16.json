@@ -1,0 +1,869 @@
+{
+  "project": {
+    "formatVersion": 18,
+    "metadata": {
+      "id": "project-historical-fixture",
+      "name": "Historical compatibility fixture",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "assets": [
+      {
+        "id": "builtin-flash",
+        "name": "Soft flash",
+        "mimeType": "image/builtin",
+        "dataUrl": "builtin:flash",
+        "builtIn": "flash",
+        "transparency": "yes"
+      },
+      {
+        "id": "builtin-ring",
+        "name": "Energy ring",
+        "mimeType": "image/builtin",
+        "dataUrl": "builtin:ring",
+        "builtIn": "ring",
+        "transparency": "yes"
+      },
+      {
+        "id": "builtin-spark",
+        "name": "Spark streak",
+        "mimeType": "image/builtin",
+        "dataUrl": "builtin:spark",
+        "builtIn": "spark",
+        "transparency": "yes"
+      },
+      {
+        "id": "builtin-cloud",
+        "name": "Soft smoke",
+        "mimeType": "image/builtin",
+        "dataUrl": "builtin:cloud",
+        "builtIn": "cloud",
+        "transparency": "yes"
+      }
+    ],
+    "preview": {
+      "background": "checkerboard",
+      "customColor": "#142039",
+      "showGrid": false,
+      "zoom": 1,
+      "loop": true,
+      "duration": 3000,
+      "randomSeed": 8421
+    },
+    "timeline": {
+      "markers": [],
+      "notes": ""
+    },
+    "groups": [],
+    "layers": [
+      {
+        "id": "layer-historical-flash",
+        "name": "Historical flash",
+        "assetId": "builtin-flash",
+        "visible": true,
+        "enabled": true,
+        "solo": false,
+        "startMode": "timeline",
+        "events": [],
+        "parentId": null,
+        "groupId": null,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "startScale": 1,
+          "endScale": 1,
+          "startScaleX": 1,
+          "startScaleY": 1,
+          "endScaleX": 1,
+          "endScaleY": 1,
+          "separateScale": false,
+          "startOpacity": 1,
+          "endOpacity": 1,
+          "rotation": 0,
+          "rotationDuring": 0,
+          "movementX": 0,
+          "movementY": 0
+        },
+        "timing": {
+          "delay": 0,
+          "duration": 3000,
+          "repeat": 0,
+          "repeatForever": false,
+          "yoyo": false,
+          "loop": false,
+          "easing": "smooth",
+          "customEasing": {
+            "x1": 0.42,
+            "y1": 0,
+            "x2": 0.58,
+            "y2": 1
+          }
+        },
+        "appearance": {
+          "tint": null,
+          "tintStrength": 1,
+          "blendMode": "normal",
+          "colorOverLifetime": {
+            "enabled": false,
+            "stops": [
+              {
+                "time": 0,
+                "color": "#ffffff"
+              },
+              {
+                "time": 1,
+                "color": "#ffffff"
+              }
+            ]
+          },
+          "effects": {
+            "visualMask": {
+              "enabled": false,
+              "maskAssetId": null,
+              "channel": "alpha",
+              "invert": false,
+              "fit": "stretch",
+              "offsetX": 0,
+              "offsetY": 0,
+              "scale": 1,
+              "rotation": 0,
+              "strength": 1
+            },
+            "blur": {
+              "enabled": false,
+              "quality": 0,
+              "offsetX": 2,
+              "offsetY": 2,
+              "strength": 1,
+              "color": "#ffffff",
+              "steps": 2
+            },
+            "outerGlow": {
+              "enabled": false,
+              "color": "#7de9ff",
+              "outerStrength": 3,
+              "innerStrength": 0
+            },
+            "brightnessExposure": {
+              "enabled": false,
+              "brightness": 1,
+              "exposure": 0
+            },
+            "animatedShine": {
+              "enabled": false,
+              "speed": 0.5,
+              "lineWidth": 0.5,
+              "gradient": 3
+            },
+            "spatialGradient": {
+              "enabled": false,
+              "colorA": "#ffffff",
+              "colorB": "#66d9ff",
+              "strength": 0.7,
+              "fromX": 0,
+              "fromY": 0,
+              "toX": 0,
+              "toY": 1,
+              "bands": 0
+            },
+            "directionalDissolve": {
+              "enabled": false,
+              "start": 0,
+              "end": 1,
+              "softness": 0.1,
+              "pattern": "directional",
+              "axis": "horizontal",
+              "reverse": false,
+              "noiseScale": 6
+            },
+            "spriteWarp": {
+              "enabled": false,
+              "mode": "heat-shimmer",
+              "barrel": 0.15,
+              "amountX": 0.006,
+              "amountY": 0.003,
+              "speed": 2
+            }
+          },
+          "effectClips": []
+        },
+        "behavior": {
+          "pulse": {
+            "enabled": false,
+            "scale": 0.1,
+            "opacity": 0,
+            "speed": 2,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "flicker": {
+            "enabled": false,
+            "amount": 0.25,
+            "speed": 8,
+            "randomness": 0.65,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "wobble": {
+            "enabled": false,
+            "x": 12,
+            "y": 0,
+            "rotation": 4,
+            "speed": 1.5,
+            "style": "organic",
+            "smoothness": 0.7,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "physics": {
+            "gravity": 0,
+            "drag": 0,
+            "gravityEnvelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          }
+        },
+        "random": {
+          "positionX": 0,
+          "positionY": 0,
+          "startScale": 0,
+          "endScale": 0,
+          "rotation": 0,
+          "duration": 0,
+          "movementX": 0,
+          "movementY": 0,
+          "delay": 0,
+          "opacity": 0
+        },
+        "frameAnimation": {
+          "framesPerSecond": 12,
+          "startFrame": 0,
+          "endFrame": null,
+          "playback": "forward",
+          "loop": true,
+          "randomStartFrame": false
+        },
+        "trail": {
+          "enabled": false,
+          "count": 6,
+          "spacing": 50,
+          "lifetime": 400,
+          "opacity": 0.45,
+          "scaleFalloff": 0.05
+        },
+        "motionPath": {
+          "enabled": false,
+          "mode": "curve",
+          "controlX": 60,
+          "controlY": -80,
+          "spiralTurns": 1.5,
+          "spiralRadius": 70,
+          "spiralClockwise": true,
+          "points": [
+            {
+              "x": 60,
+              "y": -80
+            }
+          ],
+          "orientToPath": false
+        },
+        "keyframes": {
+          "enabled": false,
+          "initialized": false,
+          "frames": [
+            {
+              "time": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 1,
+              "rotation": 0
+            },
+            {
+              "time": 1,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 0,
+              "rotation": 0
+            }
+          ]
+        },
+        "beam": null,
+        "type": "static",
+        "spawn": null
+      }
+    ]
+  },
+  "runtime": {
+    "format": "vvfx-runtime",
+    "formatVersion": 16,
+    "name": "Historical compatibility fixture",
+    "duration": 3000,
+    "seed": 8421,
+    "assets": [
+      {
+        "id": "builtin-flash",
+        "name": "Soft flash",
+        "source": "builtin:flash",
+        "builtIn": "flash",
+        "spriteSheet": null,
+        "atlasFrame": null
+      }
+    ],
+    "layers": [
+      {
+        "id": "layer-historical-flash",
+        "name": "Historical flash",
+        "type": "static",
+        "asset": "builtin-flash",
+        "depth": 0,
+        "enabled": true,
+        "startMode": "timeline",
+        "events": [],
+        "attachTo": null,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "startScale": 1,
+          "endScale": 1,
+          "startScaleX": 1,
+          "startScaleY": 1,
+          "endScaleX": 1,
+          "endScaleY": 1,
+          "separateScale": false,
+          "startOpacity": 1,
+          "endOpacity": 1,
+          "rotation": 0,
+          "rotationDuring": 0,
+          "movementX": 0,
+          "movementY": 0
+        },
+        "timing": {
+          "delay": 0,
+          "duration": 3000,
+          "repeat": 0,
+          "repeatForever": false,
+          "yoyo": false,
+          "loop": false,
+          "easing": "smooth",
+          "customEasing": {
+            "x1": 0.42,
+            "y1": 0,
+            "x2": 0.58,
+            "y2": 1
+          }
+        },
+        "appearance": {
+          "tint": null,
+          "tintStrength": 1,
+          "blendMode": "normal",
+          "colorOverLifetime": {
+            "enabled": false,
+            "stops": [
+              {
+                "time": 0,
+                "color": "#ffffff"
+              },
+              {
+                "time": 1,
+                "color": "#ffffff"
+              }
+            ]
+          },
+          "effects": {
+            "visualMask": {
+              "enabled": false,
+              "maskAssetId": null,
+              "channel": "alpha",
+              "invert": false,
+              "fit": "stretch",
+              "offsetX": 0,
+              "offsetY": 0,
+              "scale": 1,
+              "rotation": 0,
+              "strength": 1
+            },
+            "blur": {
+              "enabled": false,
+              "quality": 0,
+              "offsetX": 2,
+              "offsetY": 2,
+              "strength": 1,
+              "color": "#ffffff",
+              "steps": 2
+            },
+            "outerGlow": {
+              "enabled": false,
+              "color": "#7de9ff",
+              "outerStrength": 3,
+              "innerStrength": 0
+            },
+            "brightnessExposure": {
+              "enabled": false,
+              "brightness": 1,
+              "exposure": 0
+            },
+            "animatedShine": {
+              "enabled": false,
+              "speed": 0.5,
+              "lineWidth": 0.5,
+              "gradient": 3
+            },
+            "spatialGradient": {
+              "enabled": false,
+              "colorA": "#ffffff",
+              "colorB": "#66d9ff",
+              "strength": 0.7,
+              "fromX": 0,
+              "fromY": 0,
+              "toX": 0,
+              "toY": 1,
+              "bands": 0
+            },
+            "directionalDissolve": {
+              "enabled": false,
+              "start": 0,
+              "end": 1,
+              "softness": 0.1,
+              "pattern": "directional",
+              "axis": "horizontal",
+              "reverse": false,
+              "noiseScale": 6
+            },
+            "spriteWarp": {
+              "enabled": false,
+              "mode": "heat-shimmer",
+              "barrel": 0.15,
+              "amountX": 0.006,
+              "amountY": 0.003,
+              "speed": 2
+            }
+          },
+          "effectClips": []
+        },
+        "behavior": {
+          "pulse": {
+            "enabled": false,
+            "scale": 0.1,
+            "opacity": 0,
+            "speed": 2,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "flicker": {
+            "enabled": false,
+            "amount": 0.25,
+            "speed": 8,
+            "randomness": 0.65,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "wobble": {
+            "enabled": false,
+            "x": 12,
+            "y": 0,
+            "rotation": 4,
+            "speed": 1.5,
+            "style": "organic",
+            "smoothness": 0.7,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "physics": {
+            "gravity": 0,
+            "drag": 0,
+            "gravityEnvelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          }
+        },
+        "spawn": null,
+        "random": {
+          "positionX": 0,
+          "positionY": 0,
+          "startScale": 0,
+          "endScale": 0,
+          "rotation": 0,
+          "duration": 0,
+          "movementX": 0,
+          "movementY": 0,
+          "delay": 0,
+          "opacity": 0
+        },
+        "frameAnimation": {
+          "framesPerSecond": 12,
+          "startFrame": 0,
+          "endFrame": null,
+          "playback": "forward",
+          "loop": true,
+          "randomStartFrame": false
+        },
+        "trail": {
+          "enabled": false,
+          "count": 6,
+          "spacing": 50,
+          "lifetime": 400,
+          "opacity": 0.45,
+          "scaleFalloff": 0.05
+        },
+        "motionPath": {
+          "enabled": false,
+          "mode": "curve",
+          "controlX": 60,
+          "controlY": -80,
+          "spiralTurns": 1.5,
+          "spiralRadius": 70,
+          "spiralClockwise": true,
+          "points": [
+            {
+              "x": 60,
+              "y": -80
+            }
+          ],
+          "orientToPath": false
+        },
+        "keyframes": {
+          "enabled": false,
+          "initialized": false,
+          "frames": [
+            {
+              "time": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 1,
+              "rotation": 0
+            },
+            {
+              "time": 1,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 0,
+              "rotation": 0
+            }
+          ]
+        },
+        "beam": null
+      }
+    ]
+  },
+  "template": {
+    "format": "vvfx-template",
+    "formatVersion": 2,
+    "projectFormatVersion": 18,
+    "id": "template-historical-flash",
+    "name": "Historical flash template",
+    "description": "Frozen release-generated fixture",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "scope": "effect",
+    "timelineAnchor": 0,
+    "duration": 3000,
+    "assets": [
+      {
+        "id": "builtin-flash",
+        "name": "Soft flash",
+        "mimeType": "image/builtin",
+        "dataUrl": "builtin:flash",
+        "builtIn": "flash",
+        "transparency": "yes",
+        "spriteSheet": null,
+        "atlasFrame": null,
+        "alphaMask": null
+      }
+    ],
+    "groups": [],
+    "layers": [
+      {
+        "id": "layer-historical-flash",
+        "name": "Historical flash",
+        "type": "static",
+        "assetId": "builtin-flash",
+        "visible": true,
+        "enabled": true,
+        "solo": false,
+        "startMode": "timeline",
+        "events": [],
+        "parentId": null,
+        "groupId": null,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "startScale": 1,
+          "endScale": 1,
+          "startScaleX": 1,
+          "startScaleY": 1,
+          "endScaleX": 1,
+          "endScaleY": 1,
+          "separateScale": false,
+          "startOpacity": 1,
+          "endOpacity": 1,
+          "rotation": 0,
+          "rotationDuring": 0,
+          "movementX": 0,
+          "movementY": 0
+        },
+        "timing": {
+          "delay": 0,
+          "duration": 3000,
+          "repeat": 0,
+          "repeatForever": false,
+          "yoyo": false,
+          "loop": false,
+          "easing": "smooth",
+          "customEasing": {
+            "x1": 0.42,
+            "y1": 0,
+            "x2": 0.58,
+            "y2": 1
+          }
+        },
+        "appearance": {
+          "tint": null,
+          "tintStrength": 1,
+          "blendMode": "normal",
+          "colorOverLifetime": {
+            "enabled": false,
+            "stops": [
+              {
+                "time": 0,
+                "color": "#ffffff"
+              },
+              {
+                "time": 1,
+                "color": "#ffffff"
+              }
+            ]
+          },
+          "effects": {
+            "visualMask": {
+              "enabled": false,
+              "maskAssetId": null,
+              "channel": "alpha",
+              "invert": false,
+              "fit": "stretch",
+              "offsetX": 0,
+              "offsetY": 0,
+              "scale": 1,
+              "rotation": 0,
+              "strength": 1
+            },
+            "blur": {
+              "enabled": false,
+              "quality": 0,
+              "offsetX": 2,
+              "offsetY": 2,
+              "strength": 1,
+              "color": "#ffffff",
+              "steps": 2
+            },
+            "outerGlow": {
+              "enabled": false,
+              "color": "#7de9ff",
+              "outerStrength": 3,
+              "innerStrength": 0
+            },
+            "brightnessExposure": {
+              "enabled": false,
+              "brightness": 1,
+              "exposure": 0
+            },
+            "animatedShine": {
+              "enabled": false,
+              "speed": 0.5,
+              "lineWidth": 0.5,
+              "gradient": 3
+            },
+            "spatialGradient": {
+              "enabled": false,
+              "colorA": "#ffffff",
+              "colorB": "#66d9ff",
+              "strength": 0.7,
+              "fromX": 0,
+              "fromY": 0,
+              "toX": 0,
+              "toY": 1,
+              "bands": 0
+            },
+            "directionalDissolve": {
+              "enabled": false,
+              "start": 0,
+              "end": 1,
+              "softness": 0.1,
+              "pattern": "directional",
+              "axis": "horizontal",
+              "reverse": false,
+              "noiseScale": 6
+            },
+            "spriteWarp": {
+              "enabled": false,
+              "mode": "heat-shimmer",
+              "barrel": 0.15,
+              "amountX": 0.006,
+              "amountY": 0.003,
+              "speed": 2
+            }
+          },
+          "effectClips": []
+        },
+        "behavior": {
+          "pulse": {
+            "enabled": false,
+            "scale": 0.1,
+            "opacity": 0,
+            "speed": 2,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "flicker": {
+            "enabled": false,
+            "amount": 0.25,
+            "speed": 8,
+            "randomness": 0.65,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "wobble": {
+            "enabled": false,
+            "x": 12,
+            "y": 0,
+            "rotation": 4,
+            "speed": 1.5,
+            "style": "organic",
+            "smoothness": 0.7,
+            "envelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          },
+          "physics": {
+            "gravity": 0,
+            "drag": 0,
+            "gravityEnvelope": {
+              "enabled": false,
+              "start": 0,
+              "attackEnd": 0,
+              "releaseStart": 1,
+              "end": 1
+            }
+          }
+        },
+        "random": {
+          "positionX": 0,
+          "positionY": 0,
+          "startScale": 0,
+          "endScale": 0,
+          "rotation": 0,
+          "duration": 0,
+          "movementX": 0,
+          "movementY": 0,
+          "delay": 0,
+          "opacity": 0
+        },
+        "frameAnimation": {
+          "framesPerSecond": 12,
+          "startFrame": 0,
+          "endFrame": null,
+          "playback": "forward",
+          "loop": true,
+          "randomStartFrame": false
+        },
+        "trail": {
+          "enabled": false,
+          "count": 6,
+          "spacing": 50,
+          "lifetime": 400,
+          "opacity": 0.45,
+          "scaleFalloff": 0.05
+        },
+        "motionPath": {
+          "enabled": false,
+          "mode": "curve",
+          "controlX": 60,
+          "controlY": -80,
+          "spiralTurns": 1.5,
+          "spiralRadius": 70,
+          "spiralClockwise": true,
+          "points": [
+            {
+              "x": 60,
+              "y": -80
+            }
+          ],
+          "orientToPath": false
+        },
+        "keyframes": {
+          "enabled": false,
+          "initialized": false,
+          "frames": [
+            {
+              "time": 0,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 1,
+              "rotation": 0
+            },
+            {
+              "time": 1,
+              "scaleX": 1,
+              "scaleY": 1,
+              "opacity": 0,
+              "rotation": 0
+            }
+          ]
+        },
+        "spawn": null,
+        "beam": null
+      }
+    ]
+  }
+}

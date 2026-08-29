@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   clearRecoveryDraft,
   deleteInvalidProjectRecord,
@@ -6,7 +6,8 @@ import {
   deleteProject,
   inspectStoredProjects,
   InvalidRecoveryDraftError,
-  listProjects,
+  listProjectSummaries,
+  loadProject,
   loadRecoveryDraft,
   saveRecoveryDraft,
   saveProject,
@@ -18,13 +19,20 @@ import {
   saveTemplates,
 } from "../src/persistence/templates";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
+import { serializeProject } from "../src/vfx/serialization";
 import { createTemplateFromProject } from "../src/vfx/templates";
 import {
   openDatabase,
   PROJECT_STORE,
+  PROJECT_SUMMARY_STORE,
   RECOVERY_STORE,
 } from "../src/persistence/database";
-import { MAX_SAVED_PROJECTS } from "../src/vfx/inputLimits";
+import {
+  MAX_SAVED_PROJECT_LIBRARY_BYTES,
+  MAX_SAVED_PROJECTS,
+  utf8ByteLength,
+} from "../src/vfx/inputLimits";
+import { createCurrentProjectSummary } from "../src/persistence/projectSummaries";
 
 async function putRawRecord(storeName: string, value: unknown): Promise<void> {
   const database = await openDatabase();
@@ -145,11 +153,7 @@ describe("browser project saves", () => {
     });
 
     expect(await loadRecoveryDraft()).toBeNull();
-    expect(
-      (await listProjects()).find(
-        (project) => project.metadata.id === existing.metadata.id,
-      )?.formatVersion,
-    ).toBe(18);
+    expect((await loadProject(existing.metadata.id)).formatVersion).toBe(18);
     expect(await listTemplates()).toEqual([]);
     await deleteProject(existing.metadata.id);
   });
@@ -159,17 +163,18 @@ describe("browser project saves", () => {
     project.layers.push(createLayer("animated", "Ring", "builtin-ring"));
     await saveProject(project);
 
-    const saved = await listProjects();
-    const loaded = saved.find(
-      (candidate) => candidate.metadata.id === project.metadata.id,
+    const saved = await listProjectSummaries();
+    const summary = saved.find(
+      (candidate) => candidate.id === project.metadata.id,
     );
-    expect(loaded?.metadata.name).toBe("Saved shockwave");
-    expect(loaded?.layers[0].name).toBe("Ring");
+    const loaded = await loadProject(project.metadata.id);
+    expect(summary?.name).toBe("Saved shockwave");
+    expect(loaded.layers[0].name).toBe("Ring");
 
     await deleteProject(project.metadata.id);
     expect(
-      (await listProjects()).some(
-        (candidate) => candidate.metadata.id === project.metadata.id,
+      (await listProjectSummaries()).some(
+        (candidate) => candidate.id === project.metadata.id,
       ),
     ).toBe(false);
   });
@@ -185,8 +190,8 @@ describe("browser project saves", () => {
     expect(draft?.project.metadata.name).toBe("Interrupted experiment");
     expect(draft?.project.layers[0].name).toBe("Draft sparks");
     expect(
-      (await listProjects()).some(
-        (project) => project.metadata.id === draftProject.metadata.id,
+      (await listProjectSummaries()).some(
+        (project) => project.id === draftProject.metadata.id,
       ),
     ).toBe(false);
 
@@ -216,8 +221,8 @@ describe("browser project saves", () => {
     try {
       const inspection = await inspectStoredProjects();
       expect(
-        inspection.projects.some(
-          (project) => project.metadata.id === valid.metadata.id,
+        inspection.summaries.some(
+          (project) => project.id === valid.metadata.id,
         ),
       ).toBe(true);
       expect(inspection.invalidRecords).toHaveLength(2);
@@ -225,12 +230,12 @@ describe("browser project saves", () => {
         expect.arrayContaining([
           expect.objectContaining({
             key: invalidKey,
-            reason: expect.stringMatching(/layers|image library/i),
+            reason: expect.stringMatching(/trusted summary/i),
           }),
           expect.objectContaining({ key: opaqueNumericKey }),
         ]),
       );
-      await expect(listProjects()).rejects.toThrow(/invalid record/i);
+      await expect(listProjectSummaries()).rejects.toThrow(/invalid record/i);
       await expect(
         deleteInvalidProjectRecord(valid.metadata.id),
       ).rejects.toThrow(/valid project/i);
@@ -238,7 +243,7 @@ describe("browser project saves", () => {
       const replacement = createEmptyProject("Replacement project");
       replacement.metadata.id = invalidKey;
       await expect(saveProject(replacement)).rejects.toThrow(
-        /damaged saved record/i,
+        /index is damaged/i,
       );
       expect(await getRawRecord(PROJECT_STORE, invalidKey)).toMatchObject({
         sentinel: "preserve-me",
@@ -248,8 +253,8 @@ describe("browser project saves", () => {
       await deleteInvalidProjectRecord(opaqueNumericKey);
       expect((await inspectStoredProjects()).invalidRecords).toEqual([]);
       expect(
-        (await listProjects()).some(
-          (project) => project.metadata.id === valid.metadata.id,
+        (await listProjectSummaries()).some(
+          (project) => project.id === valid.metadata.id,
         ),
       ).toBe(true);
     } finally {
@@ -275,14 +280,140 @@ describe("browser project saves", () => {
         Math.max(0, inspection.totalRecords - MAX_SAVED_PROJECTS),
       );
       expect(
-        inspection.projects.length + inspection.invalidRecords.length,
-      ).toBe(Math.min(inspection.totalRecords, MAX_SAVED_PROJECTS + 1));
-      await expect(listProjects()).rejects.toThrow(/exceeds.*safety limit/i);
+        inspection.summaries.length + inspection.invalidRecords.length,
+      ).toBeLessThanOrEqual(
+        Math.min(inspection.totalRecords, MAX_SAVED_PROJECTS + 1),
+      );
+      await expect(listProjectSummaries()).rejects.toThrow(
+        /exceeds.*safety limit/i,
+      );
     } finally {
       await deleteRawRecords(PROJECT_STORE, keys);
     }
 
     expect(await countRawRecords(PROJECT_STORE)).toBe(baseline);
+  });
+
+  it("enforces the aggregate byte boundary transactionally", async () => {
+    const filler = createEmptyProject("Aggregate filler");
+    const candidate = createEmptyProject("Aggregate candidate");
+    const candidateBytes = utf8ByteLength(serializeProject(candidate));
+    const fillerSummary = createCurrentProjectSummary(
+      filler,
+      MAX_SAVED_PROJECT_LIBRARY_BYTES - candidateBytes,
+    );
+    await putRawRecord(PROJECT_STORE, filler);
+    await putRawRecord(PROJECT_SUMMARY_STORE, fillerSummary);
+
+    try {
+      await expect(saveProject(candidate)).resolves.toMatchObject({
+        metadata: { id: candidate.metadata.id },
+      });
+      expect((await inspectStoredProjects()).aggregateBytes).toBe(
+        MAX_SAVED_PROJECT_LIBRARY_BYTES,
+      );
+      await deleteProject(candidate.metadata.id);
+
+      await putRawRecord(PROJECT_SUMMARY_STORE, {
+        ...fillerSummary,
+        byteLength: fillerSummary.byteLength + 1,
+      });
+      const fillerBefore = await getRawRecord(
+        PROJECT_STORE,
+        filler.metadata.id,
+      );
+      await expect(saveProject(candidate)).rejects.toThrow(
+        /at most 160 MB.*export or delete/i,
+      );
+      expect(
+        await getRawRecord(PROJECT_STORE, candidate.metadata.id),
+      ).toBeUndefined();
+      expect(await getRawRecord(PROJECT_STORE, filler.metadata.id)).toEqual(
+        fillerBefore,
+      );
+    } finally {
+      await deleteProject(candidate.metadata.id);
+      await deleteProject(filler.metadata.id);
+    }
+  });
+
+  it("lists only summaries until one project is selected", async () => {
+    const project = createEmptyProject("Summary-only listing");
+    await saveProject(project);
+    const getAllSpy = vi.spyOn(IDBObjectStore.prototype, "getAll");
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, "get");
+    try {
+      const inspection = await inspectStoredProjects();
+      expect(inspection.summaries).toEqual([
+        expect.objectContaining({
+          id: project.metadata.id,
+          name: "Summary-only listing",
+        }),
+      ]);
+      expect(
+        getAllSpy.mock.contexts.some(
+          (store) => (store as IDBObjectStore).name === PROJECT_STORE,
+        ),
+      ).toBe(false);
+      expect(
+        getSpy.mock.contexts.some(
+          (store) => (store as IDBObjectStore).name === PROJECT_STORE,
+        ),
+      ).toBe(false);
+
+      await expect(loadProject(project.metadata.id)).resolves.toMatchObject({
+        metadata: { name: "Summary-only listing" },
+      });
+      expect(
+        getSpy.mock.contexts.some(
+          (store) => (store as IDBObjectStore).name === PROJECT_STORE,
+        ),
+      ).toBe(true);
+    } finally {
+      getAllSpy.mockRestore();
+      getSpy.mockRestore();
+      await deleteProject(project.metadata.id);
+    }
+  });
+
+  it("paginates summaries and deletes an indexed corrupt record without reading its payload", async () => {
+    const projects = Array.from({ length: 25 }, (_, index) =>
+      createEmptyProject(`Paged project ${index}`),
+    );
+    for (const project of projects) await saveProject(project);
+    const corrupt = createEmptyProject("Oversize corrupt record");
+    await putRawRecord(PROJECT_STORE, corrupt);
+    await putRawRecord(PROJECT_SUMMARY_STORE, {
+      ...createCurrentProjectSummary(corrupt),
+      valid: false,
+      reason: "This saved project exceeds the supported record size.",
+    });
+
+    try {
+      const first = await inspectStoredProjects({ page: 0, pageSize: 10 });
+      const last = await inspectStoredProjects({ page: 2, pageSize: 10 });
+      expect(first.summaries).toHaveLength(10);
+      expect(first.totalPages).toBe(3);
+      expect(last.summaries).toHaveLength(5);
+      expect(first.invalidRecords).toEqual([
+        expect.objectContaining({ key: corrupt.metadata.id }),
+      ]);
+
+      const getSpy = vi.spyOn(IDBObjectStore.prototype, "get");
+      await deleteInvalidProjectRecord(corrupt.metadata.id);
+      expect(
+        getSpy.mock.contexts.some(
+          (store) => (store as IDBObjectStore).name === PROJECT_STORE,
+        ),
+      ).toBe(false);
+      getSpy.mockRestore();
+      expect(
+        await getRawRecord(PROJECT_STORE, corrupt.metadata.id),
+      ).toBeUndefined();
+    } finally {
+      await deleteInvalidProjectRecord(corrupt.metadata.id);
+      for (const project of projects) await deleteProject(project.metadata.id);
+    }
   });
 
   it("throws for a damaged recovery draft without deleting it", async () => {
@@ -364,11 +495,9 @@ describe("browser project saves", () => {
     await expect(saveProject(invalid)).rejects.toThrow(/circular/i);
     await expect(saveRecoveryDraft(invalid)).rejects.toThrow(/circular/i);
 
-    const stored = (await listProjects()).find(
-      (project) => project.metadata.id === valid.metadata.id,
-    );
-    expect(stored?.metadata.name).toBe("Last known good");
-    expect(stored?.layers.map((layer) => layer.name)).toEqual(["Safe ring"]);
+    const stored = await loadProject(valid.metadata.id);
+    expect(stored.metadata.name).toBe("Last known good");
+    expect(stored.layers.map((layer) => layer.name)).toEqual(["Safe ring"]);
     expect((await loadRecoveryDraft())?.project.metadata.name).toBe(
       "Last known good",
     );

@@ -21,7 +21,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  analyzeGifRecordingWork,
   canRecordWebm,
+  isPreviewRecordingCancellation,
   type PreviewRecording,
   type PreviewRecordingRequest,
 } from "../previewRecording";
@@ -32,7 +34,7 @@ import {
   serializeRuntimeDefinition,
 } from "../../vfx/exporters";
 import { serializeProject } from "../../vfx/serialization";
-import { hasEnabledRenderingEffects } from "../../vfx/renderingEffects";
+import { hasEnabledRenderingEffects } from "../../vfx/renderingEffectsModel";
 import {
   analyzeExportPreflight,
   EXPORT_PREFLIGHT_PROFILES,
@@ -71,6 +73,7 @@ export function ExportDialog({
   activeDuration,
   onRecordPreview,
   onClose,
+  currentPreviewSize,
 }: {
   project: VfxProject;
   activeDuration: number;
@@ -79,12 +82,15 @@ export function ExportDialog({
     onProgress: (progress: number) => void,
   ) => Promise<PreviewRecording>;
   onClose: () => void;
+  currentPreviewSize?: { width: number; height: number } | null;
 }) {
   const [tab, setTab] = useState<ExportTab>("preview");
   const [copiedTab, setCopiedTab] = useState<ExportTab | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
   const copyRequestRef = useRef(0);
+  const recordingControllerRef = useRef<AbortController | null>(null);
+  const recordingRequestRef = useRef(0);
   const [recording, setRecording] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState(0);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -96,14 +102,16 @@ export function ExportDialog({
     null,
   );
   const [webmSupported, setWebmSupported] = useState<boolean | null>(null);
+  const cancelRecording = () => recordingControllerRef.current?.abort();
   const dialogRef = useFocusRegion<HTMLElement>({
-    escapeEnabled: !recording,
-    onEscape: onClose,
+    onEscape: recording ? cancelRecording : onClose,
   });
   useEffect(() => {
     const timer = window.setTimeout(() => setWebmSupported(canRecordWebm()), 0);
     return () => {
       copyRequestRef.current += 1;
+      recordingRequestRef.current += 1;
+      recordingControllerRef.current?.abort();
       window.clearTimeout(timer);
       if (copyResetTimerRef.current !== null)
         window.clearTimeout(copyResetTimerRef.current);
@@ -140,6 +148,28 @@ export function ExportDialog({
   const previewSize =
     PREVIEW_SIZES.find((preset) => preset.id === previewSizeId) ??
     PREVIEW_SIZES[0];
+  const gifRecordingWork = useMemo(() => {
+    const width = previewSize.width ?? currentPreviewSize?.width;
+    const height = previewSize.height ?? currentPreviewSize?.height;
+    return previewFormat === "gif" && width && height
+      ? analyzeGifRecordingWork({
+          duration: activeDuration,
+          width,
+          height,
+        })
+      : null;
+  }, [
+    activeDuration,
+    currentPreviewSize?.height,
+    currentPreviewSize?.width,
+    previewFormat,
+    previewSize.height,
+    previewSize.width,
+  ]);
+  const gifBudgetError =
+    gifRecordingWork && !gifRecordingWork.allowed
+      ? gifRecordingWork.reason
+      : null;
   const info =
     tab === "preview"
       ? "Export the clean Phaser preview at normal speed, without editor guides. Choose WebM video or an animated GIF plus a centered size and aspect preset."
@@ -246,6 +276,13 @@ export function ExportDialog({
       setRecordingError(integrityError);
       return;
     }
+    if (gifBudgetError) {
+      setRecordingError(gifBudgetError);
+      return;
+    }
+    const controller = new AbortController();
+    const requestId = ++recordingRequestRef.current;
+    recordingControllerRef.current = controller;
     setRecording(true);
     setRecordingProgress(0);
     setRecordingError(null);
@@ -254,19 +291,37 @@ export function ExportDialog({
         {
           format: previewFormat,
           size: { width: previewSize.width, height: previewSize.height },
+          signal: controller.signal,
         },
-        setRecordingProgress,
+        (progress) => {
+          if (
+            requestId === recordingRequestRef.current &&
+            !controller.signal.aborted
+          )
+            setRecordingProgress(progress);
+        },
       );
+      if (
+        controller.signal.aborted ||
+        requestId !== recordingRequestRef.current
+      )
+        return;
       setLastRecording(result);
       downloadBlob(`${base}.${result.format}`, result.blob);
     } catch (error) {
+      if (requestId !== recordingRequestRef.current) return;
       setRecordingError(
-        error instanceof Error
-          ? error.message
-          : "The preview could not be recorded.",
+        isPreviewRecordingCancellation(error) || controller.signal.aborted
+          ? "Preview export canceled."
+          : error instanceof Error
+            ? error.message
+            : "The preview could not be recorded.",
       );
     } finally {
-      setRecording(false);
+      if (requestId === recordingRequestRef.current) {
+        recordingControllerRef.current = null;
+        setRecording(false);
+      }
     }
   };
 
@@ -449,7 +504,10 @@ export function ExportDialog({
                 <select
                   value={previewSizeId}
                   disabled={recording}
-                  onChange={(event) => setPreviewSizeId(event.target.value)}
+                  onChange={(event) => {
+                    setPreviewSizeId(event.target.value);
+                    setRecordingError(null);
+                  }}
                 >
                   {PREVIEW_SIZES.map((preset) => (
                     <option key={preset.id} value={preset.id}>
@@ -506,10 +564,15 @@ export function ExportDialog({
                   {Math.round(recordingProgress * 100)}%
                 </progress>
                 <small>
-                  Keep this window open. Larger sizes and longer effects take
-                  more time and create larger files.
+                  Keep this window open. You can cancel here or press Escape;
+                  the editor will restore your previous playback state.
                 </small>
               </div>
+            )}
+            {gifBudgetError && !recording && (
+              <p className="preview-export-error" role="alert">
+                {gifBudgetError}
+              </p>
             )}
             {recordingError && (
               <p className="preview-export-error" role="alert">
@@ -555,23 +618,26 @@ export function ExportDialog({
           {tab === "preview" ? (
             <>
               <span>Records locally in your browser · no upload</span>
-              <button
-                className="primary-action"
-                type="button"
-                disabled={
-                  recording ||
-                  (previewFormat === "webm" && webmSupported !== true) ||
-                  !hasExportableLayer ||
-                  preflightBlocksExport ||
-                  Boolean(integrityError)
-                }
-                onClick={() => void recordPreview()}
-              >
-                {recording ? <Film size={15} /> : <Download size={15} />}
-                {recording
-                  ? "Exporting…"
-                  : `Export & download .${previewFormat}`}
-              </button>
+              {recording ? (
+                <button type="button" onClick={cancelRecording}>
+                  <CircleX size={15} /> Cancel export
+                </button>
+              ) : (
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={
+                    (previewFormat === "webm" && webmSupported !== true) ||
+                    !hasExportableLayer ||
+                    preflightBlocksExport ||
+                    Boolean(integrityError) ||
+                    Boolean(gifBudgetError)
+                  }
+                  onClick={() => void recordPreview()}
+                >
+                  <Download size={15} /> Export & download .{previewFormat}
+                </button>
+              )}
             </>
           ) : (
             <>

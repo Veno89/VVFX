@@ -2,7 +2,7 @@ import type {
   EvaluatedRenderingEffects,
   RenderingEffectClip,
   RenderingEffectsSettings,
-} from "./renderingEffects";
+} from "./renderingEffectsModel";
 import type { AssetAlphaMask } from "./alphaMask";
 
 export type LayerType = "static" | "animated" | "beam" | "burst" | "emitter";

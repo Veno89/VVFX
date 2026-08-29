@@ -32,9 +32,17 @@ import {
 } from "../../vfx/defaults";
 import { canAttachLayer } from "../../vfx/attachments";
 import { enabledIncomingLayerEvents } from "../../vfx/layerLifecycle";
+import {
+  changeSpawnShape,
+  disableBehaviorEnvelope,
+  removeKeyframes,
+  removeMotionPath,
+  resetKeyframes,
+  resetMotionPath,
+} from "../../vfx/optionalStateLifecycle";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
 import { boundedLayerRepeat, MAX_LAYER_REPEATS } from "../../vfx/limits";
-import type { RenderingEffectKey } from "../../vfx/renderingEffects";
+import type { RenderingEffectKey } from "../../vfx/renderingEffectsModel";
 import type {
   BehaviorEnvelopeSettings,
   VfxAsset,
@@ -178,15 +186,17 @@ function BehaviorEnvelopeEditor({
         onChange={(value) => {
           const preset = value as EnvelopePreset;
           onChange(
-            preset === "custom"
-              ? {
-                  enabled: true,
-                  start: 0,
-                  attackEnd: 0.2,
-                  releaseStart: 0.8,
-                  end: 1,
-                }
-              : { ...ENVELOPE_PRESETS[preset] },
+            preset === "entire"
+              ? disableBehaviorEnvelope(envelope)
+              : preset === "custom"
+                ? {
+                    enabled: true,
+                    start: 0,
+                    attackEnd: 0.2,
+                    releaseStart: 0.8,
+                    end: 1,
+                  }
+                : { ...ENVELOPE_PRESETS[preset] },
           );
         }}
       >
@@ -638,6 +648,14 @@ export function Inspector({
                     : null,
                 })
               }
+            />
+            <FeatureRemovalAction
+              name="keyframes"
+              configured={featureSettingsDiffer(
+                layer.keyframes,
+                removeKeyframes(),
+              )}
+              onRemove={() => setKeyframes(removeKeyframes())}
             />
             {spriteSheet && (
               <>
@@ -1209,11 +1227,7 @@ export function Inspector({
                     type="button"
                     className="waypoint-add"
                     onClick={() =>
-                      setKeyframes({
-                        enabled: true,
-                        initialized: true,
-                        frames: keyframesFromTransform(layer.transform),
-                      })
+                      setKeyframes(resetKeyframes(layer.transform))
                     }
                   >
                     Reset keyframes
@@ -1235,6 +1249,16 @@ export function Inspector({
               checked={layer.motionPath.enabled}
               help="Replaces straight movement with a curve, spiral, or route through your own points."
               onChange={(enabled) => setMotionPath({ enabled })}
+            />
+            <FeatureRemovalAction
+              name="motion path"
+              configured={featureSettingsDiffer(
+                layer.motionPath,
+                removeMotionPath(),
+              )}
+              onRemove={() =>
+                onChange({ ...layer, motionPath: removeMotionPath() })
+              }
             />
             {layer.motionPath.enabled && (
               <>
@@ -1400,6 +1424,15 @@ export function Inspector({
                   help="Rotates the image so it faces the direction the route is travelling."
                   onChange={(orientToPath) => setMotionPath({ orientToPath })}
                 />
+                <button
+                  type="button"
+                  className="waypoint-add"
+                  onClick={() =>
+                    onChange({ ...layer, motionPath: resetMotionPath() })
+                  }
+                >
+                  Reset motion path
+                </button>
               </>
             )}
           </SettingsSection>
@@ -2484,26 +2517,13 @@ export function Inspector({
               value={layer.spawn.shape}
               help="Choose one point, a geometric region, or the visible silhouette of a prepared image. This controls start positions; it does not crop the particle artwork."
               onChange={(shape) =>
-                setSpawn({
-                  shape,
-                  ...(shape === "mask"
-                    ? {
-                        maskAssetId:
-                          layer.spawn.maskAssetId ??
-                          preparedMaskAssets[0]?.id ??
-                          null,
-                      }
-                    : {}),
-                  distribution:
-                    shape === "point" || shape === "mask"
-                      ? "random"
-                      : (shape === "line" || shape === "arc") &&
-                          layer.spawn.distribution === "edge"
-                        ? "even"
-                        : (shape === "line" || shape === "arc") &&
-                            layer.spawn.distribution === "stratified"
-                          ? "random"
-                          : layer.spawn.distribution,
+                onChange({
+                  ...layer,
+                  spawn: changeSpawnShape(
+                    layer.spawn,
+                    shape as Parameters<typeof changeSpawnShape>[1],
+                    preparedMaskAssets[0]?.id ?? null,
+                  ),
                 })
               }
             >

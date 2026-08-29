@@ -156,6 +156,52 @@ const spriteSheetSignature = (asset: VvfxRuntimeAsset) =>
     ? `${asset.spriteSheet.frameWidth}:${asset.spriteSheet.frameHeight}:${asset.spriteSheet.frameCount}`
     : "still";
 
+/**
+ * Mapped textures belong to the host game. Vvfx must only inspect them: adding
+ * or replacing frames would change shared Phaser state for unrelated scenes
+ * and effects.
+ */
+export function assertMappedSpriteSheetTexture(
+  scene: Phaser.Scene,
+  textureKey: string,
+  asset: VvfxRuntimeAsset,
+): void {
+  const sheet = asset.spriteSheet;
+  if (!sheet) return;
+  if (!scene.textures.exists(textureKey))
+    throw new Error(
+      `The mapped Phaser texture "${textureKey}" for "${asset.name}" is not loaded.`,
+    );
+  const texture = scene.textures.get(textureKey);
+  const columns = Math.max(
+    1,
+    Math.floor(
+      (asset.width ?? sheet.frameWidth * sheet.frameCount) / sheet.frameWidth,
+    ),
+  );
+  for (let index = 0; index < sheet.frameCount; index += 1) {
+    const expectedX = (index % columns) * sheet.frameWidth;
+    const expectedY = Math.floor(index / columns) * sheet.frameHeight;
+    if (!texture.has(String(index)))
+      throw new Error(
+        `The mapped Phaser sprite sheet "${textureKey}" for "${asset.name}" is missing numeric frame ${index}.`,
+      );
+    const frame = texture.get(index);
+    if (
+      frame.sourceIndex !== 0 ||
+      frame.cutX !== expectedX ||
+      frame.cutY !== expectedY ||
+      frame.cutWidth !== sheet.frameWidth ||
+      frame.cutHeight !== sheet.frameHeight ||
+      frame.realWidth !== sheet.frameWidth ||
+      frame.realHeight !== sheet.frameHeight
+    )
+      throw new Error(
+        `The mapped Phaser sprite sheet "${textureKey}" for "${asset.name}" has invalid geometry for numeric frame ${index}.`,
+      );
+  }
+}
+
 function runtimeTextureRegistry(textures: Phaser.Textures.TextureManager) {
   const existing = ownedRuntimeTextures.get(textures);
   if (existing) return existing;
@@ -497,6 +543,8 @@ async function loadVvfxAssetsWithMode(
         throw new Error(
           `The mapped Phaser texture "${textureKey}" for "${asset.name}" is not loaded.`,
         );
+      if (mappedTextureKey !== undefined)
+        assertMappedSpriteSheetTexture(scene, textureKey, asset);
       return {
         asset,
         textureKey,
@@ -522,10 +570,16 @@ async function loadVvfxAssetsWithMode(
             mode,
             transaction,
           );
-        applySpriteSheetFrames(
-          scene.textures.get(entry.textureKey),
-          entry.asset,
-        );
+        if (
+          !entry.managed &&
+          ownValue(safeAssetKeys, entry.asset.id) !== undefined
+        )
+          assertMappedSpriteSheetTexture(scene, entry.textureKey, entry.asset);
+        else
+          applySpriteSheetFrames(
+            scene.textures.get(entry.textureKey),
+            entry.asset,
+          );
       } else if (entry.asset.builtIn) {
         createBuiltInTexture(scene, entry.textureKey, entry.asset.builtIn);
       } else {

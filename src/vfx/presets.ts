@@ -1,5 +1,5 @@
 import { createExampleProject, createLayer, makeId } from "./defaults";
-import { reconcileRenderingEffectClips } from "./renderingEffects";
+import { reconcileRenderingEffectClips } from "./renderingEffectsModel";
 import type { VfxLayer } from "./types";
 
 function addPresetRenderingEffectClips(layer: VfxLayer): VfxLayer {

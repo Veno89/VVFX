@@ -1,9 +1,13 @@
 import type Phaser from "phaser";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  analyzeGifRecordingWork,
   canRecordWebm,
+  recordCanvasAsGif,
+  recordCanvasAsWebm,
   selectWebmMimeType,
 } from "../src/editor/previewRecording";
+import type { GifEncodingSession } from "../src/editor/gifEncodingWorker";
 import {
   createPreviewAssetTextureState,
   previewDisplayState,
@@ -23,7 +27,145 @@ import {
   TINY_WEBP_DATA_URL,
 } from "./fixtures/portableImages";
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
 describe("preview video export", () => {
+  it("enforces the GIF workload boundary before rendering a frame", async () => {
+    const oversized = analyzeGifRecordingWork({
+      duration: 30_000,
+      width: 1_280,
+      height: 720,
+    });
+    const boundary = analyzeGifRecordingWork({
+      duration: oversized.maxDurationMs,
+      width: 1_280,
+      height: 720,
+    });
+    const overBoundary = analyzeGifRecordingWork({
+      duration: oversized.maxDurationMs + 1,
+      width: 1_280,
+      height: 720,
+    });
+
+    expect(boundary.allowed).toBe(true);
+    expect(overBoundary.allowed).toBe(false);
+    expect(overBoundary.reason).toMatch(/safe export limit/i);
+
+    const renderFrame = vi.fn().mockResolvedValue(undefined);
+    const createEncoder = vi.fn();
+    await expect(
+      recordCanvasAsGif({
+        source: { width: 1_280, height: 720 } as HTMLCanvasElement,
+        duration: oversized.maxDurationMs + 1,
+        renderFrame,
+        createEncoder,
+      }),
+    ).rejects.toThrow(/safe export limit/i);
+    expect(renderFrame).not.toHaveBeenCalled();
+    expect(createEncoder).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-progress GIF session without finishing a file", async () => {
+    const controller = new AbortController();
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(16) })),
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: "low",
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(document, "createElement").mockReturnValue({
+      width: 0,
+      height: 0,
+      getContext: () => context,
+    } as unknown as HTMLCanvasElement);
+    const session: GifEncodingSession = {
+      addFrame: vi.fn().mockResolvedValue(undefined),
+      finish: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      cancel: vi.fn(),
+    };
+
+    await expect(
+      recordCanvasAsGif({
+        source: { width: 2, height: 2 } as HTMLCanvasElement,
+        duration: 100,
+        signal: controller.signal,
+        renderFrame: async () => controller.abort(),
+        createEncoder: vi.fn().mockResolvedValue(session),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.addFrame).not.toHaveBeenCalled();
+    expect(session.finish).not.toHaveBeenCalled();
+    expect(session.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("times out WebM finalization and releases every capture track", async () => {
+    vi.useFakeTimers();
+    const originalCaptureStream = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      "captureStream",
+    );
+    const track = { stop: vi.fn() } as unknown as MediaStreamTrack;
+    Object.defineProperty(HTMLCanvasElement.prototype, "captureStream", {
+      configurable: true,
+      value: () => ({ getTracks: () => [track] }) as unknown as MediaStream,
+    });
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: "low",
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      context,
+    );
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    class NeverStopsMediaRecorder extends EventTarget {
+      static isTypeSupported = () => true;
+      state: RecordingState = "inactive";
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+      }
+    }
+    vi.stubGlobal("MediaRecorder", NeverStopsMediaRecorder);
+
+    try {
+      const recording = recordCanvasAsWebm({
+        source: document.createElement("canvas"),
+        duration: 0,
+        stopTimeoutMs: 10,
+        renderFrame: vi.fn().mockResolvedValue(undefined),
+      });
+      const assertion = expect(recording).rejects.toThrow(
+        /did not finish the WebM file in time/i,
+      );
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(track.stop).toHaveBeenCalledOnce();
+    } finally {
+      if (originalCaptureStream)
+        Object.defineProperty(
+          HTMLCanvasElement.prototype,
+          "captureStream",
+          originalCaptureStream,
+        );
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype, "captureStream");
+    }
+  });
+
   it("prefers VP9 and falls back through compatible WebM encoders", () => {
     expect(selectWebmMimeType(() => true)).toBe("video/webm;codecs=vp9");
     expect(

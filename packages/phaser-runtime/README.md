@@ -247,3 +247,10 @@ definition. The export includes only images referenced by a layer, including
 stored choices for disabled visual-mask and spawn-mask features. CPU alpha
 samples are retained for active or stored spawn silhouettes and omitted from
 assets used only as artwork or visual masks.
+
+The supported Phaser peer range is `>=4.2.1 <5`. Install Phaser and this
+package together with ordinary npm peer resolution; `--legacy-peer-deps` is not
+a supported integration path. The release gate qualifies the published floor
+and fails an installation below it. Phaser 4.2.1 is currently both the floor
+and latest stable 4.x release; add a separate current-version matrix cell when
+a later stable 4.x is published.

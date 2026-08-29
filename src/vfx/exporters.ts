@@ -2,7 +2,7 @@ import type { VvfxRuntimeDefinition } from "../../packages/phaser-runtime/src/ty
 import { referencedAssetIds } from "./assetReferences";
 import { tintNumber } from "./color";
 import { resolveProjectGroups } from "./groups";
-import { hasEnabledRenderingEffects } from "./renderingEffects";
+import { hasEnabledRenderingEffects } from "./renderingEffectsModel";
 import { requireCurrentProject } from "./serialization";
 import { spriteFrameSequence } from "./spriteSheet";
 import { isSpawnLayer, type VfxLayer, type VfxProject } from "./types";

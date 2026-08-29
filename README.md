@@ -264,7 +264,7 @@ npm run dev           # start the local editor
 npm run typecheck     # check TypeScript without emitting files
 npm run test          # run Vitest once
 npm run test:watch    # rerun tests while editing
-npm run test:browser  # build and run the Chromium workflow smoke suite
+npm run test:browser  # build and run the Chromium/Firefox workflow suite
 npm run test:runtime-package # install/type-check/execute the packed runtime
 npm run lint          # lint TypeScript and React
 npm run format        # format source, tests, and docs
@@ -273,12 +273,12 @@ npm run build         # create an editor production build
 npm run build:runtime # bundle runtime JavaScript and generate declarations
 npm run build:all     # build both runtime and editor
 npm run verify        # run the local non-browser quality and package gates
-npm run verify:release # run the complete release gate, including Chromium
+npm run verify:release # run the complete release gate, including browser tests
 ```
 
 `npm run test:browser` uses a temporary production server on port 4173 and
-shuts it down afterward. Install its browser once with
-`npx playwright install chromium`. Set `VVFX_BROWSER_BASE_URL` only when you
+shuts it down afterward. Install its browsers once with
+`npx playwright install chromium firefox`. Set `VVFX_BROWSER_BASE_URL` only when you
 deliberately want Playwright to test an already-running server instead.
 
 The runtime declarations under `packages/phaser-runtime/types` are generated

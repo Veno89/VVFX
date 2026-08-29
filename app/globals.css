@@ -7,7 +7,7 @@
   --border-bright: #343c4c;
   --text: #edf0f7;
   --muted: #8e97a9;
-  --faint: #687184;
+  --faint: #a0a9ba;
   --cyan: #63ddf3;
   --cyan-soft: rgba(99, 221, 243, 0.13);
   --mint: #73e7bb;
@@ -35,7 +35,7 @@
 html,
 body {
   margin: 0;
-  min-width: 1120px;
+  min-width: 320px;
   min-height: 720px;
   background: var(--bg);
   color: var(--text);
@@ -50,6 +50,34 @@ body {
     sans-serif;
   font-size: 13px;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  button,
+  input,
+  select,
+  textarea,
+  [role="button"],
+  [role="tab"] {
+    border: 1px solid ButtonText;
+    forced-color-adjust: auto;
+  }
+
+  :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
 }
 button,
 input,
@@ -4755,6 +4783,24 @@ kbd {
 .saved-project-actions button:hover {
   color: var(--cyan);
   background: var(--cyan-soft);
+}
+.saved-project-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 14px 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.saved-project-pagination button {
+  min-width: 74px;
+  height: 30px;
+  padding: 0 10px;
+  color: var(--text);
+  background: #111823;
+  border: 1px solid var(--border-bright);
+  border-radius: 6px;
 }
 .danger-icon:hover {
   color: var(--danger);

@@ -2,7 +2,7 @@
 
 import { Activity, Eye, Palette, Plus, Sparkles, Wand2 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
-import type { RenderingEffectKey } from "../../vfx/renderingEffects";
+import type { RenderingEffectKey } from "../../vfx/renderingEffectsModel";
 import { useFocusRegion } from "../useFocusRegion";
 
 export interface EffectToolbeltClip {

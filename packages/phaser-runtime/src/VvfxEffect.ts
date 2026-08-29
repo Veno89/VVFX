@@ -16,10 +16,13 @@ import { syncNormalizedSourceCrop } from "../../../src/vfx/phaserFrames";
 import {
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
-} from "../../../src/vfx/renderingEffects";
+} from "../../../src/vfx/phaserRenderingEffects";
 import type { BeamEndpoints, VfxProject } from "../../../src/vfx/types";
 import { runtimeDefinitionToProject } from "./definition";
-import { runtimeAssetTextureKey } from "./textures";
+import {
+  assertMappedSpriteSheetTexture,
+  runtimeAssetTextureKey,
+} from "./textures";
 import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
 
 const ownValue = <T>(
@@ -231,6 +234,15 @@ export class VvfxEffect {
     this.assetsById = new Map(
       this.project.assets.map((asset) => [asset.id, asset]),
     );
+    for (const asset of definition.assets) {
+      const mappedTextureKey = ownValue(this.assetKeys, asset.id);
+      if (
+        asset.spriteSheet &&
+        mappedTextureKey &&
+        !mappedTextureKey.startsWith(VVFX_INTERNAL_TEXTURE_PREFIX)
+      )
+        assertMappedSpriteSheetTexture(scene, mappedTextureKey, asset);
+    }
     this.project.assets.forEach((asset) => {
       if (asset.atlasFrame)
         this.defaultAssetFrames.set(asset.id, asset.atlasFrame);

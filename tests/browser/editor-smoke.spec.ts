@@ -6,11 +6,11 @@ const responsiveViewports = [
   { name: "phone", width: 390, height: 844 },
 ] as const;
 
-async function openEditor(page: Page) {
+async function openEditor(page: Page, path = "/") {
   await page.addInitScript(() => {
     window.localStorage.setItem("vvfx-onboarding-complete-v1", "true");
   });
-  await page.goto("/");
+  await page.goto(path);
   await expect(page.locator(".vvfx-app")).toBeVisible();
   await expect(
     page.getByRole("complementary", { name: "Asset library" }),
@@ -19,7 +19,7 @@ async function openEditor(page: Page) {
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open("vvfx-local", 3);
+        const request = indexedDB.open("vvfx-local", 4);
         request.onsuccess = () => {
           request.result.close();
           resolve();
@@ -58,7 +58,7 @@ async function numericMetric(page: Page, testId: string) {
   return Number((await page.getByTestId(testId).textContent())?.trim() ?? NaN);
 }
 
-test("loads the editor, routes focus, and protects unsaved work", async ({
+test("@cross-browser loads the editor, routes focus, and protects unsaved work", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
@@ -210,7 +210,7 @@ test("the template library footer remains reachable at 720px height", async ({
   await expect(dialog).toBeHidden();
 });
 
-test("feature removal starts cleanly and remains reversible", async ({
+test("@cross-browser feature removal starts cleanly and remains reversible", async ({
   page,
 }) => {
   await openEditor(page);
@@ -327,6 +327,49 @@ test("professional workspace settings persist and export preflight follows its t
     "Conservative budget for several effects on modest devices.",
   );
   await expect(preflight).toContainText("Visible content");
+});
+
+test("GIF export completes in its worker and Escape cancels a later export", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  const downloads: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("download", (download) =>
+    downloads.push(download.suggestedFilename()),
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openEditor(page);
+  await addPreset(page, "Magic projectile");
+  await page.getByRole("button", { name: /^Export/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Export effect" });
+  await dialog.getByRole("combobox", { name: "Format" }).selectOption("gif");
+  await dialog
+    .getByRole("combobox", { name: "Size and aspect ratio" })
+    .selectOption("game");
+
+  const firstDownload = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Export & download .gif" }).click();
+  const downloaded = await firstDownload;
+  expect(downloaded.suggestedFilename()).toMatch(/\.gif$/);
+  await expect(dialog.getByRole("status")).toContainText("Downloaded");
+
+  await dialog
+    .getByRole("combobox", { name: "Size and aspect ratio" })
+    .selectOption("hd");
+  await dialog.getByRole("button", { name: "Export & download .gif" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel export" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "Preview export canceled.",
+  );
+  await page.waitForTimeout(300);
+
+  expect(downloads).toHaveLength(1);
+  expect(pageErrors).toEqual([]);
 });
 
 test("effect lanes stay compact and expose per-copy timing controls", async ({
@@ -533,6 +576,50 @@ test("trail and 50× stress toggles return live objects to baseline without heap
     8 * 1024 * 1024,
   );
   expect(pageErrors).toEqual([]);
+});
+
+test("@cross-browser Canvas fallback keeps ordinary sprites and warns once", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const canvasWarnings: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.text().includes("need Phaser WebGL"))
+      canvasWarnings.push(message.text());
+  });
+
+  await openEditor(page, "/?renderer=canvas");
+  await addPreset(page, "Heat shimmer ring");
+  await expect.poll(() => canvasWarnings.length).toBe(1);
+
+  const canvasState = await page
+    .locator(".phaser-mount canvas")
+    .evaluate((canvas) => {
+      const target = canvas as HTMLCanvasElement;
+      const context = target.getContext("2d");
+      if (!context) return null;
+      const pixels = context.getImageData(
+        0,
+        0,
+        target.width,
+        target.height,
+      ).data;
+      let nonTransparentPixels = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0) nonTransparentPixels += 1;
+      }
+      return { nonTransparentPixels };
+    });
+  expect(canvasState?.nonTransparentPixels).toBeGreaterThan(0);
+
+  for (let restart = 0; restart < 3; restart += 1)
+    await page.getByRole("button", { name: "Restart", exact: true }).click();
+  await expect(page.locator(".phaser-mount canvas")).toHaveCount(1);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("experimental effects run in WebGL and repeated restart keeps one canvas", async ({

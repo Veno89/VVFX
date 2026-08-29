@@ -7,6 +7,7 @@ import {
   updateWorkspaceProjectView,
   workspaceProjectView,
 } from "../src/editor/workspace";
+import { createBrowserStorageAccess } from "../src/editor/browserStorage";
 
 describe("professional workspace preferences", () => {
   it("bounds panel geometry and repairs project organization", () => {
@@ -94,5 +95,34 @@ describe("professional workspace preferences", () => {
     expect(
       saveWorkspacePreferences(storage, DEFAULT_WORKSPACE_PREFERENCES),
     ).toBe(false);
+  });
+
+  it("contains getter and method failures behind one total storage adapter", () => {
+    const getterBlocked = createBrowserStorageAccess(() => {
+      throw new Error("blocked getter");
+    });
+    expect(getterBlocked.getItem("key")).toBeNull();
+    expect(getterBlocked.setItem("key", "value")).toBe(false);
+    expect(getterBlocked.removeItem("key")).toBe(false);
+    expect(getterBlocked.available).toBe(false);
+
+    const methodsBlocked = createBrowserStorageAccess(
+      () =>
+        ({
+          getItem: () => {
+            throw new Error("blocked getItem");
+          },
+          setItem: () => {
+            throw new Error("blocked setItem");
+          },
+          removeItem: () => {
+            throw new Error("blocked removeItem");
+          },
+        }) as unknown as Storage,
+    );
+    expect(methodsBlocked.getItem("key")).toBeNull();
+    expect(methodsBlocked.setItem("key", "value")).toBe(false);
+    expect(methodsBlocked.removeItem("key")).toBe(false);
+    expect(methodsBlocked.available).toBe(false);
   });
 });

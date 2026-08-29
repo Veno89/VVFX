@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "currentPair": "project-18-runtime-16",
+  "rollbackPair": "project-17-runtime-15",
+  "policy": {
+    "destructiveDowngradeAllowed": false,
+    "runtimeJsonAndPackageAreAtomic": true,
+    "newerBrowserRecordsDuringRollback": "preserve-unmodified",
+    "recoveryRoute": "redeploy-current-pair-and-export"
+  },
+  "pairs": [
+    {
+      "id": "project-17-runtime-15",
+      "editorRevision": "582ee6eaf92f93aa50ec5c207cba94feee8a3ed4",
+      "projectFormat": 17,
+      "templateFormat": 2,
+      "templateProjectFormat": 17,
+      "runtimeFormat": 15,
+      "runtimePackage": {
+        "version": "0.15.0",
+        "path": "artifacts/runtime/vvfx-phaser-runtime-0.15.0.tgz",
+        "bytes": 188174,
+        "sha256": "26d670844674e0b67b255b0fcb12702323131a9e5b3e928ab3c82b9ec6c35397"
+      }
+    },
+    {
+      "id": "project-18-runtime-16",
+      "editorRevision": "2283b70d8142835df0a037d37c0db244d20aa0f7",
+      "projectFormat": 18,
+      "templateFormat": 2,
+      "templateProjectFormat": 18,
+      "runtimeFormat": 16,
+      "runtimePackage": {
+        "version": "0.16.0",
+        "path": "artifacts/runtime/vvfx-phaser-runtime-0.16.0.tgz",
+        "bytes": 203182,
+        "sha256": "1d406db82f2cfaae994f3944584652d209ca42b2fde63c0a895460e4a52ff6f8"
+      }
+    }
+  ]
+}

@@ -30,6 +30,14 @@ export interface WorkspacePreferences {
   projects: Record<string, ProjectWorkspaceView>;
 }
 
+interface WorkspaceStorageReader {
+  getItem(key: string): string | null;
+}
+
+interface WorkspaceStorageWriter {
+  setItem(key: string, value: string): boolean | void;
+}
+
 export const DEFAULT_PROJECT_WORKSPACE_VIEW: ProjectWorkspaceView = {
   timelineZoom: 1,
   workStart: 0,
@@ -173,7 +181,7 @@ export function updateWorkspaceProjectView(
 }
 
 export function loadWorkspacePreferences(
-  storage: Pick<Storage, "getItem">,
+  storage: WorkspaceStorageReader,
 ): WorkspacePreferences {
   try {
     const stored = storage.getItem(WORKSPACE_STORAGE_KEY);
@@ -186,15 +194,15 @@ export function loadWorkspacePreferences(
 }
 
 export function saveWorkspacePreferences(
-  storage: Pick<Storage, "setItem">,
+  storage: WorkspaceStorageWriter,
   workspace: WorkspacePreferences,
 ): boolean {
   try {
-    storage.setItem(
+    const stored = storage.setItem(
       WORKSPACE_STORAGE_KEY,
       JSON.stringify(normalizeWorkspacePreferences(workspace)),
     );
-    return true;
+    return stored !== false;
   } catch {
     return false;
   }

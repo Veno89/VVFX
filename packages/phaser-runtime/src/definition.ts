@@ -20,7 +20,7 @@ import {
 } from "../../../src/vfx/inputLimits";
 import { MAX_KEYFRAMES } from "../../../src/vfx/keyframes";
 import { inspectPortableImageDataUrl } from "../../../src/vfx/portableImage";
-import { MAX_RENDERING_EFFECT_CLIPS } from "../../../src/vfx/renderingEffects";
+import { MAX_RENDERING_EFFECT_CLIPS } from "../../../src/vfx/renderingEffectsModel";
 import { validateProject } from "../../../src/vfx/serialization";
 import { MAX_SPRITE_SHEET_FRAMES } from "../../../src/vfx/spriteSheet";
 import type { VfxAsset, VfxProject } from "../../../src/vfx/types";

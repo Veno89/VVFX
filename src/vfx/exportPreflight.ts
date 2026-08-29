@@ -2,7 +2,7 @@ import { referencedAssetIds } from "./assetReferences";
 import { analyzeRuntimeExportCapabilities } from "./exporters";
 import { analyzeProjectPerformance } from "./performance";
 import { inspectPortableImageDataUrl } from "./portableImage";
-import { hasEnabledRenderingEffects } from "./renderingEffects";
+import { hasEnabledRenderingEffects } from "./renderingEffectsModel";
 import type { VfxProject } from "./types";
 
 export type ExportPreflightProfileId = "mobile" | "balanced" | "showcase";

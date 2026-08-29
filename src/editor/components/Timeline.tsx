@@ -19,7 +19,7 @@ import {
   snapTimelineTime,
   type TimelineSnapMode,
 } from "../../vfx/timelineTiming";
-import type { RenderingEffectClip } from "../../vfx/renderingEffects";
+import type { RenderingEffectClip } from "../../vfx/renderingEffectsModel";
 import type {
   TimelineAuthoringSettings,
   TimelineMarker,

@@ -2,26 +2,32 @@
 
 import { CopyPlus, FolderOpen, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
-import type { VfxProject } from "../../vfx/types";
+import type { StoredProjectSummary } from "../../persistence/projectSummaries";
 import { useFocusRegion } from "../useFocusRegion";
 
 export function ProjectsDialog({
   projects,
+  page = 0,
+  totalPages = 1,
   invalidSavedCount = 0,
   excessSavedCount = 0,
   onLoad,
   onDuplicate,
   onDelete,
   onRemoveInvalidSaved,
+  onPageChange,
   onClose,
 }: {
-  projects: VfxProject[];
+  projects: StoredProjectSummary[];
+  page?: number;
+  totalPages?: number;
   invalidSavedCount?: number;
   excessSavedCount?: number;
-  onLoad: (project: VfxProject) => void;
-  onDuplicate: (project: VfxProject) => Promise<void>;
+  onLoad: (project: StoredProjectSummary) => Promise<void>;
+  onDuplicate: (project: StoredProjectSummary) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRemoveInvalidSaved?: () => Promise<void>;
+  onPageChange?: (page: number) => Promise<void>;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -150,22 +156,25 @@ export function ProjectsDialog({
         ) : (
           <div className="saved-project-list">
             {projects.map((project) => (
-              <article key={project.metadata.id}>
+              <article key={String(project.key)}>
                 <button
                   className="saved-project-main"
                   type="button"
                   disabled={busy}
-                  onClick={() => onLoad(project)}
+                  onClick={() =>
+                    void runBusy(
+                      () => onLoad(project),
+                      "The saved project could not be loaded.",
+                    )
+                  }
                 >
-                  <strong>{project.metadata.name}</strong>
+                  <strong>{project.name}</strong>
                   <span>
-                    {project.layers.length} layers ·{" "}
-                    {project.assets.filter((asset) => !asset.builtIn).length}{" "}
+                    {project.layerCount} layers · {project.uploadedAssetCount}{" "}
                     uploaded images
                   </span>
                   <small>
-                    Saved{" "}
-                    {new Date(project.metadata.updatedAt).toLocaleString()}
+                    Saved {new Date(project.updatedAt).toLocaleString()}
                     {" · Click to open"}
                   </small>
                 </button>
@@ -179,7 +188,7 @@ export function ProjectsDialog({
                         "The project could not be duplicated.",
                       )
                     }
-                    aria-label={`Duplicate ${project.metadata.name}`}
+                    aria-label={`Duplicate ${project.name}`}
                     title="Duplicate project"
                   >
                     <CopyPlus size={15} />
@@ -190,11 +199,18 @@ export function ProjectsDialog({
                     disabled={busy}
                     onClick={() =>
                       void runBusy(
-                        () => onDelete(project.metadata.id),
+                        () =>
+                          project.id
+                            ? onDelete(project.id)
+                            : Promise.reject(
+                                new Error(
+                                  "This project summary has no identifier.",
+                                ),
+                              ),
                         "The saved project could not be removed.",
                       )
                     }
-                    aria-label={`Delete ${project.metadata.name}`}
+                    aria-label={`Delete ${project.name}`}
                     title="Remove browser save"
                   >
                     <Trash2 size={15} />
@@ -203,6 +219,37 @@ export function ProjectsDialog({
               </article>
             ))}
           </div>
+        )}
+        {totalPages > 1 && (
+          <nav className="saved-project-pagination" aria-label="Saved projects">
+            <button
+              type="button"
+              disabled={busy || page <= 0}
+              onClick={() =>
+                void runBusy(
+                  () => onPageChange?.(page - 1) ?? Promise.resolve(),
+                  "The previous project page could not be opened.",
+                )
+              }
+            >
+              Previous
+            </button>
+            <span>
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={busy || page >= totalPages - 1}
+              onClick={() =>
+                void runBusy(
+                  () => onPageChange?.(page + 1) ?? Promise.resolve(),
+                  "The next project page could not be opened.",
+                )
+              }
+            >
+              Next
+            </button>
+          </nav>
         )}
         <footer>
           <p>

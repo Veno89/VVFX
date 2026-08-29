@@ -34,11 +34,17 @@ const projectPersistence = vi.hoisted(() => ({
   deleteInvalidRecoveryDraft: vi.fn().mockResolvedValue(undefined),
   deleteProject: vi.fn().mockResolvedValue(undefined),
   inspectStoredProjects: vi.fn().mockResolvedValue({
-    projects: [],
+    summaries: [],
     invalidRecords: [],
     totalRecords: 0,
     excessRecords: 0,
+    aggregateBytes: 0,
+    page: 0,
+    pageSize: 20,
+    totalPages: 1,
+    totalValidRecords: 0,
   }),
+  loadProject: vi.fn(),
   loadRecoveryDraft: vi.fn().mockResolvedValue(null),
   saveRecoveryDraft: vi.fn().mockResolvedValue(undefined),
   saveProject: vi.fn(async (project: unknown) => project),
@@ -133,10 +139,15 @@ beforeEach(() => {
   projectPersistence.clearRecoveryDraft.mockClear();
   projectPersistence.inspectStoredProjects.mockReset();
   projectPersistence.inspectStoredProjects.mockResolvedValue({
-    projects: [],
+    summaries: [],
     invalidRecords: [],
     totalRecords: 0,
     excessRecords: 0,
+    aggregateBytes: 0,
+    page: 0,
+    pageSize: 20,
+    totalPages: 1,
+    totalValidRecords: 0,
   });
   projectPersistence.loadRecoveryDraft.mockReset();
   projectPersistence.loadRecoveryDraft.mockResolvedValue(null);

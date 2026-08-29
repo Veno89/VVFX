@@ -10,6 +10,9 @@ export const MAX_TIMELINE_MARKERS = 100;
 export const MAX_ATTACHMENT_DEPTH = 32;
 export const MAX_MOTION_PATH_POINTS = 6;
 export const MAX_SAVED_PROJECTS = 100;
+// Bound all named browser saves together. This keeps the library well below
+// common origin quotas while still allowing 100 ordinary projects.
+export const MAX_SAVED_PROJECT_LIBRARY_BYTES = 160 * 1024 * 1024;
 export const MAX_SAVED_TEMPLATES = 100;
 export const MAX_UPLOAD_FILES = 16;
 export const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024;

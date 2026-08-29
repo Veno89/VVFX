@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { VfxEditor } from "@/src/editor/VfxEditor";
+import { VfxEditor } from "../src/editor/VfxEditor";
 
 export const metadata: Metadata = {
   title: "Vvfx — 2D VFX Playground",

@@ -7,6 +7,16 @@ export interface RuntimeAssetLease {
 }
 /** Stable private key shared by preload, playback, and direct effect setup. */
 export declare function runtimeAssetTextureKey(asset: VvfxRuntimeAsset): string;
+/**
+ * Mapped textures belong to the host game. Vvfx must only inspect them: adding
+ * or replacing frames would change shared Phaser state for unrelated scenes
+ * and effects.
+ */
+export declare function assertMappedSpriteSheetTexture(
+  scene: Phaser.Scene,
+  textureKey: string,
+  asset: VvfxRuntimeAsset,
+): void;
 export declare function createBuiltInTexture(
   scene: Phaser.Scene,
   key: string,

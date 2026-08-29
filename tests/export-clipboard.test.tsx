@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ExportDialog } from "../src/editor/components/ExportDialog";
+import type { PreviewRecordingRequest } from "../src/editor/previewRecording";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 
 interface Deferred<T> {
@@ -85,6 +86,80 @@ afterEach(() => {
 });
 
 describe("ExportDialog clipboard and WebM capability state", () => {
+  it("lets Escape cancel an active preview export without closing the dialog", async () => {
+    const onClose = vi.fn();
+    const onRecordPreview = vi.fn(
+      (request: PreviewRecordingRequest) =>
+        new Promise<never>((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("canceled");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true },
+          );
+        }),
+    );
+    render(
+      <ExportDialog
+        project={projectWithLayer()}
+        activeDuration={800}
+        onRecordPreview={onRecordPreview}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "gif" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Export & download .gif" }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Cancel export" }),
+    ).toBeVisible();
+    expect(onRecordPreview).toHaveBeenCalledOnce();
+    const activeSignal = onRecordPreview.mock.calls[0][0].signal;
+    expect(activeSignal.aborted).toBe(false);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Preview export canceled.",
+    );
+    expect(activeSignal.aborted).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("blocks an oversized GIF preset before starting export", () => {
+    const onRecordPreview = vi.fn();
+    render(
+      <ExportDialog
+        project={projectWithLayer()}
+        activeDuration={9_001}
+        onRecordPreview={onRecordPreview}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "gif" },
+    });
+    fireEvent.change(screen.getByLabelText("Size and aspect ratio"), {
+      target: { value: "hd" },
+    });
+
+    expect(screen.getByText(/above the safe export limit/i)).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    expect(
+      screen.getByRole("button", { name: "Export & download .gif" }),
+    ).toBeDisabled();
+    expect(onRecordPreview).not.toHaveBeenCalled();
+  });
+
   it("scopes successful copy feedback to the copied export tab", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     mockClipboard(writeText);

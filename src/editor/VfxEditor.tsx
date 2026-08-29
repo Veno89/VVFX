@@ -26,12 +26,17 @@ import {
   deleteProject,
   inspectStoredProjects,
   InvalidRecoveryDraftError,
+  loadProject,
   loadRecoveryDraft,
   saveRecoveryDraft,
   saveProject,
   type InvalidStoredProjectRecord,
   type RecoveryDraft,
 } from "../persistence/projects";
+import {
+  createCurrentProjectSummary,
+  type StoredProjectSummary,
+} from "../persistence/projectSummaries";
 import {
   deleteInvalidTemplateRecord,
   deleteTemplate,
@@ -51,7 +56,7 @@ import {
   DEFAULT_RENDERING_EFFECTS,
   normalizeRenderingEffectClips,
   type RenderingEffectKey,
-} from "../vfx/renderingEffects";
+} from "../vfx/renderingEffectsModel";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../vfx/presets";
 import {
   analyzeAssetUsage,
@@ -143,6 +148,7 @@ import {
 } from "./components/TemplateLibraryDialog";
 import { TopBar, type ProjectSaveStatus } from "./components/TopBar";
 import { downloadText } from "./download";
+import { createBrowserStorageAccess } from "./browserStorage";
 import { verifyEmbeddedAssetImages } from "./embeddedImageValidation";
 import { layerTypeLabel } from "./guidance";
 import {
@@ -166,17 +172,15 @@ import {
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const upsertSavedProject = (
-  projects: VfxProject[],
+  projects: StoredProjectSummary[],
   project: VfxProject,
-): VfxProject[] =>
-  [
-    project,
-    ...projects.filter(
-      (candidate) => candidate.metadata.id !== project.metadata.id,
-    ),
-  ].sort((left, right) =>
-    right.metadata.updatedAt.localeCompare(left.metadata.updatedAt),
-  );
+): StoredProjectSummary[] => {
+  const summary = createCurrentProjectSummary(project);
+  return [
+    summary,
+    ...projects.filter((candidate) => candidate.id !== project.metadata.id),
+  ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+};
 
 const upsertSavedTemplate = (
   templates: VfxTemplate[],
@@ -305,7 +309,11 @@ export function VfxEditor() {
   const [learningOpen, setLearningOpen] = useState(false);
   const [guideStep, setGuideStep] = useState<number | null>(null);
   const [guideActionStep, setGuideActionStep] = useState<number | null>(null);
-  const [savedProjects, setSavedProjects] = useState<VfxProject[]>([]);
+  const [savedProjects, setSavedProjects] = useState<StoredProjectSummary[]>(
+    [],
+  );
+  const [savedProjectPage, setSavedProjectPage] = useState(0);
+  const [savedProjectTotalPages, setSavedProjectTotalPages] = useState(1);
   const [savedTemplates, setSavedTemplates] = useState<VfxTemplate[]>([]);
   const [invalidStoredProjects, setInvalidStoredProjects] = useState<
     InvalidStoredProjectRecord[]
@@ -333,6 +341,10 @@ export function VfxEditor() {
   const projectImportRequest = useRef(0);
   const projectImageValidation = useRef<AbortController | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [previewCanvasSize, setPreviewCanvasSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const guideContinueRef = useRef<HTMLButtonElement>(null);
   const [toast, setToast] = useState<EditorNotice | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -340,6 +352,9 @@ export function VfxEditor() {
     useState<CopyableLayerSettings | null>(null);
   const [workspace, setWorkspace] = useState(DEFAULT_WORKSPACE_PREFERENCES);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [browserStorageBlocked, setBrowserStorageBlocked] = useState(false);
+  const browserStorage = useMemo(() => createBrowserStorageAccess(), []);
+  const browserStorageNoticeShownRef = useRef(false);
   const recoveryAutosaveQueue = useMemo(
     () => createLatestOnlyAsyncQueue<() => Promise<void>>((task) => task()),
     [],
@@ -357,15 +372,20 @@ export function VfxEditor() {
   }, [recoveryAutosaveQueue]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setWorkspace(loadWorkspacePreferences(window.localStorage));
+      setWorkspace(loadWorkspacePreferences(browserStorage));
+      if (!browserStorage.available) setBrowserStorageBlocked(true);
       setWorkspaceLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [browserStorage]);
   useEffect(() => {
-    if (workspaceLoaded)
-      saveWorkspacePreferences(window.localStorage, workspace);
-  }, [workspace, workspaceLoaded]);
+    if (!workspaceLoaded) return;
+    const timer = window.setTimeout(() => {
+      if (!saveWorkspacePreferences(browserStorage, workspace))
+        setBrowserStorageBlocked(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [browserStorage, workspace, workspaceLoaded]);
   const selectedGroup =
     project.groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedLayer = selectedGroup
@@ -573,12 +593,22 @@ export function VfxEditor() {
       tone === "error" || tone === "warning" ? 4200 : 2600,
     );
   }, []);
-  const refreshStoredProjects = useCallback(async () => {
-    const inspection = await inspectStoredProjects();
-    setSavedProjects(inspection.projects);
+  useEffect(() => {
+    if (!browserStorageBlocked || browserStorageNoticeShownRef.current) return;
+    browserStorageNoticeShownRef.current = true;
+    notify(
+      "Browser preferences are unavailable. Editing still works, but workspace and tour choices will not persist after reload.",
+      "warning",
+    );
+  }, [browserStorageBlocked, notify]);
+  const refreshStoredProjects = useCallback(async (page = 0) => {
+    const inspection = await inspectStoredProjects({ page });
+    setSavedProjects(inspection.summaries);
+    setSavedProjectPage(inspection.page);
+    setSavedProjectTotalPages(inspection.totalPages);
     setInvalidStoredProjects(inspection.invalidRecords);
     setExcessStoredProjects(inspection.excessRecords);
-    return inspection.projects;
+    return inspection.summaries;
   }, []);
   const refreshStoredTemplates = useCallback(async () => {
     const inspection = await inspectStoredTemplates();
@@ -593,6 +623,8 @@ export function VfxEditor() {
     projectImageValidation.current = null;
     setProjectsOpen(false);
     setSavedProjects([]);
+    setSavedProjectPage(0);
+    setSavedProjectTotalPages(1);
     setInvalidStoredProjects([]);
     setExcessStoredProjects(0);
   }, []);
@@ -608,6 +640,15 @@ export function VfxEditor() {
   const handlePreviewCanvasReady = useCallback(
     (canvas: HTMLCanvasElement | null) => {
       previewCanvasRef.current = canvas;
+      setPreviewCanvasSize((current) => {
+        const next = canvas
+          ? { width: canvas.width, height: canvas.height }
+          : null;
+        return current?.width === next?.width &&
+          current?.height === next?.height
+          ? current
+          : next;
+      });
     },
     [],
   );
@@ -648,12 +689,13 @@ export function VfxEditor() {
   useEffect(() => {
     if (!recoveryChecked || recoveryDraft) return;
     const timer = window.setTimeout(() => {
-      if (!window.localStorage.getItem("vvfx-onboarding-complete-v1")) {
+      if (!browserStorage.getItem("vvfx-onboarding-complete-v1")) {
+        if (!browserStorage.available) setBrowserStorageBlocked(true);
         setOnboardingStep(0);
       }
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [recoveryChecked, recoveryDraft]);
+  }, [browserStorage, recoveryChecked, recoveryDraft]);
 
   useEffect(() => {
     if (
@@ -732,9 +774,10 @@ export function VfxEditor() {
   }, [hasUnsavedChanges]);
 
   const finishOnboarding = useCallback(() => {
-    window.localStorage.setItem("vvfx-onboarding-complete-v1", "true");
+    if (!browserStorage.setItem("vvfx-onboarding-complete-v1", "true"))
+      setBrowserStorageBlocked(true);
     setOnboardingStep(null);
-  }, []);
+  }, [browserStorage]);
 
   useEffect(() => {
     if (!playing) return;
@@ -789,14 +832,15 @@ export function VfxEditor() {
       playbackClock.set(playbackStart);
       setExportingPreview(true);
       try {
-        await waitForAnimationFrames(2);
+        await waitForAnimationFrames(2, request.signal);
         const recordingOptions = {
           source: canvas,
           duration: playbackEnd - playbackStart,
           size: request.size,
+          signal: request.signal,
           renderFrame: async (frameTime: number) => {
             playbackClock.set(playbackStart + frameTime);
-            await waitForAnimationFrames(2);
+            await waitForAnimationFrames(2, request.signal);
           },
           onProgress,
         };
@@ -1583,7 +1627,6 @@ export function VfxEditor() {
         setSavedProjects((current) =>
           upsertSavedProject(current, storedProject),
         );
-
       let recoveryCleanupFailed = false;
       if (
         recoveryStorageCheckedRef.current &&
@@ -2765,6 +2808,7 @@ export function VfxEditor() {
         <ExportDialog
           project={project}
           activeDuration={playbackEnd - playbackStart}
+          currentPreviewSize={previewCanvasSize}
           onRecordPreview={recordPreview}
           onClose={() => setExportOpen(false)}
         />
@@ -2772,51 +2816,51 @@ export function VfxEditor() {
       {projectsOpen && (
         <ProjectsDialog
           projects={savedProjects}
+          page={savedProjectPage}
+          totalPages={savedProjectTotalPages}
           invalidSavedCount={
             invalidStoredProjects.length + (recoveryStorageBlocked ? 1 : 0)
           }
           excessSavedCount={excessStoredProjects}
           onClose={closeProjectLibrary}
-          onLoad={(next) => {
+          onPageChange={async (page) => {
+            await refreshStoredProjects(page);
+          }}
+          onLoad={async (summary) => {
+            if (!summary.id)
+              throw new Error("This project summary has no identifier.");
             if (!confirmProjectReplacement("Loading another project")) return;
             const request = ++projectImportRequest.current;
             const sourceProjectGeneration = projectGeneration.current;
             projectImageValidation.current?.abort();
             const controller = new AbortController();
             projectImageValidation.current = controller;
-            void verifyEmbeddedAssetImages(next.assets, controller.signal)
-              .then(() => {
-                if (
-                  request !== projectImportRequest.current ||
-                  sourceProjectGeneration !== projectGeneration.current
-                )
-                  return;
-                activateProject(next, true);
-                closeProjectLibrary();
-                notify("Saved project loaded.", "success");
-              })
-              .catch((error: unknown) => {
-                if (
-                  request === projectImportRequest.current &&
-                  sourceProjectGeneration === projectGeneration.current &&
-                  !isAbortError(error)
-                )
-                  notify(
-                    error instanceof Error
-                      ? error.message
-                      : "This project's images could not be checked.",
-                    "error",
-                  );
-              })
-              .finally(() => {
-                if (projectImageValidation.current === controller)
-                  projectImageValidation.current = null;
-              });
+            try {
+              const next = await loadProject(summary.id);
+              await verifyEmbeddedAssetImages(next.assets, controller.signal);
+              if (
+                request !== projectImportRequest.current ||
+                sourceProjectGeneration !== projectGeneration.current
+              )
+                return;
+              activateProject(next, true);
+              closeProjectLibrary();
+              notify("Saved project loaded.", "success");
+            } catch (error) {
+              if (isAbortError(error)) return;
+              throw error;
+            } finally {
+              if (projectImageValidation.current === controller)
+                projectImageValidation.current = null;
+            }
           }}
-          onDuplicate={async (source) => {
+          onDuplicate={async (summary) => {
+            if (!summary.id)
+              throw new Error("This project summary has no identifier.");
             projectImportRequest.current += 1;
             projectImageValidation.current?.abort();
             projectImageValidation.current = null;
+            const source = await loadProject(summary.id);
             const copy = copyProject(source);
             let storedCopy: VfxProject;
             try {
@@ -2828,7 +2872,7 @@ export function VfxEditor() {
               upsertSavedProject(current, storedCopy),
             );
             try {
-              await refreshStoredProjects();
+              await refreshStoredProjects(savedProjectPage);
               notify(`Duplicated “${source.metadata.name}”.`, "success");
             } catch {
               notify(
@@ -2842,12 +2886,12 @@ export function VfxEditor() {
             projectImageValidation.current?.abort();
             projectImageValidation.current = null;
             const target = savedProjects.find(
-              (candidate) => candidate.metadata.id === id,
+              (candidate) => candidate.id === id,
             );
             if (
               !target ||
               !window.confirm(
-                `Delete “${target.metadata.name}” from this browser? This cannot be undone.`,
+                `Delete “${target.name}” from this browser? This cannot be undone.`,
               )
             )
               return;
@@ -2857,16 +2901,16 @@ export function VfxEditor() {
               throw new Error("The saved project could not be removed.");
             }
             setSavedProjects((current) =>
-              current.filter((candidate) => candidate.metadata.id !== id),
+              current.filter((candidate) => candidate.id !== id),
             );
             setExcessStoredProjects((current) => Math.max(0, current - 1));
             if (id === project.metadata.id) setSavedFingerprint(null);
             try {
-              await refreshStoredProjects();
-              notify(`Deleted “${target.metadata.name}”.`, "success");
+              await refreshStoredProjects(savedProjectPage);
+              notify(`Deleted “${target.name}”.`, "success");
             } catch {
               notify(
-                `Deleted “${target.metadata.name}”, but the saved-project list could not be refreshed yet.`,
+                `Deleted “${target.name}”, but the saved-project list could not be refreshed yet.`,
                 "warning",
               );
             }

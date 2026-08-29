@@ -26,6 +26,7 @@ import {
   SaveAsDialog,
 } from "../src/editor/components/ProjectSafetyDialogs";
 import { ProjectsDialog } from "../src/editor/components/ProjectsDialog";
+import { createCurrentProjectSummary } from "../src/persistence/projectSummaries";
 import { TemplateLibraryDialog } from "../src/editor/components/TemplateLibraryDialog";
 import { TopBar } from "../src/editor/components/TopBar";
 import {
@@ -1384,10 +1385,11 @@ describe("beginner-friendly controls", () => {
   it("duplicates a named save from the project list", () => {
     const onDuplicate = vi.fn();
     const project = createEmptyProject("Poison ooze");
+    const summary = createCurrentProjectSummary(project);
     render(
       <ProjectsDialog
-        projects={[project]}
-        onLoad={vi.fn()}
+        projects={[summary]}
+        onLoad={vi.fn().mockResolvedValue(undefined)}
         onDuplicate={onDuplicate}
         onDelete={vi.fn()}
         onClose={vi.fn()}
@@ -1396,7 +1398,7 @@ describe("beginner-friendly controls", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Duplicate Poison ooze" }),
     );
-    expect(onDuplicate).toHaveBeenCalledWith(project);
+    expect(onDuplicate).toHaveBeenCalledWith(summary);
   });
 
   it("saves and inserts effects through the local template library", async () => {

@@ -10,6 +10,7 @@ import {
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectsDialog } from "../src/editor/components/ProjectsDialog";
+import { createCurrentProjectSummary } from "../src/persistence/projectSummaries";
 import { createEmptyProject } from "../src/vfx/defaults";
 
 interface Deferred<T> {
@@ -32,10 +33,11 @@ function renderProjectsDialog(
   overrides: Partial<ComponentProps<typeof ProjectsDialog>> = {},
 ) {
   const project = createEmptyProject("Saved lightning");
+  const summary = createCurrentProjectSummary(project);
   const props: ComponentProps<typeof ProjectsDialog> = {
-    projects: [project],
+    projects: [summary],
     invalidSavedCount: 1,
-    onLoad: vi.fn(),
+    onLoad: vi.fn().mockResolvedValue(undefined),
     onDuplicate: vi.fn().mockResolvedValue(undefined),
     onDelete: vi.fn().mockResolvedValue(undefined),
     onRemoveInvalidSaved: vi.fn().mockResolvedValue(undefined),
@@ -43,7 +45,7 @@ function renderProjectsDialog(
     ...overrides,
   };
   render(<ProjectsDialog {...props} />);
-  return { project, props };
+  return { project, summary, props };
 }
 
 function expectDialogActionsDisabled() {
@@ -68,7 +70,7 @@ describe("ProjectsDialog async mutation locking", () => {
     const onDelete = vi.fn().mockResolvedValue(undefined);
     const onRemoveInvalidSaved = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
-    const { project } = renderProjectsDialog({
+    const { summary } = renderProjectsDialog({
       onDuplicate,
       onLoad,
       onDelete,
@@ -83,7 +85,7 @@ describe("ProjectsDialog async mutation locking", () => {
     fireEvent.click(duplicate);
 
     expect(onDuplicate).toHaveBeenCalledOnce();
-    expect(onDuplicate).toHaveBeenCalledWith(project);
+    expect(onDuplicate).toHaveBeenCalledWith(summary);
     expectDialogActionsDisabled();
 
     const dialog = screen.getByRole("dialog", {

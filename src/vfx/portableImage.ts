@@ -18,8 +18,35 @@ export type PortableImageInspection =
 
 const BASE64_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const CANONICAL_BASE64 =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function isBase64AlphabetCode(code: number): boolean {
+  return (
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code === 43 ||
+    code === 47
+  );
+}
+
+/**
+ * Validates canonical Base64 with a bounded-stack linear scan. Avoid expressing
+ * the repeated four-character groups as one anchored regular expression: some
+ * JavaScript engines recurse while backtracking over near-limit malformed
+ * inputs and can exhaust the call stack before returning false.
+ */
+function isCanonicalBase64Shape(encoded: string): boolean {
+  if (encoded.length === 0 || encoded.length % 4 !== 0) return false;
+  let dataLength = encoded.length;
+  if (encoded.endsWith("==")) dataLength -= 2;
+  else if (encoded.endsWith("=")) dataLength -= 1;
+  if (dataLength % 4 === 1) return false;
+  for (let index = 0; index < dataLength; index += 1)
+    if (!isBase64AlphabetCode(encoded.charCodeAt(index))) return false;
+  for (let index = dataLength; index < encoded.length; index += 1)
+    if (encoded.charCodeAt(index) !== 61) return false;
+  return true;
+}
 
 function decodedBase64Length(encoded: string): number {
   const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
@@ -405,7 +432,7 @@ export function inspectPortableImageDataUrl(
     encoded.length === 0 ||
     encoded.length > maximumEncodedLength ||
     encoded.length % 4 !== 0 ||
-    !CANONICAL_BASE64.test(encoded)
+    !isCanonicalBase64Shape(encoded)
   )
     return {
       ok: false,

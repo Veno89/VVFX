@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VfxEditor } from "../src/editor/VfxEditor";
+import { createCurrentProjectSummary } from "../src/persistence/projectSummaries";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 import {
   createTemplateFromProject,
@@ -28,6 +29,7 @@ const projectPersistence = vi.hoisted(() => ({
   deleteInvalidRecoveryDraft: vi.fn(),
   deleteProject: vi.fn(),
   inspectStoredProjects: vi.fn(),
+  loadProject: vi.fn(),
   loadRecoveryDraft: vi.fn(),
   saveRecoveryDraft: vi.fn(),
   saveProject: vi.fn(),
@@ -53,10 +55,15 @@ vi.mock("../src/preview/PhaserPreview", () => ({
 }));
 
 const projectInspection = (projects: VfxProject[]) => ({
-  projects,
+  summaries: projects.map((project) => createCurrentProjectSummary(project)),
   invalidRecords: [],
   totalRecords: projects.length,
   excessRecords: 0,
+  aggregateBytes: 0,
+  page: 0,
+  pageSize: 20,
+  totalPages: 1,
+  totalValidRecords: projects.length,
 });
 
 const templateInspection = (
@@ -127,6 +134,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue(projectInspection([]));
   projectPersistence.loadRecoveryDraft.mockReset().mockResolvedValue(null);
+  projectPersistence.loadProject.mockReset();
   projectPersistence.saveRecoveryDraft.mockReset().mockResolvedValue(undefined);
   projectPersistence.saveProject
     .mockReset()
@@ -366,6 +374,7 @@ describe("truthful durable mutation feedback", () => {
 
   it("keeps project duplicates and deletes visible when their refresh fails", async () => {
     const source = projectWithLayer("Stored lightning");
+    projectPersistence.loadProject.mockResolvedValue(source);
     projectPersistence.inspectStoredProjects
       .mockResolvedValueOnce(projectInspection([source]))
       .mockRejectedValue(new Error("Project index unavailable."));

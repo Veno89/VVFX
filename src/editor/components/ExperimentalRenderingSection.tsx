@@ -7,7 +7,7 @@ import {
   type DissolvePattern,
   type RenderingEffectsSettings,
   type SpriteWarpMode,
-} from "../../vfx/renderingEffects";
+} from "../../vfx/renderingEffectsModel";
 import type { VfxAsset } from "../../vfx/types";
 import {
   HelpTip,

@@ -12,7 +12,7 @@ import {
   utf8ByteLength,
 } from "./inputLimits";
 import { inspectPortableImageDataUrl } from "./portableImage";
-import { reconcileRenderingEffectClips } from "./renderingEffects";
+import { reconcileRenderingEffectClips } from "./renderingEffectsModel";
 import type { VfxAsset, VfxGroup, VfxLayer, VfxProject } from "./types";
 
 export const TEMPLATE_FORMAT_VERSION = 2 as const;

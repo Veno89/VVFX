@@ -135,8 +135,25 @@ function createFakeScene(initialTextureKeys: string[] = []) {
           string,
           unknown
         >,
-        add(name: number | string) {
-          this.frames[String(name)] = { name, textureKey: key };
+        add(
+          name: number | string,
+          sourceIndex?: number,
+          cutX?: number,
+          cutY?: number,
+          cutWidth?: number,
+          cutHeight?: number,
+        ) {
+          this.frames[String(name)] = {
+            name,
+            textureKey: key,
+            sourceIndex,
+            cutX,
+            cutY,
+            cutWidth,
+            cutHeight,
+            realWidth: cutWidth,
+            realHeight: cutHeight,
+          };
         },
         remove(name: string) {
           delete this.frames[name];
@@ -156,8 +173,25 @@ function createFakeScene(initialTextureKeys: string[] = []) {
     if (!textures.has(key))
       textures.set(key, {
         frames: { __BASE: { name: "__BASE", textureKey: key } },
-        add(name: number | string) {
-          this.frames[String(name)] = { name, textureKey: key };
+        add(
+          name: number | string,
+          sourceIndex?: number,
+          cutX?: number,
+          cutY?: number,
+          cutWidth?: number,
+          cutHeight?: number,
+        ) {
+          this.frames[String(name)] = {
+            name,
+            textureKey: key,
+            sourceIndex,
+            cutX,
+            cutY,
+            cutWidth,
+            cutHeight,
+            realWidth: cutWidth,
+            realHeight: cutHeight,
+          };
         },
         remove(name: string) {
           delete this.frames[name];
@@ -171,9 +205,28 @@ function createFakeScene(initialTextureKeys: string[] = []) {
         },
       });
   };
-  const addTextureFrame = (key: string, frame: string | number) => {
+  const addTextureFrame = (
+    key: string,
+    frame: string | number,
+    geometry?: {
+      sourceIndex: number;
+      cutX: number;
+      cutY: number;
+      cutWidth: number;
+      cutHeight: number;
+    },
+  ) => {
     addTexture(key);
-    textures.get(key)?.add(frame);
+    textures
+      .get(key)
+      ?.add(
+        frame,
+        geometry?.sourceIndex,
+        geometry?.cutX,
+        geometry?.cutY,
+        geometry?.cutWidth,
+        geometry?.cutHeight,
+      );
   };
   const textureEvents = new FakeEvents();
   const sceneEvents = new FakeEvents();
@@ -235,6 +288,7 @@ function createFakeScene(initialTextureKeys: string[] = []) {
     sprites,
     textureKeys,
     addTextureFrame,
+    getTexture: (key: string) => textures.get(key),
   };
 }
 
@@ -1175,6 +1229,113 @@ describe("Phaser runtime package", () => {
 
       expect(fake.sprites[0]?.frame.name).toBe(1);
     });
+  });
+
+  it.each([
+    ["base-only", []],
+    ["missing-middle", [0, 2]],
+    ["wrong-dimensions", [0, 1, 2]],
+  ])(
+    "rejects a %s mapped sprite sheet without mutating host frames",
+    async (scenario, installedFrames) => {
+      const project = createEmptyProject(`Mapped ${scenario}`);
+      project.assets.push({
+        id: "mapped-sheet",
+        name: "Mapped sheet",
+        mimeType: "image/png",
+        dataUrl: validPngDataUrl(96, 32),
+        width: 96,
+        height: 32,
+        spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 3 },
+      });
+      project.layers.push(createLayer("animated", "Sheet", "mapped-sheet"));
+      const definition = createRuntimeDefinition(project);
+      const fake = createFakeScene(["host-sheet"]);
+      for (const frame of installedFrames) {
+        const width = scenario === "wrong-dimensions" && frame === 1 ? 31 : 32;
+        fake.addTextureFrame("host-sheet", frame, {
+          sourceIndex: 0,
+          cutX: frame * 32,
+          cutY: 0,
+          cutWidth: width,
+          cutHeight: 32,
+        });
+      }
+      const texture = fake.getTexture("host-sheet");
+      const beforeEntries = Object.entries(texture?.frames ?? {});
+      const assetKeys = { "mapped-sheet": "host-sheet" };
+
+      await expect(
+        loadVvfxAssets(fake.scene, definition, assetKeys),
+      ).rejects.toThrow(/mapped Phaser sprite sheet.*(missing|invalid)/i);
+      expect(
+        () =>
+          new VvfxEffect(fake.scene, definition, {
+            assetKeys,
+            autoDestroy: false,
+          }),
+      ).toThrow(/mapped Phaser sprite sheet.*(missing|invalid)/i);
+      expect(Object.entries(texture?.frames ?? {})).toEqual(beforeEntries);
+      expect(fake.textureKeys.has("host-sheet")).toBe(true);
+    },
+  );
+
+  it("borrows exact mapped sprite-sheet frames across effects and scenes without mutation", async () => {
+    const project = createEmptyProject("Mapped sprite-sheet ownership");
+    project.assets.push({
+      id: "mapped-sheet",
+      name: "Mapped sheet",
+      mimeType: "image/png",
+      dataUrl: validPngDataUrl(64, 32),
+      width: 64,
+      height: 32,
+      spriteSheet: { frameWidth: 32, frameHeight: 32, frameCount: 2 },
+    });
+    project.layers.push(createLayer("animated", "Sheet", "mapped-sheet"));
+    const definition = createRuntimeDefinition(project);
+    const assetKeys = { "mapped-sheet": "host-sheet" };
+    const scenes = [
+      createFakeScene(["host-sheet"]),
+      createFakeScene(["host-sheet"]),
+    ];
+
+    for (const fake of scenes) {
+      fake.addTextureFrame("host-sheet", "named-host-frame");
+      for (let frame = 0; frame < 2; frame += 1)
+        fake.addTextureFrame("host-sheet", frame, {
+          sourceIndex: 0,
+          cutX: frame * 32,
+          cutY: 0,
+          cutWidth: 32,
+          cutHeight: 32,
+        });
+      const texture = fake.getTexture("host-sheet");
+      const beforeFrames = Object.fromEntries(
+        Object.entries(texture?.frames ?? {}).map(([name, value]) => [
+          name,
+          value,
+        ]),
+      );
+
+      const first = await playVvfx(fake.scene, definition, {
+        assetKeys,
+        autoDestroy: false,
+      });
+      const second = await playVvfx(fake.scene, definition, {
+        assetKeys,
+        autoDestroy: false,
+      });
+
+      expect(Object.keys(texture?.frames ?? {}).sort()).toEqual(
+        Object.keys(beforeFrames).sort(),
+      );
+      for (const [name, frame] of Object.entries(beforeFrames))
+        expect(texture?.frames[name]).toBe(frame);
+      expect(fake.sprites.at(-1)?.texture.key).toBe("host-sheet");
+      first.destroy();
+      second.destroy();
+      expect(fake.textureKeys.has("host-sheet")).toBe(true);
+    }
   });
 
   it("uses named frames from a preloaded Phaser texture atlas", () => {

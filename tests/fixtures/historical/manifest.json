@@ -1,0 +1,54 @@
+{
+  "manifestVersion": 1,
+  "generatedAt": "2026-08-29",
+  "generation": {
+    "method": "Archived each source commit and executed its createEmptyProject, createLayer, createRuntimeDefinition, and createTemplateFromProject exports.",
+    "deterministicNormalizations": [
+      "Fixed project, layer, and template identifiers.",
+      "Fixed project and template timestamps to 2026-01-01T00:00:00.000Z."
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "project16-runtime14",
+      "file": "project16-runtime14.json",
+      "sourceCommit": "7c8359a0cb5d9a18d7e52a7c613b03606d5debb2",
+      "sourceKind": "historical-repository-commit",
+      "releaseTag": null,
+      "projectFormat": 16,
+      "runtimeFormat": 14,
+      "templateFormat": 2,
+      "expectedLosses": [],
+      "sha256": "fa7801647ee1f1b6a5e370bf0600aef388d52fbee047b7f9cb0484b58d26f34d"
+    },
+    {
+      "id": "project17-runtime15",
+      "file": "project17-runtime15.json",
+      "sourceCommit": "e5ac16307437cb074005e052a40dd192d0154893",
+      "sourceKind": "historical-repository-commit",
+      "releaseTag": null,
+      "projectFormat": 17,
+      "runtimeFormat": 15,
+      "templateFormat": 2,
+      "expectedLosses": [],
+      "sha256": "81ac54f84a50a3e229355b7b3d35b24b0ddff49362c8f27fb273bdb2aa14f9ae"
+    },
+    {
+      "id": "project18-runtime16",
+      "file": "project18-runtime16.json",
+      "sourceCommit": "2283b70d8142835df0a037d37c0db244d20aa0f7",
+      "sourceKind": "historical-repository-commit",
+      "releaseTag": null,
+      "projectFormat": 18,
+      "runtimeFormat": 16,
+      "templateFormat": 2,
+      "expectedLosses": [],
+      "sha256": "db474880a65d88bfe629853a3f2787af1d1c02640d00075d1bf38957b3e0846e"
+    }
+  ],
+  "unavailableReleaseAuthenticHistory": {
+    "projectFormats": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    "runtimeFormats": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    "reason": "Reachable repository history begins with emitted project format 16 and runtime format 14, has no release tags, and contains no older exported artifacts. Existing synthetic migration tests remain the evidence for these accepted legacy versions; this manifest does not relabel them release-authentic."
+  }
+}

@@ -15,7 +15,7 @@ import { canonicalizeProjectLayerCapabilities } from "./layerLifecycle";
 import { finiteLayerCycleCount } from "./limits";
 import { resolveProjectGroups } from "./groups";
 import { randomSigned } from "./random";
-import { evaluateRenderingEffects } from "./renderingEffects";
+import { evaluateRenderingEffects } from "./renderingEffectsModel";
 import { spriteFrameAtTime } from "./spriteSheet";
 import type {
   BeamEndpoints,

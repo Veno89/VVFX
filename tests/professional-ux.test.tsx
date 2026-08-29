@@ -566,7 +566,8 @@ describe("Tier 2 Inspector controls", () => {
 });
 
 describe("Experimental rendering controls", () => {
-  // This intentionally renders and queries the complete experimental Inspector.
+  // This intentionally renders and queries the complete experimental Inspector;
+  // keep its release-run allowance above the measured high-load Windows range.
   it("marks WebGL effects as experimental and exposes resettable controls", () => {
     const layer = createLayer("animated", "Neon bolt", "builtin-spark");
     layer.appearance.effects.outerGlow.enabled = true;
@@ -693,7 +694,7 @@ describe("Experimental rendering controls", () => {
     expect(screen.getByLabelText("Wipe direction")).toHaveValue("horizontal");
     expect(screen.queryByLabelText("Pattern size")).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^Reverse wipe/)).not.toBeChecked();
-  }, 30_000);
+  }, 60_000);
 
   it("teaches noisy erosion boundaries in the accessible Experimental lab", () => {
     render(

@@ -337,6 +337,57 @@ describe("browser project saves", () => {
     }
   });
 
+  it("maps a quota abort and preserves healthy project records atomically", async () => {
+    const healthy = createEmptyProject("Healthy quota sentinel");
+    const orphan = createEmptyProject("Orphaned quota trigger");
+    const candidate = createEmptyProject("Quota candidate");
+    await saveProject(healthy);
+    await putRawRecord(PROJECT_STORE, orphan);
+    const healthyBefore = await getRawRecord(
+      PROJECT_STORE,
+      healthy.metadata.id,
+    );
+    const originalTransaction = IDBDatabase.prototype.transaction;
+    const transactionSpy = vi
+      .spyOn(IDBDatabase.prototype, "transaction")
+      .mockImplementation(function (
+        this: IDBDatabase,
+        ...arguments_: Parameters<typeof originalTransaction>
+      ) {
+        const transaction = Reflect.apply(
+          originalTransaction,
+          this,
+          arguments_,
+        );
+        Object.defineProperty(transaction, "error", {
+          configurable: true,
+          get: () =>
+            new DOMException(
+              "The storage quota was exceeded.",
+              "QuotaExceededError",
+            ),
+        });
+        return transaction;
+      });
+
+    try {
+      await expect(saveProject(candidate)).rejects.toThrow(
+        /browser storage is full.*export or delete/i,
+      );
+      transactionSpy.mockRestore();
+      expect(
+        await getRawRecord(PROJECT_STORE, candidate.metadata.id),
+      ).toBeUndefined();
+      expect(await getRawRecord(PROJECT_STORE, healthy.metadata.id)).toEqual(
+        healthyBefore,
+      );
+    } finally {
+      transactionSpy.mockRestore();
+      await deleteRawRecords(PROJECT_STORE, [orphan.metadata.id]);
+      await deleteProject(healthy.metadata.id);
+    }
+  });
+
   it("lists only summaries until one project is selected", async () => {
     const project = createEmptyProject("Summary-only listing");
     await saveProject(project);

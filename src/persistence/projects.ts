@@ -287,7 +287,7 @@ export async function saveProject(project: VfxProject): Promise<VfxProject> {
       summariesRequest.onerror = () => transaction.abort();
       keysRequest.onerror = () => transaction.abort();
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () =>
+      const rejectWrite = () =>
         reject(
           new Error(
             transaction.error?.name === "QuotaExceededError"
@@ -295,7 +295,8 @@ export async function saveProject(project: VfxProject): Promise<VfxProject> {
               : failureMessage,
           ),
         );
-      transaction.onabort = () => reject(new Error(failureMessage));
+      transaction.onerror = rejectWrite;
+      transaction.onabort = rejectWrite;
     });
   } finally {
     db.close();

@@ -71,6 +71,7 @@ export function validPngBytes(
   width: number,
   height: number,
   rgba: readonly [number, number, number, number] = [255, 255, 255, 255],
+  compressionLevel?: number,
 ): Uint8Array {
   if (
     !Number.isInteger(width) ||
@@ -103,10 +104,31 @@ export function validPngBytes(
     Buffer.concat([
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       pngChunk("IHDR", ihdr),
-      pngChunk("IDAT", deflateSync(pixels)),
+      pngChunk(
+        "IDAT",
+        deflateSync(
+          pixels,
+          compressionLevel === undefined
+            ? undefined
+            : { level: compressionLevel },
+        ),
+      ),
       pngChunk("IEND", new Uint8Array()),
     ]),
   );
+}
+
+/**
+ * Produces a valid, deliberately low-compression PNG for aggregate byte-limit
+ * browser tests. A solid image keeps the fixture deterministic while zlib
+ * level 0 prevents it from collapsing to a tiny payload.
+ */
+export function validStoredPngBytes(
+  width: number,
+  height: number,
+  rgba?: readonly [number, number, number, number],
+): Uint8Array {
+  return validPngBytes(width, height, rgba, 0);
 }
 
 export function validPngDataUrl(

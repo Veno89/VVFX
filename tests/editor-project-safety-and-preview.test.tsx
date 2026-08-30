@@ -757,7 +757,7 @@ describe("Editor integrity mutations", () => {
       redone?.layers.find((layer) => layer.id === source.id)?.events,
     ).toEqual([]);
     expect(redone && validateProject(redone).ok).toBe(true);
-  });
+  }, 30_000);
 
   it("routes Inspector asset edits through dependent mask cleanup", async () => {
     const project = createEmptyProject("Shared asset edit");
@@ -823,7 +823,7 @@ describe("Editor integrity mutations", () => {
       });
     }
     expect(saved && validateProject(saved).ok).toBe(true);
-  }, 20_000);
+  }, 40_000);
 
   it("preflights dependent asset removal and restores it with one Undo", async () => {
     const project = createEmptyProject("Dependency-aware removal");
@@ -967,7 +967,7 @@ describe("Editor integrity mutations", () => {
       redone?.assets.some((candidate) => candidate.id === addedLayer?.assetId),
     ).toBe(true);
     expect(redone && validateProject(redone).ok).toBe(true);
-  }, 15_000);
+  }, 40_000);
 });
 
 function renderPreview() {

@@ -411,6 +411,15 @@ test("GIF export completes in its worker and pointer-down or Escape cancels late
   page.on("download", (download) =>
     downloads.push(download.suggestedFilename()),
   );
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Target.setDiscoverTargets", { discover: true });
+  const activeWorkerCount = async () => {
+    const targets = (await cdp.send("Target.getTargets")) as {
+      targetInfos: Array<{ type: string }>;
+    };
+    return targets.targetInfos.filter((target) => target.type === "worker")
+      .length;
+  };
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await openEditor(page);
@@ -427,6 +436,7 @@ test("GIF export completes in its worker and pointer-down or Escape cancels late
   const downloaded = await firstDownload;
   expect(downloaded.suggestedFilename()).toMatch(/\.gif$/);
   await expect(dialog.getByRole("status")).toContainText("Downloaded");
+  await expect.poll(activeWorkerCount).toBe(0);
 
   await dialog
     .getByRole("combobox", { name: "Size and aspect ratio" })
@@ -453,6 +463,7 @@ test("GIF export completes in its worker and pointer-down or Escape cancels late
   await page.waitForTimeout(300);
 
   expect(downloads).toHaveLength(1);
+  await expect.poll(activeWorkerCount).toBe(0);
 
   await dialog.getByRole("button", { name: "Export & download .gif" }).click();
   await expect(
@@ -468,6 +479,7 @@ test("GIF export completes in its worker and pointer-down or Escape cancels late
   await page.waitForTimeout(300);
 
   expect(downloads).toHaveLength(1);
+  await expect.poll(activeWorkerCount).toBe(0);
   expect(pageErrors).toEqual([]);
 });
 
@@ -643,9 +655,13 @@ test("trail and 50× stress toggles return live objects to baseline without heap
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("HeapProfiler.enable");
+  await cdp.send("Performance.enable");
   await cdp.send("HeapProfiler.collectGarbage");
   const heapBefore = (await cdp.send("Runtime.getHeapUsage")) as {
     usedSize: number;
+  };
+  const performanceBefore = (await cdp.send("Performance.getMetrics")) as {
+    metrics: Array<{ name: string; value: number }>;
   };
 
   for (let cycle = 0; cycle < 50; cycle += 1) {
@@ -671,9 +687,26 @@ test("trail and 50× stress toggles return live objects to baseline without heap
   const heapAfter = (await cdp.send("Runtime.getHeapUsage")) as {
     usedSize: number;
   };
+  const performanceAfter = (await cdp.send("Performance.getMetrics")) as {
+    metrics: Array<{ name: string; value: number }>;
+  };
+  const beforeMetrics = new Map(
+    performanceBefore.metrics.map((metric) => [metric.name, metric.value]),
+  );
+  const afterMetrics = new Map(
+    performanceAfter.metrics.map((metric) => [metric.name, metric.value]),
+  );
   expect(heapAfter.usedSize - heapBefore.usedSize).toBeLessThan(
     8 * 1024 * 1024,
   );
+  expect(afterMetrics.get("Documents")).toBe(beforeMetrics.get("Documents"));
+  expect(
+    (afterMetrics.get("JSEventListeners") ?? 0) -
+      (beforeMetrics.get("JSEventListeners") ?? 0),
+  ).toBeLessThanOrEqual(4);
+  expect(
+    (afterMetrics.get("Nodes") ?? 0) - (beforeMetrics.get("Nodes") ?? 0),
+  ).toBeLessThanOrEqual(200);
   expect(pageErrors).toEqual([]);
 });
 

@@ -21,13 +21,14 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:browser": "npm run build && node scripts/test-browser.mjs",
+    "test:browser:storage": "npm run build && node scripts/test-storage-browser.mjs",
     "test:runtime-package": "node scripts/test-runtime-package.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app build src packages tests scripts eslint.config.mjs next.config.ts vite.config.ts vitest.config.ts playwright.config.ts",
     "format": "prettier --write app src packages tests scripts .github docs vite.config.ts vitest.config.ts playwright.config.ts README.md CHANGELOG.md",
     "format:check": "prettier --check app src packages tests scripts .github docs vite.config.ts vitest.config.ts playwright.config.ts README.md CHANGELOG.md",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run check:runtime-types && npm run check:version-pairs && npm run build:all && npm run check:performance-budgets && npm run test:runtime-package",
-    "verify:release": "npm audit --audit-level=high && npm run verify && npm run test:browser"
+    "verify:release": "npm audit --audit-level=high && npm run verify && npm run test:browser && npm run test:browser:storage"
   },
   "dependencies": {
     "lucide-react": "1.34.0",

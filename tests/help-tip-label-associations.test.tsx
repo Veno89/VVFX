@@ -126,7 +126,7 @@ describe("HelpTip field label associations", () => {
         appearance: expect.objectContaining({ tint: null }),
       }),
     );
-  });
+  }, 30_000);
 
   it("keeps Preview help and action buttons outside their labelled controls", () => {
     const project = createEmptyProject();

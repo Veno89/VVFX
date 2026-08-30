@@ -150,13 +150,38 @@ test("layer actions escape clipping and provide accessible reordering", async ({
   await solo.click();
   await expect(solo).toHaveAttribute("aria-pressed", "true");
 
-  await page
-    .getByRole("button", { name: `Actions for ${movingLayerName}` })
-    .click();
+  const actionsTrigger = page.getByRole("button", {
+    name: `Actions for ${movingLayerName}`,
+  });
+  await actionsTrigger.focus();
+  await page.keyboard.press("Enter");
   const menu = page.getByRole("menu", {
     name: `Actions for ${movingLayerName}`,
   });
   await expect(menu).toBeVisible();
+  const rename = menu.getByRole("menuitem", { name: "Rename", exact: true });
+  const duplicate = menu.getByRole("menuitem", {
+    name: "Duplicate",
+    exact: true,
+  });
+  const deleteLayer = menu.getByRole("menuitem", {
+    name: "Delete",
+    exact: true,
+  });
+  await expect(rename).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(duplicate).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(deleteLayer).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(rename).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(actionsTrigger).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeVisible();
+  await expect(rename).toBeFocused();
   await expect(menu).toHaveCSS("position", "fixed");
   const menuBox = await menu.boundingBox();
   expect(menuBox).not.toBeNull();
@@ -329,7 +354,7 @@ test("professional workspace settings persist and export preflight follows its t
   await expect(preflight).toContainText("Visible content");
 });
 
-test("GIF export completes in its worker and Escape cancels a later export", async ({
+test("GIF export completes in its worker and pointer-down or Escape cancels later exports", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
@@ -361,11 +386,37 @@ test("GIF export completes in its worker and Escape cancels a later export", asy
   await dialog.getByRole("button", { name: "Export & download .gif" }).click();
   await expect(
     dialog.getByRole("button", { name: "Cancel export" }),
+  ).toBeFocused();
+  const cancel = dialog.getByRole("button", { name: "Cancel export" });
+  const cancelBounds = await cancel.boundingBox();
+  expect(cancelBounds).not.toBeNull();
+  await page.mouse.move(
+    cancelBounds!.x + cancelBounds!.width / 2,
+    cancelBounds!.y + cancelBounds!.height / 2,
+  );
+  await page.mouse.down();
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "Preview export canceled.",
+  );
+  await page.mouse.up();
+  await expect(
+    dialog.getByRole("button", { name: "Export & download .gif" }),
   ).toBeVisible();
+  await page.waitForTimeout(300);
+
+  expect(downloads).toHaveLength(1);
+
+  await dialog.getByRole("button", { name: "Export & download .gif" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel export" }),
+  ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog.getByRole("alert")).toHaveText(
     "Preview export canceled.",
   );
+  await expect(
+    dialog.getByRole("button", { name: "Export & download .gif" }),
+  ).toBeFocused();
   await page.waitForTimeout(300);
 
   expect(downloads).toHaveLength(1);

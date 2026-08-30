@@ -86,6 +86,115 @@ afterEach(() => {
 });
 
 describe("ExportDialog clipboard and WebM capability state", () => {
+  it("cancels GIF capture on primary pointer-down and ignores a late result", async () => {
+    const result = deferred<{
+      blob: Blob;
+      mimeType: string;
+      format: "gif";
+      width: number;
+      height: number;
+      duration: number;
+    }>();
+    const onRecordPreview = vi.fn<
+      (request: PreviewRecordingRequest) => typeof result.promise
+    >(() => result.promise);
+    const linkClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    render(
+      <ExportDialog
+        project={projectWithLayer()}
+        activeDuration={800}
+        onRecordPreview={onRecordPreview}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "gif" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Export & download .gif" }),
+    );
+
+    const cancel = await screen.findByRole("button", {
+      name: "Cancel export",
+    });
+    const activeSignal = onRecordPreview.mock.calls[0][0].signal;
+    fireEvent.pointerDown(cancel, { button: 0, isPrimary: true });
+    fireEvent.click(cancel);
+
+    expect(activeSignal.aborted).toBe(true);
+    expect(onRecordPreview).toHaveBeenCalledOnce();
+
+    await act(async () =>
+      result.resolve({
+        blob: new Blob(["late GIF"], { type: "image/gif" }),
+        mimeType: "image/gif",
+        format: "gif",
+        width: 640,
+        height: 360,
+        duration: 800,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Export & download .gif" }),
+      ).toBeVisible(),
+    );
+    expect(linkClick).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Downloaded/)).toBeNull();
+    expect(onRecordPreview).toHaveBeenCalledOnce();
+  });
+
+  it("hands focus between the keyboard-operated start and cancel actions", async () => {
+    const onRecordPreview = vi.fn(
+      (request: PreviewRecordingRequest) =>
+        new Promise<never>((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("canceled");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true },
+          );
+        }),
+    );
+    render(
+      <ExportDialog
+        project={projectWithLayer()}
+        activeDuration={800}
+        onRecordPreview={onRecordPreview}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "gif" },
+    });
+    const start = screen.getByRole("button", {
+      name: "Export & download .gif",
+    });
+    start.focus();
+    fireEvent.click(start, { detail: 0 });
+
+    const cancel = await screen.findByRole("button", {
+      name: "Cancel export",
+    });
+    expect(cancel).toHaveFocus();
+
+    fireEvent.click(cancel, { detail: 0 });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Preview export canceled.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Export & download .gif" }),
+    ).toHaveFocus();
+    expect(onRecordPreview).toHaveBeenCalledOnce();
+  });
+
   it("lets Escape cancel an active preview export without closing the dialog", async () => {
     const onClose = vi.fn();
     const onRecordPreview = vi.fn(

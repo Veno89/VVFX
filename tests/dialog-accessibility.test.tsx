@@ -561,6 +561,12 @@ describe("popup keyboard accessibility", () => {
     const actionItems = within(actionsMenu).getAllByRole("menuitem");
     expect(actionItems[0]).toHaveFocus();
     expectRovingTabStop(actionItems, 0);
+    fireEvent.keyDown(actionItems[0], { key: "ArrowDown" });
+    expect(actionItems[1]).toHaveFocus();
+    expectRovingTabStop(actionItems, 1);
+    fireEvent.keyDown(actionItems[1], { key: "ArrowUp" });
+    expect(actionItems[0]).toHaveFocus();
+    expectRovingTabStop(actionItems, 0);
     fireEvent.keyDown(actionItems[0], { key: "End" });
     expect(actionItems.at(-1)).toHaveFocus();
     expectRovingTabStop(actionItems, actionItems.length - 1);

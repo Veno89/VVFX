@@ -15,10 +15,12 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
+  type PointerEvent,
 } from "react";
 import {
   analyzeGifRecordingWork,
@@ -91,6 +93,8 @@ export function ExportDialog({
   const copyRequestRef = useRef(0);
   const recordingControllerRef = useRef<AbortController | null>(null);
   const recordingRequestRef = useRef(0);
+  const previewActionRef = useRef<HTMLButtonElement>(null);
+  const restorePreviewActionFocusRef = useRef(false);
   const [recording, setRecording] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState(0);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -102,10 +106,30 @@ export function ExportDialog({
     null,
   );
   const [webmSupported, setWebmSupported] = useState<boolean | null>(null);
-  const cancelRecording = () => recordingControllerRef.current?.abort();
+  const cancelRecording = () => {
+    const controller = recordingControllerRef.current;
+    if (!controller || controller.signal.aborted) return;
+    restorePreviewActionFocusRef.current ||=
+      document.activeElement === previewActionRef.current;
+    controller.abort();
+  };
+  const cancelRecordingFromPointer = (
+    event: PointerEvent<HTMLButtonElement>,
+  ) => {
+    // Cancel on primary pointer-down instead of waiting for click. Capturing a
+    // GIF can update the dialog between pointer-down and pointer-up; handling
+    // the earlier event keeps the visible control responsive through that
+    // render and prevents the gesture from landing on a newly idle button.
+    if (event.button === 0) cancelRecording();
+  };
   const dialogRef = useFocusRegion<HTMLElement>({
     onEscape: recording ? cancelRecording : onClose,
   });
+  useLayoutEffect(() => {
+    if (!restorePreviewActionFocusRef.current) return;
+    restorePreviewActionFocusRef.current = false;
+    previewActionRef.current?.focus({ preventScroll: true });
+  }, [recording]);
   useEffect(() => {
     const timer = window.setTimeout(() => setWebmSupported(canRecordWebm()), 0);
     return () => {
@@ -272,6 +296,7 @@ export function ExportDialog({
   };
 
   const recordPreview = async () => {
+    if (recordingControllerRef.current) return;
     if (integrityError) {
       setRecordingError(integrityError);
       return;
@@ -283,6 +308,8 @@ export function ExportDialog({
     const controller = new AbortController();
     const requestId = ++recordingRequestRef.current;
     recordingControllerRef.current = controller;
+    restorePreviewActionFocusRef.current =
+      document.activeElement === previewActionRef.current;
     setRecording(true);
     setRecordingProgress(0);
     setRecordingError(null);
@@ -319,6 +346,8 @@ export function ExportDialog({
       );
     } finally {
       if (requestId === recordingRequestRef.current) {
+        restorePreviewActionFocusRef.current ||=
+          document.activeElement === previewActionRef.current;
         recordingControllerRef.current = null;
         setRecording(false);
       }
@@ -619,11 +648,19 @@ export function ExportDialog({
             <>
               <span>Records locally in your browser · no upload</span>
               {recording ? (
-                <button type="button" onClick={cancelRecording}>
+                <button
+                  key="cancel-preview-export"
+                  ref={previewActionRef}
+                  type="button"
+                  onPointerDown={cancelRecordingFromPointer}
+                  onClick={cancelRecording}
+                >
                   <CircleX size={15} /> Cancel export
                 </button>
               ) : (
                 <button
+                  key="start-preview-export"
+                  ref={previewActionRef}
                   className="primary-action"
                   type="button"
                   disabled={

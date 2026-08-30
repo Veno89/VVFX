@@ -103,6 +103,61 @@ describe("preview video export", () => {
     expect(session.cancel).toHaveBeenCalledOnce();
   });
 
+  it("cancels a GIF encoder that is already finishing", async () => {
+    const controller = new AbortController();
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(16) })),
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: "low",
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(document, "createElement").mockReturnValue({
+      width: 0,
+      height: 0,
+      getContext: () => context,
+    } as unknown as HTMLCanvasElement);
+    let announceFinish!: () => void;
+    const finishStarted = new Promise<void>((resolve) => {
+      announceFinish = resolve;
+    });
+    const session: GifEncodingSession = {
+      addFrame: vi.fn().mockResolvedValue(undefined),
+      finish: vi.fn(
+        (signal?: AbortSignal) =>
+          new Promise<Uint8Array>((_resolve, reject) => {
+            announceFinish();
+            signal?.addEventListener(
+              "abort",
+              () => {
+                const error = new Error("canceled");
+                error.name = "AbortError";
+                reject(error);
+              },
+              { once: true },
+            );
+          }),
+      ),
+      cancel: vi.fn(),
+    };
+    const recording = recordCanvasAsGif({
+      source: { width: 2, height: 2 } as HTMLCanvasElement,
+      duration: 1,
+      framesPerSecond: 1,
+      signal: controller.signal,
+      renderFrame: vi.fn().mockResolvedValue(undefined),
+      createEncoder: vi.fn().mockResolvedValue(session),
+    });
+
+    await finishStarted;
+    controller.abort();
+
+    await expect(recording).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.addFrame).toHaveBeenCalledOnce();
+    expect(session.finish).toHaveBeenCalledOnce();
+    expect(session.cancel).toHaveBeenCalledOnce();
+  });
+
   it("times out WebM finalization and releases every capture track", async () => {
     vi.useFakeTimers();
     const originalCaptureStream = Object.getOwnPropertyDescriptor(

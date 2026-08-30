@@ -180,6 +180,10 @@ export function LayerPanel({
     active: actionsOpenId !== null,
     activationKey: actionsOpenId,
     trapFocus: false,
+    // The portaled menu stays visibility:hidden until its fixed position is
+    // measured. Real browsers reject focus inside that hidden subtree, so let
+    // the focus region autofocus only after positioning makes it visible.
+    autoFocus: actionsMenuPosition !== null,
     dismissOnFocusOutside: true,
     dismissOnPointerOutside: true,
     dismissBoundaryRef: actionsTriggerRef,

@@ -10,6 +10,12 @@ export const TEMPLATE_STORE = "templates";
 export function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
+    const rejectOnce = (message: string) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    };
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(PROJECT_STORE)) {
         request.result.createObjectStore(PROJECT_STORE, {
@@ -42,8 +48,21 @@ export function openDatabase(): Promise<IDBDatabase> {
         }
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => database.close();
+      if (settled) {
+        database.close();
+        return;
+      }
+      settled = true;
+      resolve(database);
+    };
+    request.onblocked = () =>
+      rejectOnce(
+        "Local Vvfx storage is open in another tab. Close other Vvfx tabs, then try again.",
+      );
     request.onerror = () =>
-      reject(new Error("Local Vvfx storage could not be opened."));
+      rejectOnce("Local Vvfx storage could not be opened.");
   });
 }

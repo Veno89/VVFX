@@ -99,6 +99,54 @@ test("@cross-browser loads the editor, routes focus, and protects unsaved work",
   expect(pageErrors).toEqual([]);
 });
 
+test("two editor tabs preserve concurrent project saves", async ({
+  context,
+  page,
+}) => {
+  const secondPage = await context.newPage();
+  try {
+    await Promise.all([openEditor(page), openEditor(secondPage)]);
+    await Promise.all([
+      page
+        .getByRole("textbox", { name: "Project name" })
+        .fill("Concurrent tab A"),
+      secondPage
+        .getByRole("textbox", { name: "Project name" })
+        .fill("Concurrent tab B"),
+    ]);
+    await Promise.all([
+      page.getByRole("button", { name: "Save", exact: true }).click(),
+      secondPage.getByRole("button", { name: "Save", exact: true }).click(),
+    ]);
+    await Promise.all(
+      [page, secondPage].map((editorPage) =>
+        expect(
+          editorPage.getByRole("status").filter({
+            hasText: "Project saved in this browser.",
+          }),
+        ).toBeAttached(),
+      ),
+    );
+
+    for (const editorPage of [page, secondPage]) {
+      await editorPage
+        .getByRole("button", { name: "Load", exact: true })
+        .click();
+      const projectsDialog = editorPage.getByRole("dialog", {
+        name: "Load a saved project",
+      });
+      await expect(
+        projectsDialog.getByText("Concurrent tab A", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        projectsDialog.getByText("Concurrent tab B", { exact: true }),
+      ).toBeVisible();
+    }
+  } finally {
+    await secondPage.close();
+  }
+});
+
 for (const viewport of responsiveViewports) {
   test(`${viewport.name} keeps project actions reachable without page overflow`, async ({
     page,

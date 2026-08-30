@@ -59,6 +59,8 @@ uses semantic versions for release artifacts.
   names, and corrected remaining mojibake in lifecycle-facing copy.
 - Kept layer Actions menus outside scrolling-panel clipping, added announced
   keyboard stacking commands, and exposed Solo with `aria-pressed`.
+- Let open editor tabs yield IndexedDB schema upgrades, report legacy-tab
+  upgrade blocks with a recovery instruction, and close late database handles.
 
 ## [@vvfx/phaser-runtime 0.16.0] - 2026-08-29
 

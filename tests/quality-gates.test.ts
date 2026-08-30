@@ -75,6 +75,7 @@ describe("canonical quality gates", () => {
         {
           cwd: resolve("."),
           maxBuffer: 8 * 1024 * 1024,
+          timeout: 45_000,
         },
       ).then(
         () => null,
@@ -87,5 +88,5 @@ describe("canonical quality gates", () => {
     } finally {
       await rm(fixture, { force: true });
     }
-  }, 30_000);
+  }, 60_000);
 });

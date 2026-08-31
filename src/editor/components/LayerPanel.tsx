@@ -726,6 +726,13 @@ export function LayerPanel({
                         type="button"
                         aria-pressed={selectedId === layer.id}
                         onClick={() => onSelect(layer.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Delete" || selectedId !== layer.id)
+                            return;
+                          event.preventDefault();
+                          onDelete(layer.id);
+                          if (!locked) restoreFocusAfterDelete(modelIndex);
+                        }}
                         title="Select layer · double-click to rename"
                       >
                         <strong>{layer.name}</strong>

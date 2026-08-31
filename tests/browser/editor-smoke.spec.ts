@@ -256,6 +256,39 @@ test("layer actions escape clipping and provide accessible reordering", async ({
   ).toBeAttached();
 });
 
+test("Delete removes the selected layer from its selection control but not a text field", async ({
+  page,
+}) => {
+  await openEditor(page);
+  await addPreset(page, "Magic projectile");
+
+  const layerNames = page.locator(".layer-name-button strong");
+  const layerCount = await layerNames.count();
+  expect(layerCount).toBeGreaterThan(1);
+  const targetName = (await layerNames.last().textContent())?.trim();
+  expect(targetName).toBeTruthy();
+  const targetLayer = page
+    .locator(".layer-name-button")
+    .filter({ hasText: targetName! });
+  await targetLayer.click();
+
+  await page.getByRole("textbox", { name: "Project name" }).focus();
+  await page.keyboard.press("Delete");
+  await expect(layerNames).toHaveCount(layerCount);
+
+  await targetLayer.click();
+  await expect(targetLayer).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Delete");
+  await expect(layerNames).toHaveCount(layerCount - 1);
+  await expect(targetLayer).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(layerNames).toHaveCount(layerCount);
+  await expect(
+    page.locator(".layer-name-button").filter({ hasText: targetName! }),
+  ).toBeVisible();
+});
+
 test("the template library footer remains reachable at 720px height", async ({
   page,
 }) => {
@@ -628,7 +661,7 @@ test("trail and 50× stress toggles return live objects to baseline without heap
     name: "Leave a motion trail",
   });
   await expect(trailToggle).toHaveAttribute("aria-checked", "true");
-  let performanceDialog = await openPerformanceInspector(page);
+  const performanceDialog = await openPerformanceInspector(page);
   await performanceDialog.getByText("Lifecycle diagnostic").click();
   await expect(
     performanceDialog.getByTestId("performance-active-modifiers"),
@@ -656,29 +689,93 @@ test("trail and 50× stress toggles return live objects to baseline without heap
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("HeapProfiler.enable");
   await cdp.send("Performance.enable");
+  const readPerformanceSnapshot = async () => {
+    const performance = (await cdp.send("Performance.getMetrics")) as {
+      metrics: Array<{ name: string; value: number }>;
+    };
+    const evaluated = (await cdp.send("Runtime.evaluate", {
+      expression: "window",
+    })) as { result: { objectId?: string } };
+    const objectId = evaluated.result.objectId;
+    if (!objectId) throw new Error("Unable to inspect window listeners.");
+    const listenerResult = (await cdp.send("DOMDebugger.getEventListeners", {
+      objectId,
+    })) as { listeners: Array<{ type: string; scriptId?: string }> };
+    await cdp.send("Runtime.releaseObject", { objectId });
+    const playwrightScriptIds = new Set(
+      listenerResult.listeners
+        .filter(
+          (listener) =>
+            listener.type === "__playwright_global_listeners_check__" &&
+            listener.scriptId,
+        )
+        .map((listener) => listener.scriptId!),
+    );
+    const playwrightWindowListeners = listenerResult.listeners.filter(
+      (listener) =>
+        listener.scriptId && playwrightScriptIds.has(listener.scriptId),
+    ).length;
+    const totalListeners =
+      performance.metrics.find((metric) => metric.name === "JSEventListeners")
+        ?.value ?? 0;
+    return {
+      metrics: performance.metrics,
+      totalListeners,
+      playwrightWindowListeners,
+      applicationListeners: totalListeners - playwrightWindowListeners,
+    };
+  };
+
+  const trailToggleId = await trailToggle.getAttribute("id");
+  if (!trailToggleId) throw new Error("The motion-trail switch needs an id.");
+  const activateTrailToggle = () =>
+    page.evaluate((id) => {
+      const element = document.getElementById(id);
+      if (!(element instanceof HTMLButtonElement))
+        throw new Error("The motion-trail switch is unavailable.");
+      element.click();
+    }, trailToggleId);
+  const readTrailToggleState = () =>
+    page.evaluate(
+      (id) => document.getElementById(id)?.getAttribute("aria-checked") ?? null,
+      trailToggleId,
+    );
+  const readMetricInPage = (testId: string) =>
+    page.evaluate((id) => {
+      const element = document.querySelector<HTMLElement>(
+        `[data-testid="${id}"]`,
+      );
+      return Number(element?.textContent?.trim() ?? Number.NaN);
+    }, testId);
+  const runTrailToggleBatch = async () => {
+    for (let cycle = 0; cycle < 50; cycle += 1) {
+      await activateTrailToggle();
+      await activateTrailToggle();
+    }
+    await expect.poll(readTrailToggleState).toBe("true");
+  };
+
+  // Activate the control in-page so CDP measures editor lifecycle ownership,
+  // not Playwright's pointer-simulation listeners. A full warm-up batch puts
+  // bounded remount setup in the baseline; the measured work must stay flat.
+  await runTrailToggleBatch();
+
   await cdp.send("HeapProfiler.collectGarbage");
   const heapBefore = (await cdp.send("Runtime.getHeapUsage")) as {
     usedSize: number;
   };
-  const performanceBefore = (await cdp.send("Performance.getMetrics")) as {
-    metrics: Array<{ name: string; value: number }>;
-  };
+  const performanceBefore = await readPerformanceSnapshot();
 
-  for (let cycle = 0; cycle < 50; cycle += 1) {
-    await trailToggle.click();
-    await trailToggle.click();
-  }
-  await trailToggle.click();
-  await expect(trailToggle).toHaveAttribute("aria-checked", "false");
-  performanceDialog = await openPerformanceInspector(page);
+  await runTrailToggleBatch();
+  await activateTrailToggle();
+  await expect.poll(readTrailToggleState).toBe("false");
   await expect
-    .poll(() => numericMetric(page, "performance-trail-sprites"))
+    .poll(() => readMetricInPage("performance-trail-sprites"))
     .toBe(0);
-  await trailToggle.click();
-  await expect(trailToggle).toHaveAttribute("aria-checked", "true");
-  performanceDialog = await openPerformanceInspector(page);
+  await activateTrailToggle();
+  await expect.poll(readTrailToggleState).toBe("true");
   await expect
-    .poll(() => numericMetric(page, "performance-trail-sprites"), {
+    .poll(() => readMetricInPage("performance-trail-sprites"), {
       timeout: 8_000,
     })
     .toBeGreaterThan(0);
@@ -687,9 +784,7 @@ test("trail and 50× stress toggles return live objects to baseline without heap
   const heapAfter = (await cdp.send("Runtime.getHeapUsage")) as {
     usedSize: number;
   };
-  const performanceAfter = (await cdp.send("Performance.getMetrics")) as {
-    metrics: Array<{ name: string; value: number }>;
-  };
+  const performanceAfter = await readPerformanceSnapshot();
   const beforeMetrics = new Map(
     performanceBefore.metrics.map((metric) => [metric.name, metric.value]),
   );
@@ -701,8 +796,9 @@ test("trail and 50× stress toggles return live objects to baseline without heap
   );
   expect(afterMetrics.get("Documents")).toBe(beforeMetrics.get("Documents"));
   expect(
-    (afterMetrics.get("JSEventListeners") ?? 0) -
-      (beforeMetrics.get("JSEventListeners") ?? 0),
+    performanceAfter.applicationListeners -
+      performanceBefore.applicationListeners,
+    `Application event listeners grew from ${performanceBefore.applicationListeners} to ${performanceAfter.applicationListeners} (total ${performanceBefore.totalListeners} to ${performanceAfter.totalListeners}; Playwright window listeners ${performanceBefore.playwrightWindowListeners} to ${performanceAfter.playwrightWindowListeners})`,
   ).toBeLessThanOrEqual(4);
   expect(
     (afterMetrics.get("Nodes") ?? 0) - (beforeMetrics.get("Nodes") ?? 0),

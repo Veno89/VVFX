@@ -315,6 +315,8 @@ export function Inspector({
   selectedEffectClipId = null,
   onAddEffect,
   onSelectEffect,
+  showAdvanced = true,
+  onShowAdvanced,
 }: {
   layer: VfxLayer | null;
   assets: VfxAsset[];
@@ -329,6 +331,12 @@ export function Inspector({
   selectedEffectClipId?: string | null;
   onAddEffect?: (effect: RenderingEffectKey) => void;
   onSelectEffect?: (clipId: string) => void;
+  /**
+   * Beginner mode hides grouping, events, atlas mapping and the Advanced
+   * section unless the layer already uses them.
+   */
+  showAdvanced?: boolean;
+  onShowAdvanced?: () => void;
 }) {
   const fieldIdPrefix = useId();
   if (!layer) {
@@ -610,32 +618,34 @@ export function Inspector({
           </select>
         </div>
 
-        <div className="field">
-          <span className="field__label">
-            <label htmlFor={`${fieldIdPrefix}-effect-group`}>
-              Effect group
-            </label>{" "}
-            <Boxes size={13} />{" "}
-            <HelpTip
-              label="Effect group"
-              text="A group adds one shared position and timing offset while every member keeps its own settings."
-            />
-          </span>
-          <select
-            id={`${fieldIdPrefix}-effect-group`}
-            value={layer.groupId ?? ""}
-            onChange={(event) =>
-              onChange({ ...layer, groupId: event.target.value || null })
-            }
-          >
-            <option value="">No group</option>
-            {groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {(showAdvanced || layer.groupId) && (
+          <div className="field">
+            <span className="field__label">
+              <label htmlFor={`${fieldIdPrefix}-effect-group`}>
+                Effect group
+              </label>{" "}
+              <Boxes size={13} />{" "}
+              <HelpTip
+                label="Effect group"
+                text="A group adds one shared position and timing offset while every member keeps its own settings."
+              />
+            </span>
+            <select
+              id={`${fieldIdPrefix}-effect-group`}
+              value={layer.groupId ?? ""}
+              onChange={(event) =>
+                onChange({ ...layer, groupId: event.target.value || null })
+              }
+            >
+              <option value="">No group</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {onAddEffect && onSelectEffect && (
           <EffectToolbelt
@@ -805,49 +815,51 @@ export function Inspector({
           </SettingsSection>
         )}
 
-        {selectedAsset && !selectedAsset.builtIn && (
-          <SettingsSection
-            title="Game texture atlas"
-            icon={<Boxes size={15} />}
-          >
-            <p className="section-note">
-              Optional: enter the named Phaser frame used when this image is
-              mapped to a preloaded texture atlas in your game. The editor keeps
-              using the uploaded preview image.
-            </p>
-            <div className="field">
-              <span className="field__label">
-                <label htmlFor={`${fieldIdPrefix}-atlas-frame`}>
-                  Atlas frame name
-                </label>{" "}
-                <HelpTip
-                  label="Atlas frame name"
-                  text="For example: vfx/spark-01. Map this asset to the atlas texture key when calling the Vvfx runtime."
-                />
-              </span>
-              <input
-                id={`${fieldIdPrefix}-atlas-frame`}
-                type="text"
-                maxLength={160}
-                value={selectedAsset.atlasFrame ?? ""}
-                placeholder="vfx/spark-01"
-                disabled={Boolean(spriteSheet)}
-                onChange={(event) =>
-                  onAssetChange({
-                    ...selectedAsset,
-                    atlasFrame: event.target.value || null,
-                  })
-                }
-              />
-            </div>
-            {spriteSheet && (
-              <p className="context-tip">
-                Turn off sprite-sheet slicing to use one named atlas frame for
-                this asset.
+        {selectedAsset &&
+          !selectedAsset.builtIn &&
+          (showAdvanced || selectedAsset.atlasFrame) && (
+            <SettingsSection
+              title="Game texture atlas"
+              icon={<Boxes size={15} />}
+            >
+              <p className="section-note">
+                Optional: enter the named Phaser frame used when this image is
+                mapped to a preloaded texture atlas in your game. The editor
+                keeps using the uploaded preview image.
               </p>
-            )}
-          </SettingsSection>
-        )}
+              <div className="field">
+                <span className="field__label">
+                  <label htmlFor={`${fieldIdPrefix}-atlas-frame`}>
+                    Atlas frame name
+                  </label>{" "}
+                  <HelpTip
+                    label="Atlas frame name"
+                    text="For example: vfx/spark-01. Map this asset to the atlas texture key when calling the Vvfx runtime."
+                  />
+                </span>
+                <input
+                  id={`${fieldIdPrefix}-atlas-frame`}
+                  type="text"
+                  maxLength={160}
+                  value={selectedAsset.atlasFrame ?? ""}
+                  placeholder="vfx/spark-01"
+                  disabled={Boolean(spriteSheet)}
+                  onChange={(event) =>
+                    onAssetChange({
+                      ...selectedAsset,
+                      atlasFrame: event.target.value || null,
+                    })
+                  }
+                />
+              </div>
+              {spriteSheet && (
+                <p className="context-tip">
+                  Turn off sprite-sheet slicing to use one named atlas frame for
+                  this asset.
+                </p>
+              )}
+            </SettingsSection>
+          )}
 
         <SettingsSection title="Basic" icon={<Box size={15} />} defaultOpen>
           <FieldGroup>
@@ -1647,305 +1659,281 @@ export function Inspector({
           )}
         </SettingsSection>
 
-        <SettingsSection title="Layer events" icon={<Link2 size={15} />}>
-          <p className="inspector-section-copy">
-            Events let this layer start another layer at a lifecycle moment.
-            They use the same millisecond timing and property moments already
-            shown on the main Timeline.
-          </p>
-          {layer.events.length === 0 ? (
-            <p className="inspector-hint">
-              Example: when “Bubble” finishes, restart “Bubble pop”.
+        {(showAdvanced || layer.events.length > 0) && (
+          <SettingsSection title="Layer events" icon={<Link2 size={15} />}>
+            <p className="inspector-section-copy">
+              Events let this layer start another layer at a lifecycle moment.
+              They use the same millisecond timing and property moments already
+              shown on the main Timeline.
             </p>
-          ) : (
-            <div className="layer-event-list">
-              {layer.events.map((layerEvent, index) => {
-                const target = layers.find(
-                  (candidate) => candidate.id === layerEvent.targetLayerId,
-                );
-                const groupDelay =
-                  groups.find((group) => group.id === layer.groupId)?.delay ??
-                  0;
-                const derivedTime =
-                  groupDelay +
-                  layer.timing.delay +
-                  (layerEvent.trigger === "percentage"
-                    ? layer.timing.duration * layerEvent.percentage
-                    : layerEvent.trigger === "finish"
-                      ? layer.timing.duration *
-                        (boundedLayerRepeat(layer.timing.repeat) + 1)
-                      : layerEvent.trigger === "repeat"
-                        ? layer.timing.duration
-                        : 0);
-                const isCopyFinish = layerEvent.trigger === "copy-finish";
-                const eventFieldPrefix = `${fieldIdPrefix}-event-${index}`;
-                return (
-                  <article className="layer-event-card" key={layerEvent.id}>
-                    <header>
-                      <strong>Event {index + 1}</strong>
-                      <button
-                        type="button"
-                        className="danger-icon"
-                        aria-label={`Delete event ${index + 1}`}
-                        title="Delete event"
-                        onClick={() =>
-                          onChange({
-                            ...layer,
-                            events: layer.events.filter(
-                              (event) => event.id !== layerEvent.id,
-                            ),
-                          })
-                        }
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </header>
-                    <Toggle
-                      label="Event enabled"
-                      checked={layerEvent.enabled}
-                      help="Disabled events stay saved but do not start their target."
-                      onChange={(enabled) =>
-                        setEvent(layerEvent.id, { enabled })
-                      }
-                    />
-                    <div className="field">
-                      <span className="field__label">
-                        <label htmlFor={`${eventFieldPrefix}-trigger`}>
-                          When this happens
-                        </label>
-                        <HelpTip
-                          label={`When this happens for event ${index + 1}`}
-                          text="Choose a layer-level moment, or let every authored Burst/Repeating copy trigger from the exact spot where it disappears. Trail afterimages never trigger events."
-                        />
-                      </span>
-                      <select
-                        id={`${eventFieldPrefix}-trigger`}
-                        value={layerEvent.trigger}
-                        onChange={(event) => {
-                          const trigger = event.target
-                            .value as VfxLayer["events"][number]["trigger"];
-                          setEvent(layerEvent.id, {
-                            trigger,
-                            ...(trigger === "copy-finish"
-                              ? {
-                                  action: "play" as const,
-                                  targetLayerId:
-                                    firstSafeCopyFinishTarget?.id ??
-                                    layerEvent.targetLayerId,
-                                }
-                              : {}),
-                          });
-                        }}
-                      >
-                        <option value="start">Layer starts</option>
-                        <option
-                          value="percentage"
-                          disabled={layer.type === "emitter"}
-                        >
-                          Layer reaches a chosen point
-                        </option>
-                        <option
-                          value="finish"
-                          disabled={layer.type === "emitter"}
-                        >
-                          Layer finishes
-                        </option>
-                        <option value="repeat">
-                          {layer.type === "emitter"
-                            ? "A new emission batch starts"
-                            : "Layer repeats"}
-                        </option>
-                        <option
-                          value="copy-finish"
-                          disabled={!isSpawnLayer(layer)}
-                        >
-                          Each copy finishes at its spot
-                        </option>
-                      </select>
-                    </div>
-                    {layerEvent.trigger === "percentage" && (
-                      <RangeField
-                        label="Chosen point"
-                        value={Math.round(layerEvent.percentage * 100)}
-                        defaultValue={60}
-                        min={1}
-                        max={99}
-                        unit="%"
-                        help="Starts the target partway through each playback. For example, 60% of a 500 ms layer is 300 ms after that layer begins."
-                        onChange={(percentage) =>
-                          setEvent(layerEvent.id, {
-                            percentage: percentage / 100,
-                          })
-                        }
-                      />
-                    )}
-                    {isCopyFinish && (
-                      <FieldGroup>
-                        <RangeField
-                          label="Chance for each copy"
-                          value={Math.round(layerEvent.chance * 100)}
-                          defaultValue={100}
-                          min={0}
-                          max={100}
-                          unit="%"
-                          help="A deterministic chance checked separately for each original copy. The same project seed always chooses the same copies."
-                          onChange={(chance) =>
-                            setEvent(layerEvent.id, { chance: chance / 100 })
-                          }
-                        />
-                        <RangeField
-                          label="Maximum plays"
-                          value={layerEvent.maxTriggers}
-                          defaultValue={32}
-                          min={1}
-                          max={250}
-                          unit=""
-                          help="Caps this event for each source playback before it can create too many follow-up sprites."
-                          onChange={(maxTriggers) =>
-                            setEvent(layerEvent.id, { maxTriggers })
-                          }
-                        />
-                      </FieldGroup>
-                    )}
-                    {isCopyFinish ? (
-                      <small className="event-derived-time">
-                        Times vary per copy. The target&apos;s Start delay and
-                        property moments begin from each copy&apos;s exact
-                        finish.
-                      </small>
-                    ) : layer.startMode === "timeline" ? (
-                      <small className="event-derived-time">
-                        First Timeline occurrence: about{" "}
-                        {Math.round(derivedTime)}
-                        ms
-                      </small>
-                    ) : null}
-                    {isCopyFinish ? (
-                      <p className="inspector-hint">
-                        <strong>Action:</strong> play the target at this
-                        copy&apos;s finish position. Its own transform remains a
-                        local offset from that spot.
-                      </p>
-                    ) : (
-                      <div className="field">
-                        <span className="field__label">
-                          <label htmlFor={`${eventFieldPrefix}-action`}>
-                            Do this
-                          </label>
-                          <HelpTip
-                            label={`Do this for event ${index + 1}`}
-                            text="Play waits if the target is already pending or active. Restart immediately begins a fresh activation and clears the old one."
-                          />
-                        </span>
-                        <select
-                          id={`${eventFieldPrefix}-action`}
-                          value={layerEvent.action}
-                          onChange={(event) =>
-                            setEvent(layerEvent.id, {
-                              action: event.target
-                                .value as VfxLayer["events"][number]["action"],
+            {layer.events.length === 0 ? (
+              <p className="inspector-hint">
+                Example: when “Bubble” finishes, restart “Bubble pop”.
+              </p>
+            ) : (
+              <div className="layer-event-list">
+                {layer.events.map((layerEvent, index) => {
+                  const target = layers.find(
+                    (candidate) => candidate.id === layerEvent.targetLayerId,
+                  );
+                  const groupDelay =
+                    groups.find((group) => group.id === layer.groupId)?.delay ??
+                    0;
+                  const derivedTime =
+                    groupDelay +
+                    layer.timing.delay +
+                    (layerEvent.trigger === "percentage"
+                      ? layer.timing.duration * layerEvent.percentage
+                      : layerEvent.trigger === "finish"
+                        ? layer.timing.duration *
+                          (boundedLayerRepeat(layer.timing.repeat) + 1)
+                        : layerEvent.trigger === "repeat"
+                          ? layer.timing.duration
+                          : 0);
+                  const isCopyFinish = layerEvent.trigger === "copy-finish";
+                  const eventFieldPrefix = `${fieldIdPrefix}-event-${index}`;
+                  return (
+                    <article className="layer-event-card" key={layerEvent.id}>
+                      <header>
+                        <strong>Event {index + 1}</strong>
+                        <button
+                          type="button"
+                          className="danger-icon"
+                          aria-label={`Delete event ${index + 1}`}
+                          title="Delete event"
+                          onClick={() =>
+                            onChange({
+                              ...layer,
+                              events: layer.events.filter(
+                                (event) => event.id !== layerEvent.id,
+                              ),
                             })
                           }
                         >
-                          <option value="play">Play target if free</option>
-                          <option value="restart">Restart target</option>
+                          <Trash2 size={14} />
+                        </button>
+                      </header>
+                      <Toggle
+                        label="Event enabled"
+                        checked={layerEvent.enabled}
+                        help="Disabled events stay saved but do not start their target."
+                        onChange={(enabled) =>
+                          setEvent(layerEvent.id, { enabled })
+                        }
+                      />
+                      <div className="field">
+                        <span className="field__label">
+                          <label htmlFor={`${eventFieldPrefix}-trigger`}>
+                            When this happens
+                          </label>
+                          <HelpTip
+                            label={`When this happens for event ${index + 1}`}
+                            text="Choose a layer-level moment, or let every authored Burst/Repeating copy trigger from the exact spot where it disappears. Trail afterimages never trigger events."
+                          />
+                        </span>
+                        <select
+                          id={`${eventFieldPrefix}-trigger`}
+                          value={layerEvent.trigger}
+                          onChange={(event) => {
+                            const trigger = event.target
+                              .value as VfxLayer["events"][number]["trigger"];
+                            setEvent(layerEvent.id, {
+                              trigger,
+                              ...(trigger === "copy-finish"
+                                ? {
+                                    action: "play" as const,
+                                    targetLayerId:
+                                      firstSafeCopyFinishTarget?.id ??
+                                      layerEvent.targetLayerId,
+                                  }
+                                : {}),
+                            });
+                          }}
+                        >
+                          <option value="start">Layer starts</option>
+                          <option
+                            value="percentage"
+                            disabled={layer.type === "emitter"}
+                          >
+                            Layer reaches a chosen point
+                          </option>
+                          <option
+                            value="finish"
+                            disabled={layer.type === "emitter"}
+                          >
+                            Layer finishes
+                          </option>
+                          <option value="repeat">
+                            {layer.type === "emitter"
+                              ? "A new emission batch starts"
+                              : "Layer repeats"}
+                          </option>
+                          <option
+                            value="copy-finish"
+                            disabled={!isSpawnLayer(layer)}
+                          >
+                            Each copy finishes at its spot
+                          </option>
                         </select>
                       </div>
-                    )}
-                    <div className="field">
-                      <span className="field__label">
-                        <label htmlFor={`${eventFieldPrefix}-target`}>
-                          Target layer
-                        </label>
-                        <HelpTip
-                          label={`Target layer for event ${index + 1}`}
-                          text="The layer that should play. Event loops are blocked so one effect cannot recursively trigger forever."
+                      {layerEvent.trigger === "percentage" && (
+                        <RangeField
+                          label="Chosen point"
+                          value={Math.round(layerEvent.percentage * 100)}
+                          defaultValue={60}
+                          min={1}
+                          max={99}
+                          unit="%"
+                          help="Starts the target partway through each playback. For example, 60% of a 500 ms layer is 300 ms after that layer begins."
+                          onChange={(percentage) =>
+                            setEvent(layerEvent.id, {
+                              percentage: percentage / 100,
+                            })
+                          }
                         />
-                      </span>
-                      <select
-                        id={`${eventFieldPrefix}-target`}
-                        value={layerEvent.targetLayerId}
-                        onChange={(event) =>
-                          setEvent(layerEvent.id, {
-                            targetLayerId: event.target.value,
-                          })
-                        }
-                      >
-                        {layers
-                          .filter((candidate) => candidate.id !== layer.id)
-                          .map((candidate) => (
-                            <option
-                              key={candidate.id}
-                              value={candidate.id}
-                              disabled={
-                                eventTargetWouldCycle(
-                                  layers,
-                                  layer.id,
-                                  candidate.id,
-                                  layerEvent.id,
-                                  layerEvent.enabled,
-                                ) ||
-                                (isCopyFinish &&
-                                  !copyFinishTargetIsSafe(candidate))
-                              }
-                            >
-                              {candidate.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    {target?.startMode === "timeline" && (
-                      <p className="inspector-hint inspector-hint--warning">
-                        “{target.name}” also starts automatically on its normal
-                        Timeline. Turn that off in its Timing section if it
-                        should only play from this event.
-                      </p>
-                    )}
-                    {isCopyFinish &&
-                      target &&
-                      !copyFinishTargetIsSafe(target) && (
+                      )}
+                      {isCopyFinish && (
+                        <FieldGroup>
+                          <RangeField
+                            label="Chance for each copy"
+                            value={Math.round(layerEvent.chance * 100)}
+                            defaultValue={100}
+                            min={0}
+                            max={100}
+                            unit="%"
+                            help="A deterministic chance checked separately for each original copy. The same project seed always chooses the same copies."
+                            onChange={(chance) =>
+                              setEvent(layerEvent.id, { chance: chance / 100 })
+                            }
+                          />
+                          <RangeField
+                            label="Maximum plays"
+                            value={layerEvent.maxTriggers}
+                            defaultValue={32}
+                            min={1}
+                            max={250}
+                            unit=""
+                            help="Caps this event for each source playback before it can create too many follow-up sprites."
+                            onChange={(maxTriggers) =>
+                              setEvent(layerEvent.id, { maxTriggers })
+                            }
+                          />
+                        </FieldGroup>
+                      )}
+                      {isCopyFinish ? (
+                        <small className="event-derived-time">
+                          Times vary per copy. The target&apos;s Start delay and
+                          property moments begin from each copy&apos;s exact
+                          finish.
+                        </small>
+                      ) : layer.startMode === "timeline" ? (
+                        <small className="event-derived-time">
+                          First Timeline occurrence: about{" "}
+                          {Math.round(derivedTime)}
+                          ms
+                        </small>
+                      ) : null}
+                      {isCopyFinish ? (
+                        <p className="inspector-hint">
+                          <strong>Action:</strong> play the target at this
+                          copy&apos;s finish position. Its own transform remains
+                          a local offset from that spot.
+                        </p>
+                      ) : (
+                        <div className="field">
+                          <span className="field__label">
+                            <label htmlFor={`${eventFieldPrefix}-action`}>
+                              Do this
+                            </label>
+                            <HelpTip
+                              label={`Do this for event ${index + 1}`}
+                              text="Play waits if the target is already pending or active. Restart immediately begins a fresh activation and clears the old one."
+                            />
+                          </span>
+                          <select
+                            id={`${eventFieldPrefix}-action`}
+                            value={layerEvent.action}
+                            onChange={(event) =>
+                              setEvent(layerEvent.id, {
+                                action: event.target
+                                  .value as VfxLayer["events"][number]["action"],
+                              })
+                            }
+                          >
+                            <option value="play">Play target if free</option>
+                            <option value="restart">Restart target</option>
+                          </select>
+                        </div>
+                      )}
+                      <div className="field">
+                        <span className="field__label">
+                          <label htmlFor={`${eventFieldPrefix}-target`}>
+                            Target layer
+                          </label>
+                          <HelpTip
+                            label={`Target layer for event ${index + 1}`}
+                            text="The layer that should play. Event loops are blocked so one effect cannot recursively trigger forever."
+                          />
+                        </span>
+                        <select
+                          id={`${eventFieldPrefix}-target`}
+                          value={layerEvent.targetLayerId}
+                          onChange={(event) =>
+                            setEvent(layerEvent.id, {
+                              targetLayerId: event.target.value,
+                            })
+                          }
+                        >
+                          {layers
+                            .filter((candidate) => candidate.id !== layer.id)
+                            .map((candidate) => (
+                              <option
+                                key={candidate.id}
+                                value={candidate.id}
+                                disabled={
+                                  eventTargetWouldCycle(
+                                    layers,
+                                    layer.id,
+                                    candidate.id,
+                                    layerEvent.id,
+                                    layerEvent.enabled,
+                                  ) ||
+                                  (isCopyFinish &&
+                                    !copyFinishTargetIsSafe(candidate))
+                                }
+                              >
+                                {candidate.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      {target?.startMode === "timeline" && (
                         <p className="inspector-hint inspector-hint--warning">
-                          Copy-finish targets should be finite Triggered
-                          animated images or bursts without an attachment. This
-                          keeps each spatial cascade bounded and predictable.
+                          “{target.name}” also starts automatically on its
+                          normal Timeline. Turn that off in its Timing section
+                          if it should only play from this event.
                         </p>
                       )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-          <button
-            type="button"
-            disabled={!firstSafeEventTarget || layer.events.length >= 16}
-            onClick={() => {
-              if (!firstSafeEventTarget) return;
-              onChange({
-                ...layer,
-                events: [
-                  ...layer.events,
-                  {
-                    id: makeId("event"),
-                    enabled: true,
-                    trigger: layer.type === "emitter" ? "repeat" : "finish",
-                    percentage: 0.6,
-                    action: "play",
-                    targetLayerId: firstSafeEventTarget.id,
-                    chance: 1,
-                    maxTriggers: 32,
-                  },
-                ],
-              });
-            }}
-          >
-            <Plus size={14} /> Add layer event
-          </button>
-          {isSpawnLayer(layer) && (
+                      {isCopyFinish &&
+                        target &&
+                        !copyFinishTargetIsSafe(target) && (
+                          <p className="inspector-hint inspector-hint--warning">
+                            Copy-finish targets should be finite Triggered
+                            animated images or bursts without an attachment.
+                            This keeps each spatial cascade bounded and
+                            predictable.
+                          </p>
+                        )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
             <button
               type="button"
-              disabled={!firstSafeCopyFinishTarget || layer.events.length >= 16}
+              disabled={!firstSafeEventTarget || layer.events.length >= 16}
               onClick={() => {
-                if (!firstSafeCopyFinishTarget) return;
+                if (!firstSafeEventTarget) return;
                 onChange({
                   ...layer,
                   events: [
@@ -1953,10 +1941,10 @@ export function Inspector({
                     {
                       id: makeId("event"),
                       enabled: true,
-                      trigger: "copy-finish",
-                      percentage: 0.5,
+                      trigger: layer.type === "emitter" ? "repeat" : "finish",
+                      percentage: 0.6,
                       action: "play",
-                      targetLayerId: firstSafeCopyFinishTarget.id,
+                      targetLayerId: firstSafeEventTarget.id,
                       chance: 1,
                       maxTriggers: 32,
                     },
@@ -1964,19 +1952,48 @@ export function Inspector({
                 });
               }}
             >
-              <Plus size={14} /> Add copy-finish event
+              <Plus size={14} /> Add layer event
             </button>
-          )}
-          {isSpawnLayer(layer) && !firstSafeCopyFinishTarget && (
-            <p className="inspector-hint">
-              To add a spatial follow-up, first create a finite Animated image
-              or Burst and set its Timing start to Triggered by an event.
-            </p>
-          )}
-          {layer.events.length >= 16 && (
-            <p className="inspector-hint">Maximum 16 events per layer.</p>
-          )}
-        </SettingsSection>
+            {isSpawnLayer(layer) && (
+              <button
+                type="button"
+                disabled={
+                  !firstSafeCopyFinishTarget || layer.events.length >= 16
+                }
+                onClick={() => {
+                  if (!firstSafeCopyFinishTarget) return;
+                  onChange({
+                    ...layer,
+                    events: [
+                      ...layer.events,
+                      {
+                        id: makeId("event"),
+                        enabled: true,
+                        trigger: "copy-finish",
+                        percentage: 0.5,
+                        action: "play",
+                        targetLayerId: firstSafeCopyFinishTarget.id,
+                        chance: 1,
+                        maxTriggers: 32,
+                      },
+                    ],
+                  });
+                }}
+              >
+                <Plus size={14} /> Add copy-finish event
+              </button>
+            )}
+            {isSpawnLayer(layer) && !firstSafeCopyFinishTarget && (
+              <p className="inspector-hint">
+                To add a spatial follow-up, first create a finite Animated image
+                or Burst and set its Timing start to Triggered by an event.
+              </p>
+            )}
+            {layer.events.length >= 16 && (
+              <p className="inspector-hint">Maximum 16 events per layer.</p>
+            )}
+          </SettingsSection>
+        )}
 
         <SettingsSection title="Appearance" icon={<Palette size={15} />}>
           <div className="field color-field">
@@ -3001,87 +3018,103 @@ export function Inspector({
           </SettingsSection>
         )}
 
-        <SettingsSection title="Advanced" icon={<RotateCw size={15} />}>
-          <SelectField
-            label="Attach to layer"
-            value={layer.parentId ?? ""}
-            help="Keeps this effect positioned relative to another layer. If the other layer moves, this one follows."
-            onChange={(parentId) =>
-              onChange({ ...layer, parentId: parentId || null })
-            }
+        {(showAdvanced || layer.parentId || layer.transform.separateScale) && (
+          <SettingsSection title="Advanced" icon={<RotateCw size={15} />}>
+            <SelectField
+              label="Attach to layer"
+              value={layer.parentId ?? ""}
+              help="Keeps this effect positioned relative to another layer. If the other layer moves, this one follows."
+              onChange={(parentId) =>
+                onChange({ ...layer, parentId: parentId || null })
+              }
+            >
+              <option value="">Nothing — place freely</option>
+              {layers
+                .filter((candidate) =>
+                  canAttachLayer(layers, layer.id, candidate.id),
+                )
+                .map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </option>
+                ))}
+            </SelectField>
+            {layer.type !== "beam" && (
+              <Toggle
+                label="Separate width and height"
+                checked={layer.transform.separateScale}
+                help="Lets you stretch the image wider or taller instead of resizing it evenly."
+                onChange={(separateScale) => setTransform({ separateScale })}
+              />
+            )}
+            {layer.type !== "beam" && layer.transform.separateScale && (
+              <FieldGroup>
+                <RangeField
+                  label="Starting width"
+                  value={layer.transform.startScaleX * 100}
+                  defaultValue={100}
+                  min={0}
+                  max={400}
+                  unit="%"
+                  help="The horizontal size when this layer appears. Use separate size for stretched rings or streaks."
+                  onChange={(value) =>
+                    setTransform({ startScaleX: value / 100 })
+                  }
+                />
+                <RangeField
+                  label="Starting height"
+                  value={layer.transform.startScaleY * 100}
+                  defaultValue={100}
+                  min={0}
+                  max={400}
+                  unit="%"
+                  help="The vertical size when this layer appears."
+                  onChange={(value) =>
+                    setTransform({ startScaleY: value / 100 })
+                  }
+                />
+                {layer.type !== "static" && (
+                  <>
+                    <RangeField
+                      label="Ending width"
+                      value={layer.transform.endScaleX * 100}
+                      defaultValue={100}
+                      min={0}
+                      max={400}
+                      unit="%"
+                      help="The horizontal size at the end of this layer's lifetime."
+                      onChange={(value) =>
+                        setTransform({ endScaleX: value / 100 })
+                      }
+                    />
+                    <RangeField
+                      label="Ending height"
+                      value={layer.transform.endScaleY * 100}
+                      defaultValue={100}
+                      min={0}
+                      max={400}
+                      unit="%"
+                      help="The vertical size at the end of this layer's lifetime."
+                      onChange={(value) =>
+                        setTransform({ endScaleY: value / 100 })
+                      }
+                    />
+                  </>
+                )}
+              </FieldGroup>
+            )}
+          </SettingsSection>
+        )}
+        {!showAdvanced && onShowAdvanced && (
+          <button
+            type="button"
+            className="show-advanced-button"
+            onClick={onShowAdvanced}
           >
-            <option value="">Nothing — place freely</option>
-            {layers
-              .filter((candidate) =>
-                canAttachLayer(layers, layer.id, candidate.id),
-              )
-              .map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-          </SelectField>
-          {layer.type !== "beam" && (
-            <Toggle
-              label="Separate width and height"
-              checked={layer.transform.separateScale}
-              help="Lets you stretch the image wider or taller instead of resizing it evenly."
-              onChange={(separateScale) => setTransform({ separateScale })}
-            />
-          )}
-          {layer.type !== "beam" && layer.transform.separateScale && (
-            <FieldGroup>
-              <RangeField
-                label="Starting width"
-                value={layer.transform.startScaleX * 100}
-                defaultValue={100}
-                min={0}
-                max={400}
-                unit="%"
-                help="The horizontal size when this layer appears. Use separate size for stretched rings or streaks."
-                onChange={(value) => setTransform({ startScaleX: value / 100 })}
-              />
-              <RangeField
-                label="Starting height"
-                value={layer.transform.startScaleY * 100}
-                defaultValue={100}
-                min={0}
-                max={400}
-                unit="%"
-                help="The vertical size when this layer appears."
-                onChange={(value) => setTransform({ startScaleY: value / 100 })}
-              />
-              {layer.type !== "static" && (
-                <>
-                  <RangeField
-                    label="Ending width"
-                    value={layer.transform.endScaleX * 100}
-                    defaultValue={100}
-                    min={0}
-                    max={400}
-                    unit="%"
-                    help="The horizontal size at the end of this layer's lifetime."
-                    onChange={(value) =>
-                      setTransform({ endScaleX: value / 100 })
-                    }
-                  />
-                  <RangeField
-                    label="Ending height"
-                    value={layer.transform.endScaleY * 100}
-                    defaultValue={100}
-                    min={0}
-                    max={400}
-                    unit="%"
-                    help="The vertical size at the end of this layer's lifetime."
-                    onChange={(value) =>
-                      setTransform({ endScaleY: value / 100 })
-                    }
-                  />
-                </>
-              )}
-            </FieldGroup>
-          )}
-        </SettingsSection>
+            Show advanced controls
+            <small>Groups, layer events, attachments, and atlas frames</small>
+          </button>
+        )}
       </div>
     </aside>
   );

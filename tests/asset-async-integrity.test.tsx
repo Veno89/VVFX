@@ -131,6 +131,11 @@ async function saveVisibleProject(): Promise<VfxProject> {
 }
 
 beforeEach(() => {
+  // Spawn-silhouette preparation lives behind Advanced controls.
+  window.localStorage.setItem(
+    "vvfx-workspace-v1",
+    JSON.stringify({ controlLevel: "advanced" }),
+  );
   alphaMaskImport.prepareAlphaMaskFromDataUrl.mockReset();
   embeddedImageValidation.verifyEmbeddedAssetImages.mockReset();
   embeddedImageValidation.verifyEmbeddedAssetImages.mockResolvedValue(

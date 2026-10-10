@@ -167,6 +167,7 @@ import {
   WORKSPACE_TEXT_SCALES,
   workspaceProjectView,
   type ProjectWorkspaceView,
+  type WorkspaceControlLevel,
   type WorkspaceTextScale,
 } from "./workspace";
 
@@ -534,6 +535,12 @@ export function VfxEditor() {
       root.style.fontSize = "";
     };
   }, [workspace.textScale]);
+  const showAdvanced = workspace.controlLevel === "advanced";
+  const setControlLevel = useCallback(
+    (controlLevel: WorkspaceControlLevel) =>
+      setWorkspace((current) => ({ ...current, controlLevel })),
+    [],
+  );
   const beginResize = useCallback(
     (
       event: ReactPointerEvent<HTMLElement>,
@@ -2250,6 +2257,7 @@ export function VfxEditor() {
       <div className="editor-workspace">
         <div className="left-rail">
           <AssetPanel
+            showAdvanced={showAdvanced}
             assets={project.assets}
             projectGeneration={renderedProjectGeneration}
             selectedId={effectiveSelectedAssetId}
@@ -2341,6 +2349,7 @@ export function VfxEditor() {
             }
           />
           <LayerPanel
+            showAdvanced={showAdvanced}
             layers={project.layers}
             groups={project.groups}
             selectedId={effectiveSelectedId}
@@ -2595,6 +2604,8 @@ export function VfxEditor() {
           />
         ) : (
           <Inspector
+            showAdvanced={showAdvanced}
+            onShowAdvanced={() => setControlLevel("advanced")}
             layer={selectedLayer}
             assets={project.assets}
             groups={project.groups}
@@ -2782,14 +2793,27 @@ export function VfxEditor() {
 
       <footer className="statusbar">
         <span>
-          <CheckCircle2 size={13} /> Ready · {project.layers.length} layers ·
-          {project.groups.length} groups · seed {project.preview.randomSeed}
+          <CheckCircle2 size={13} /> Ready · {project.layers.length} layers
+          {showAdvanced &&
+            ` · ${project.groups.length} groups · seed ${project.preview.randomSeed}`}
         </span>
         {performanceWarning && (
           <span className="performance-note">
             <Info size={13} /> Preview is safely limited to 500 sprites at once.
           </span>
         )}
+        <label className="text-size-control">
+          Controls
+          <select
+            value={workspace.controlLevel}
+            onChange={(event) =>
+              setControlLevel(event.target.value as WorkspaceControlLevel)
+            }
+          >
+            <option value="beginner">Beginner</option>
+            <option value="advanced">Advanced</option>
+          </select>
+        </label>
         <label className="text-size-control">
           Text size
           <select

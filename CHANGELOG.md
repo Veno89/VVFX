@@ -8,6 +8,11 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- **Beginner / Advanced controls** (status bar). Beginner, the default for new
+  browsers, hides effect groups, layer events, attachments, atlas frames,
+  visual-mask and spawn-silhouette preparation, relinking, and the seed until
+  a layer already uses them; "Show advanced controls" at the end of the
+  Inspector switches over. Browsers with an existing workspace keep Advanced.
 - A **Text size** setting (100%, 112.5%, 125%) in the status bar, saved with
   the browser workspace.
 - An inline app icon, so browsers no longer request a missing `/favicon.ico`.

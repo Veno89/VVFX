@@ -65,6 +65,24 @@ describe("professional workspace preferences", () => {
     ]);
   });
 
+  it("starts new people in Beginner controls and keeps existing workspaces Advanced", () => {
+    expect(
+      normalizeWorkspacePreferences(DEFAULT_WORKSPACE_PREFERENCES).controlLevel,
+    ).toBe("beginner");
+    expect(normalizeWorkspacePreferences({ leftWidth: 300 }).controlLevel).toBe(
+      "advanced",
+    );
+    expect(
+      normalizeWorkspacePreferences({
+        controlLevel: "beginner",
+        leftWidth: 300,
+      }).controlLevel,
+    ).toBe("beginner");
+    expect(
+      normalizeWorkspacePreferences({ controlLevel: "expert" }).controlLevel,
+    ).toBe("advanced");
+  });
+
   it("keeps only supported interface text scales", () => {
     expect(normalizeWorkspacePreferences({ textScale: 1.25 }).textScale).toBe(
       1.25,

@@ -28,12 +28,15 @@ export interface WorkspacePreferences {
   assetSplit: number;
   /** Interface text scale relative to the browser's base font size. */
   textScale: WorkspaceTextScale;
+  /** Beginner hides advanced controls the current layer does not use. */
+  controlLevel: WorkspaceControlLevel;
   projectOrder: string[];
   projects: Record<string, ProjectWorkspaceView>;
 }
 
 export const WORKSPACE_TEXT_SCALES = [1, 1.125, 1.25] as const;
 export type WorkspaceTextScale = (typeof WORKSPACE_TEXT_SCALES)[number];
+export type WorkspaceControlLevel = "beginner" | "advanced";
 
 interface WorkspaceStorageReader {
   getItem(key: string): string | null;
@@ -59,6 +62,7 @@ export const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
   timelineHeight: 250,
   assetSplit: 42,
   textScale: 1,
+  controlLevel: "beginner",
   projectOrder: [],
   projects: Object.create(null) as Record<string, ProjectWorkspaceView>,
 };
@@ -152,6 +156,14 @@ export function normalizeWorkspacePreferences(
     assetSplit: bounded(input.assetSplit, 42, 25, 70),
     textScale:
       WORKSPACE_TEXT_SCALES.find((scale) => scale === input.textScale) ?? 1,
+    // Workspaces saved before this setting existed belong to people who
+    // already know the editor, so they keep every control.
+    controlLevel:
+      input.controlLevel === "beginner" || input.controlLevel === "advanced"
+        ? input.controlLevel
+        : Object.keys(input).length > 0
+          ? "advanced"
+          : "beginner",
     projectOrder,
     projects,
   };

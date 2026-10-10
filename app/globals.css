@@ -6235,3 +6235,28 @@ kbd {
 .tour-card--start {
   width: min(540px, calc(100vw - 32px));
 }
+.text-size-control + .text-size-control {
+  margin-left: 0;
+}
+.show-advanced-button {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  color: var(--cyan);
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--border-bright);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+.show-advanced-button:hover {
+  background: var(--cyan-soft);
+}
+.show-advanced-button small {
+  color: var(--faint);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}

@@ -476,6 +476,7 @@ export function AssetPanel({
   usageCounts = {},
   onRelink,
   onError,
+  showAdvanced = true,
 }: {
   assets: VfxAsset[];
   projectGeneration?: number;
@@ -494,6 +495,8 @@ export function AssetPanel({
   usageCounts?: Record<string, number>;
   onRelink?: (sourceAssetId: string, targetAssetId: string) => void;
   onError: (message: string) => void;
+  /** Beginner mode hides masking and relink tools on asset cards. */
+  showAdvanced?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const replacementInputRef = useRef<HTMLInputElement>(null);
@@ -1011,21 +1014,23 @@ export function AssetPanel({
             )}
             {selectedId === asset.id && (
               <div className="asset-card__details">
-                <AssetVisualMaskStatus asset={asset} />
+                {showAdvanced && <AssetVisualMaskStatus asset={asset} />}
                 {!asset.builtIn && (
                   <>
-                    <AssetSpawnMaskSetup
-                      asset={asset}
-                      isPreparing={preparingAssetId === asset.id}
-                      onPrepare={() => void prepareLegacyAsset(asset)}
-                    />
+                    {showAdvanced && (
+                      <AssetSpawnMaskSetup
+                        asset={asset}
+                        isPreparing={preparingAssetId === asset.id}
+                        onPrepare={() => void prepareLegacyAsset(asset)}
+                      />
+                    )}
                     <AssetFlipbookSetup
                       asset={asset}
                       onChange={onChangeAsset}
                     />
                   </>
                 )}
-                {onRelink && (
+                {onRelink && showAdvanced && (
                   <AssetRelinkControl
                     asset={asset}
                     assets={assets}

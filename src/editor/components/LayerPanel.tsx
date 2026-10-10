@@ -90,6 +90,7 @@ export function LayerPanel({
   onDeleteFolder,
   onMoveToFolder,
   onToggleLock,
+  showAdvanced = true,
 }: {
   layers: VfxLayer[];
   groups: VfxGroup[];
@@ -118,6 +119,8 @@ export function LayerPanel({
   onDeleteFolder?: (id: string) => void;
   onMoveToFolder?: (layerId: string, folderId: string | null) => void;
   onToggleLock?: (layerId: string) => void;
+  /** Beginner mode hides the empty effect-group block. */
+  showAdvanced?: boolean;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
@@ -472,46 +475,51 @@ export function LayerPanel({
           </button>
         )}
       </div>
-      <div className="group-list-block">
-        <div className="group-list-heading">
-          <span>
-            <Boxes size={13} /> Effect groups{" "}
-            <HelpTip
-              label="Effect groups"
-              text="Group related layers to move or delay them together."
-            />
-          </span>
-          <button type="button" onClick={onCreateGroup}>
-            <Plus size={12} /> Group
-          </button>
-        </div>
-        {groups.length === 0 ? null : (
-          <div className="group-list">
-            {groups.map((group) => {
-              const members = layers.filter(
-                (layer) => layer.groupId === group.id,
-              ).length;
-              return (
-                <button
-                  key={group.id}
-                  type="button"
-                  className={selectedGroupId === group.id ? "is-selected" : ""}
-                  onClick={() => onSelectGroup(group.id)}
-                >
-                  <Boxes size={13} />
-                  <span>
-                    <strong>{group.name}</strong>
-                    <small>
-                      {members} layer{members === 1 ? "" : "s"} · +{group.delay}
-                      ms
-                    </small>
-                  </span>
-                </button>
-              );
-            })}
+      {(showAdvanced || groups.length > 0) && (
+        <div className="group-list-block">
+          <div className="group-list-heading">
+            <span>
+              <Boxes size={13} /> Effect groups{" "}
+              <HelpTip
+                label="Effect groups"
+                text="Group related layers to move or delay them together."
+              />
+            </span>
+            <button type="button" onClick={onCreateGroup}>
+              <Plus size={12} /> Group
+            </button>
           </div>
-        )}
-      </div>
+          {groups.length === 0 ? null : (
+            <div className="group-list">
+              {groups.map((group) => {
+                const members = layers.filter(
+                  (layer) => layer.groupId === group.id,
+                ).length;
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    className={
+                      selectedGroupId === group.id ? "is-selected" : ""
+                    }
+                    onClick={() => onSelectGroup(group.id)}
+                  >
+                    <Boxes size={13} />
+                    <span>
+                      <strong>{group.name}</strong>
+                      <small>
+                        {members} layer{members === 1 ? "" : "s"} · +
+                        {group.delay}
+                        ms
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {bulkMode && onBulkConvert && (
         <div className="layer-bulk-bar" role="group" aria-label="Bulk layers">
           <div className="layer-bulk-bar__summary">

@@ -6,7 +6,10 @@ first day while still exposing useful timing, movement, spawning, randomness,
 behavior, blending, and Phaser export controls.
 
 New projects begin with an empty layer list and four built-in practice shapes.
-A first-run workspace tour explains each area, and the Learn menu includes a
+New browsers start in **Beginner** controls, which hide grouping, events,
+attachments, atlas frames, and masking tools until you switch the status-bar
+**Controls** menu to Advanced. A first-run workspace tour explains each area,
+and the Learn menu includes a
 guided build, complete-effect recipes, a glossary, and clear advice about what
 belongs in Vvfx versus an image editor.
 

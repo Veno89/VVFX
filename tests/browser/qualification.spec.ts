@@ -129,6 +129,10 @@ test("@cross-browser sprite-sheet and atlas geometry survives the Runtime JSON b
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openEditor(page);
+  // Atlas frame mapping is an Advanced control.
+  await page
+    .getByRole("combobox", { name: "Controls" })
+    .selectOption("advanced");
   await page
     .locator('input[type="file"][multiple]')
     .setInputFiles(imagePayload("mapped-source.png", validPngBytes(128, 64)));

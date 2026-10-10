@@ -92,15 +92,12 @@ const legacyAsset: VfxAsset = {
 };
 
 function dropFiles(files: File[]) {
-  fireEvent.drop(
-    screen.getByRole("button", { name: /bring in your images/i }),
-    {
-      dataTransfer: {
-        files,
-        types: ["Files"],
-      },
+  fireEvent.drop(screen.getByRole("button", { name: /^add images/i }), {
+    dataTransfer: {
+      files,
+      types: ["Files"],
     },
-  );
+  });
 }
 
 function dropPng(name = "Slow upload.png") {

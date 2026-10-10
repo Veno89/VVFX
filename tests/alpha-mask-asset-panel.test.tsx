@@ -49,17 +49,12 @@ describe("asset spawn-silhouette preparation guidance", () => {
       />,
     );
 
-    fireEvent.drop(
-      screen.getByRole("button", { name: /bring in your images/i }),
-      {
-        dataTransfer: {
-          files: [
-            new File(["not an image"], "mask.jpg", { type: "image/jpeg" }),
-          ],
-          types: ["Files"],
-        },
+    fireEvent.drop(screen.getByRole("button", { name: /^add images/i }), {
+      dataTransfer: {
+        files: [new File(["not an image"], "mask.jpg", { type: "image/jpeg" })],
+        types: ["Files"],
       },
-    );
+    });
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Vvfx can currently import PNG and WebP images.",

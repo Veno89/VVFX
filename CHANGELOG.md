@@ -8,6 +8,11 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- A **Shape library** with 23 ready-made white shapes (glow dot, rings, star,
+  sparkle, flare, shard, droplet, slash arc, lightning bolt, rune circle, smoke
+  puff, beam band, and more). Picking one adds an ordinary embedded PNG
+  through the normal upload path, so it tints, exports, and plays in the
+  runtime like any upload with no format change.
 - **Beginner / Advanced controls** (status bar). Beginner, the default for new
   browsers, hides effect groups, layer events, attachments, atlas frames,
   visual-mask and spawn-silhouette preparation, relinking, and the seed until
@@ -52,6 +57,8 @@ uses semantic versions for release artifacts.
   6.5 px), so browser text settings apply. Sliders, help icons, and switches
   have larger pointer targets; layer rows show a Solo icon instead of "S" and
   keep their actions visible at 60% opacity.
+- The Asset Library's upload and Shapes buttons share one compact row, and
+  Beginner upload notices no longer mention spawn silhouettes.
 - The top bar no longer wraps, the layer panel's explainer paragraphs moved
   into help tips, and the white-artwork tip joined the upload hint so the
   layer list and asset list keep their space. The default left rail is

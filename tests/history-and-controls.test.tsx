@@ -347,7 +347,7 @@ describe("beginner-friendly controls", () => {
         onError={onError}
       />,
     );
-    const zone = screen.getByRole("button", { name: /bring in your images/i });
+    const zone = screen.getByRole("button", { name: /^add images/i });
     const file = new File(["not an image"], "photo.jpg", {
       type: "image/jpeg",
     });

@@ -11,6 +11,7 @@ import {
   Trash2,
   Upload,
   WandSparkles,
+  Shapes,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { prepareAlphaMaskFromDataUrl } from "../alphaMaskImport";
@@ -38,6 +39,8 @@ import {
 } from "../../vfx/spriteSheet";
 import type { VfxAsset } from "../../vfx/types";
 import { FlipbookPreview } from "./FlipbookPreview";
+import { ShapeLibraryDialog } from "./ShapeLibraryDialog";
+import { LIBRARY_SHAPES, renderLibraryShape } from "../shapeLibrary";
 
 export type PreparedAssetMetadata = Pick<
   VfxAsset,
@@ -503,6 +506,7 @@ export function AssetPanel({
   const activeUploadRef = useRef<AbortController | null>(null);
   const activeLegacyPreparationRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const [shapeLibraryOpen, setShapeLibraryOpen] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [preparingUploads, setPreparingUploads] = useState(false);
   const [preparingAssetId, setPreparingAssetId] = useState<string | null>(null);
@@ -562,7 +566,7 @@ export function AssetPanel({
     };
   }, []);
 
-  const handleFiles = async (files: FileList | null) => {
+  const handleFiles = async (files: FileList | File[] | null) => {
     if (!files?.length || preparingUploads || activeUploadRef.current) return;
     const uploadProjectGeneration = projectGeneration;
     if (files.length > MAX_UPLOAD_FILES) {
@@ -664,8 +668,9 @@ export function AssetPanel({
       if (activeUploadRef.current === controller)
         setPreparationNotice({
           kind: "status",
-          message:
-            readyCount === uploaded.length
+          message: !showAdvanced
+            ? `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added.`
+            : readyCount === uploaded.length
               ? `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added with ${uploaded.length === 1 ? "a spawn silhouette" : "spawn silhouettes"} ready.`
               : `${uploaded.length === 1 ? uploaded[0].name : `${uploaded.length} images`} added. ${uploaded.length - readyCount} contained no visible pixels for silhouette spawning.`,
         });
@@ -849,55 +854,87 @@ export function AssetPanel({
           <Upload size={16} />
         </button>
       </div>
-      <button
-        data-asset-dropzone
-        className={`upload-zone ${draggingFiles ? "is-dragging" : ""}`}
-        type="button"
-        disabled={preparingUploads}
-        aria-busy={preparingUploads}
-        onClick={() => inputRef.current?.click()}
-        onDragEnter={(event) => {
-          if (event.dataTransfer.types.includes("Files")) {
+      <div className="asset-source-row">
+        <button
+          data-asset-dropzone
+          className={`upload-zone ${draggingFiles ? "is-dragging" : ""}`}
+          type="button"
+          disabled={preparingUploads}
+          aria-busy={preparingUploads}
+          onClick={() => inputRef.current?.click()}
+          onDragEnter={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              setDraggingFiles(true);
+            }
+          }}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }
+          }}
+          onDragLeave={(event) => {
+            if (
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              setDraggingFiles(false);
+            }
+          }}
+          onDrop={(event) => {
             event.preventDefault();
-            setDraggingFiles(true);
-          }
-        }}
-        onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files")) {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "copy";
-          }
-        }}
-        onDragLeave={(event) => {
-          if (
-            !event.currentTarget.contains(event.relatedTarget as Node | null)
-          ) {
+            event.stopPropagation();
             setDraggingFiles(false);
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setDraggingFiles(false);
-          void handleFiles(event.dataTransfer.files);
-        }}
-      >
-        <ImagePlus size={18} />
-        <span>
-          <strong>
-            {preparingUploads
-              ? "Preparing images and silhouettes…"
-              : draggingFiles
-                ? "Drop to add images"
-                : "Bring in your images"}
-          </strong>
-          <small>
-            {preparingUploads
-              ? "This usually takes only a moment"
-              : "PNG or WebP · white art tints to any color"}
-          </small>
-        </span>
-      </button>
+            void handleFiles(event.dataTransfer.files);
+          }}
+        >
+          <ImagePlus size={18} />
+          <span>
+            <strong>
+              {preparingUploads
+                ? "Preparing images and silhouettes…"
+                : draggingFiles
+                  ? "Drop to add images"
+                  : "Add images"}
+            </strong>
+            <small>
+              {preparingUploads
+                ? "This usually takes only a moment"
+                : "PNG, WebP"}
+            </small>
+          </span>
+        </button>
+        <button
+          className="shape-library-button"
+          type="button"
+          disabled={preparingUploads}
+          onClick={() => setShapeLibraryOpen(true)}
+          title={`No art yet? Pick from ${LIBRARY_SHAPES.length} ready-made white shapes`}
+        >
+          <Shapes size={16} aria-hidden="true" />
+          <span>
+            <strong>Shapes</strong>
+            <small>{LIBRARY_SHAPES.length} ready-made</small>
+          </span>
+        </button>
+      </div>
+      {shapeLibraryOpen && (
+        <ShapeLibraryDialog
+          onClose={() => setShapeLibraryOpen(false)}
+          onPick={(shape) => {
+            setShapeLibraryOpen(false);
+            renderLibraryShape(shape)
+              .then((file) => handleFiles([file]))
+              .catch((error: unknown) =>
+                onError(
+                  error instanceof Error
+                    ? error.message
+                    : `${shape.name} could not be added.`,
+                ),
+              );
+          }}
+        />
+      )}
       <input
         ref={inputRef}
         hidden

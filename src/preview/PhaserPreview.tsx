@@ -662,14 +662,13 @@ export function PhaserPreview({
       if (instance.tint)
         sprite.setTint(tintNumber(instance.tint, instance.tintStrength));
       else sprite.clearTint();
-      sprite
-        .setBlendMode(instance.blendMode === "add" ? 1 : 0)
-        .setDepth(
-          Math.max(0, layerDepth) +
-            (instance.trailIndex === null
-              ? 0
-              : -0.01 - instance.trailIndex * 0.001),
-        );
+      sprite.setBlendMode(instance.blendMode === "add" ? 1 : 0);
+      const depth =
+        Math.max(0, layerDepth) +
+        (instance.trailIndex === null
+          ? 0
+          : -0.01 - instance.trailIndex * 0.001);
+      if (sprite.depth !== depth) sprite.setDepth(depth);
       syncPreviewRenderingEffects(
         scene,
         sprite,

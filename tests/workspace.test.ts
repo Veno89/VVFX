@@ -65,6 +65,17 @@ describe("professional workspace preferences", () => {
     ]);
   });
 
+  it("leaves the work range open for projects without a stored view", () => {
+    const view = workspaceProjectView(
+      DEFAULT_WORKSPACE_PREFERENCES,
+      "never-opened",
+      ["layer-a"],
+      3_000,
+    );
+    expect(view.workStart).toBe(0);
+    expect(view.workEnd).toBeNull();
+  });
+
   it("stores a bounded recent project view without mutating the source", () => {
     const next = updateWorkspaceProjectView(
       DEFAULT_WORKSPACE_PREFERENCES,

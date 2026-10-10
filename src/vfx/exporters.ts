@@ -2,6 +2,7 @@ import type { VvfxRuntimeDefinition } from "../../packages/phaser-runtime/src/ty
 import { referencedAssetIds } from "./assetReferences";
 import { tintNumber } from "./color";
 import { resolveProjectGroups } from "./groups";
+import { exportPlaybackDuration } from "./projectState";
 import { hasEnabledRenderingEffects } from "./renderingEffectsModel";
 import { requireCurrentProject } from "./serialization";
 import { spriteFrameSequence } from "./spriteSheet";
@@ -39,7 +40,7 @@ export function createRuntimeDefinition(
     format: "vvfx-runtime",
     formatVersion: 16,
     name: resolvedProject.metadata.name,
-    duration: resolvedProject.preview.duration,
+    duration: exportPlaybackDuration(resolvedProject),
     seed: resolvedProject.preview.randomSeed,
     assets: resolvedProject.assets
       .filter((asset) => requiredAssetIds.has(asset.id))

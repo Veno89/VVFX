@@ -106,7 +106,7 @@ function normalizeProjectView(
     }
   const workStart = bounded(input.workStart, 0, 0, duration);
   const rawWorkEnd =
-    input.workEnd === null
+    typeof input.workEnd !== "number"
       ? null
       : bounded(input.workEnd, duration, 0, duration);
   const workEnd =

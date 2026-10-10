@@ -351,6 +351,21 @@ describe("New project safety", () => {
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 
+  it("keeps Space as play/pause when a button only has focus from a click", () => {
+    render(<VfxEditor />);
+
+    const newProject = screen.getByRole("button", { name: "New" });
+    fireEvent.pointerDown(newProject);
+    newProject.focus();
+    fireEvent.keyDown(newProject, { code: "Space", key: " " });
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    newProject.focus();
+    fireEvent.keyDown(newProject, { code: "Space", key: " " });
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+  });
+
   it("preserves the exact dirty project and its history when replacement is cancelled", () => {
     render(<VfxEditor />);
 

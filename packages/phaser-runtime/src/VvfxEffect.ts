@@ -524,14 +524,16 @@ export class VvfxEffect {
         .setScale(instance.scaleX, instance.scaleY)
         .setAlpha(instance.opacity)
         .setAngle(instance.rotation)
-        .setBlendMode(instance.blendMode === "add" ? 1 : 0)
-        .setDepth(
-          this.baseDepth +
-            (this.layerDepths.get(instance.layerId) ?? 0) +
-            (instance.trailIndex === null
-              ? 0
-              : -0.01 - instance.trailIndex * 0.001),
-        );
+        .setBlendMode(instance.blendMode === "add" ? 1 : 0);
+      // Phaser queues a sort of the host scene's whole display list on every
+      // depth assignment, so only assign when the value actually changes.
+      const depth =
+        this.baseDepth +
+        (this.layerDepths.get(instance.layerId) ?? 0) +
+        (instance.trailIndex === null
+          ? 0
+          : -0.01 - instance.trailIndex * 0.001);
+      if (sprite.depth !== depth) sprite.setDepth(depth);
       if (instance.tint)
         sprite.setTint(tintNumber(instance.tint, instance.tintStrength));
       else sprite.clearTint();

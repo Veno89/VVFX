@@ -1168,6 +1168,17 @@ button:disabled {
   padding: 6px;
   overflow: auto;
 }
+.layer-panel > .panel-heading {
+  position: relative;
+}
+.layer-panel > .panel-heading > .menu-wrap {
+  position: static;
+}
+.layer-panel .add-menu {
+  left: 8px;
+  right: auto;
+  width: min(280px, calc(100vw - 16px));
+}
 .add-menu > button {
   width: 100%;
   display: grid;

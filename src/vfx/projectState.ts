@@ -46,17 +46,42 @@ export function hasMeaningfulProjectWork(project: VfxProject): boolean {
   );
 }
 
+/**
+ * Last moment with visible editor content: enabled layers that are also shown
+ * and, when any layer is soloed, part of the solo set.
+ */
 export function activeTimelineEnd(project: VfxProject): number {
+  return contentTimelineEnd(project, true);
+}
+
+/**
+ * Duration a game-facing export should play. With "Loop active range" on, the
+ * export ends where enabled content ends, matching the editor loop instead of
+ * carrying trailing silence. Eye visibility and Solo are editor-only, so they
+ * never trim exported playback.
+ */
+export function exportPlaybackDuration(project: VfxProject): number {
+  return project.preview.loop
+    ? contentTimelineEnd(project, false)
+    : project.preview.duration;
+}
+
+function contentTimelineEnd(
+  project: VfxProject,
+  respectEditorVisibility: boolean,
+): number {
   const resolvedProject = resolveProjectGroups(project);
   const soloIds = new Set(
-    resolvedProject.layers
-      .filter((layer) => layer.solo)
-      .map((layer) => layer.id),
+    respectEditorVisibility
+      ? resolvedProject.layers
+          .filter((layer) => layer.solo)
+          .map((layer) => layer.id)
+      : [],
   );
   const activeLayers = resolvedProject.layers.filter(
     (layer) =>
       layer.enabled &&
-      layer.visible &&
+      (!respectEditorVisibility || layer.visible) &&
       (soloIds.size === 0 || soloIds.has(layer.id)),
   );
   if (activeLayers.length === 0) return project.preview.duration;

@@ -26,6 +26,12 @@ uses semantic versions for release artifacts.
 
 ### Changed
 
+- Runtime JSON `duration` now ends at the last enabled content when **Loop
+  active range** is on, so `onComplete` and loops no longer wait through
+  trailing composition silence.
+- The Phaser runtime and editor preview assign sprite depth only when it
+  changes, so a playing effect no longer forces a full host display-list sort
+  every frame.
 - Made compact Runtime JSON the recommended game-integration export and marked
   generated TypeScript as an Advanced wrapper. Point-only effects no longer
   import or expose Beam endpoint options, and unused alpha-sample grids are
@@ -49,6 +55,12 @@ uses semantic versions for release artifacts.
 
 ### Fixed
 
+- Opened the layer **Add** menu inside the window instead of 39 px past its
+  left edge on desktop widths.
+- Made **Loop active range** work in projects without a saved Timeline work
+  range; preview loops and WebM/GIF capture no longer include trailing silence.
+- Kept Space and R controlling playback after a mouse click leaves focus on a
+  toolbar button, while keyboard users still get native button activation.
 - Prevented attachment cycles, unsafe repeat expansion, malformed image data,
   stale asynchronous asset mutations, and work-budget overrun.
 - Corrected responsive overflow, asset-card overlap, clipped template content,

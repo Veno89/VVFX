@@ -207,7 +207,16 @@ function isCoalescedHistoryInput(target: EventTarget | null): boolean {
   return ["number", "range", "text", "search"].includes(target.type);
 }
 
-function shouldHandleEditorShortcut(event: KeyboardEvent): boolean {
+/**
+ * Mouse and touch clicks move focus onto buttons, but that focus is incidental:
+ * the person is not navigating with the keyboard. When the latest navigation
+ * was a pointer, Space and R keep controlling playback; keyboard users who Tab
+ * onto a control still get its native Space activation.
+ */
+function shouldHandleEditorShortcut(
+  event: KeyboardEvent,
+  pointerNavigation: boolean,
+): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
   const target = event.target instanceof HTMLElement ? event.target : null;
   if (
@@ -229,7 +238,14 @@ function shouldHandleEditorShortcut(event: KeyboardEvent): boolean {
   )
     return false;
   const modifier = event.ctrlKey || event.metaKey;
-  if (!modifier && target?.closest("button, a[href], summary, [role='button']"))
+  const pointerPlaybackKey =
+    pointerNavigation &&
+    (event.code === "Space" || event.key.toLowerCase() === "r");
+  if (
+    !modifier &&
+    !pointerPlaybackKey &&
+    target?.closest("button, a[href], summary, [role='button']")
+  )
     return false;
   return true;
 }
@@ -1921,10 +1937,26 @@ export function VfxEditor() {
     [notify, refreshStoredTemplates],
   );
 
+  const pointerNavigationRef = useRef(false);
+  useEffect(() => {
+    const rememberNavigationStyle = (event: PointerEvent | KeyboardEvent) => {
+      if (event.type === "pointerdown") pointerNavigationRef.current = true;
+      else if ((event as KeyboardEvent).key === "Tab")
+        pointerNavigationRef.current = false;
+    };
+    window.addEventListener("pointerdown", rememberNavigationStyle, true);
+    window.addEventListener("keydown", rememberNavigationStyle, true);
+    return () => {
+      window.removeEventListener("pointerdown", rememberNavigationStyle, true);
+      window.removeEventListener("keydown", rememberNavigationStyle, true);
+    };
+  }, []);
+
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (editorModalOpen) return;
-      if (!shouldHandleEditorShortcut(event)) return;
+      if (!shouldHandleEditorShortcut(event, pointerNavigationRef.current))
+        return;
       const modifier = event.ctrlKey || event.metaKey;
       if (event.code === "Space") {
         event.preventDefault();

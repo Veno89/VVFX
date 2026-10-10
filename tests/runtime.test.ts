@@ -1097,6 +1097,33 @@ describe("Phaser runtime package", () => {
     effect.destroy();
   });
 
+  it("assigns sprite depth only when it changes so host scenes are not re-sorted every frame", () => {
+    const project = createEmptyProject("Stable runtime depth");
+    project.layers.push(
+      createLayer("animated", "Flash", "builtin-flash"),
+      createLayer("animated", "Ring", "builtin-ring"),
+    );
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const setDepth = vi.spyOn(FakeSprite.prototype, "setDepth");
+    const effect = new VvfxEffect(fake.scene, definition, {
+      baseDepth: 5,
+      autoDestroy: false,
+    });
+    const initialAssignments = setDepth.mock.calls.length;
+    expect(initialAssignments).toBeGreaterThan(0);
+
+    for (let frame = 0; frame < 10; frame += 1) effect.update(16);
+
+    expect(setDepth.mock.calls.length).toBe(initialAssignments);
+    expect(fake.sprites.map((sprite) => sprite.depth).sort()).toEqual([5, 6]);
+    setDepth.mockRestore();
+    effect.destroy();
+  });
+
   it("keeps playback finite for prototype-named beams and invalid deltas", () => {
     const project = createEmptyProject("Finite runtime playback");
     const beam = createLayer("beam", "Beam", "builtin-spark");

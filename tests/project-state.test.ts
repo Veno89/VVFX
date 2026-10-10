@@ -7,6 +7,7 @@ import {
 import {
   activeTimelineEnd,
   copyProject,
+  exportPlaybackDuration,
   hasMeaningfulProjectWork,
   newLayerName,
   projectFingerprint,
@@ -74,6 +75,31 @@ describe("project safety helpers", () => {
     expect(newLayerName(project.assets, "missing-asset", "asset")).toBe(
       "Unnamed",
     );
+  });
+
+  it("trims game-facing playback to enabled content when the active range loops", () => {
+    const project = createEmptyProject();
+    project.preview.duration = 3000;
+    const flash = createLayer("animated", "Flash");
+    flash.timing = { ...flash.timing, delay: 0, duration: 400, repeat: 0 };
+    const smoke = createLayer("animated", "Smoke");
+    smoke.timing = { ...smoke.timing, delay: 200, duration: 1000, repeat: 0 };
+    project.layers.push(flash, smoke);
+
+    project.preview.loop = true;
+    expect(exportPlaybackDuration(project)).toBe(1200);
+
+    // Eye visibility and Solo are editor-only and never shorten an export.
+    smoke.visible = false;
+    flash.solo = true;
+    expect(activeTimelineEnd(project)).toBe(400);
+    expect(exportPlaybackDuration(project)).toBe(1200);
+
+    smoke.enabled = false;
+    expect(exportPlaybackDuration(project)).toBe(400);
+
+    project.preview.loop = false;
+    expect(exportPlaybackDuration(project)).toBe(3000);
   });
 
   it("finds the end of the visible active timeline for preview looping", () => {

@@ -471,6 +471,13 @@ Runtime export removes preview background, editor selection/solo state, browser 
 }
 ```
 
+`duration` is the playback length a game sees. When the project's **Loop
+active range** preview option is on (the default), export ends it at the last
+moment of enabled content, including random timing variation and trail tails,
+so one-shot effects complete and loops restart without trailing silence. Turn
+the option off to export the full composition duration. Eye visibility and Solo
+never shorten an export.
+
 Runtime layers add an explicit numeric `depth` based on their stored
 back-to-front order. The editor displays that order conventionally in reverse:
 the top row is frontmost and the bottom row is backmost. Nested FX clips remain

@@ -12,6 +12,11 @@ export declare class VvfxEffect {
   private readonly project;
   private readonly evaluator;
   private readonly sprites;
+  /**
+   * Hidden filter-free sprites kept for reuse, so bursts and emitters do not
+   * create and destroy a Phaser game object for every short-lived copy.
+   */
+  private readonly spritePool;
   private readonly layerDepths;
   private elapsed;
   private playing;
@@ -70,5 +75,7 @@ export declare class VvfxEffect {
   private cancelScheduledRender;
   private renderImmediately;
   private renderFrame;
+  private acquireSprite;
+  private releaseSprite;
   private clearSprites;
 }

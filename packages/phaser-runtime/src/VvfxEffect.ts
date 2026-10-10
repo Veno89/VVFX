@@ -14,6 +14,7 @@ import {
 } from "../../../src/vfx/inputLimits";
 import { syncNormalizedSourceCrop } from "../../../src/vfx/phaserFrames";
 import {
+  clearPhaserRenderingEffects,
   syncPhaserRenderingEffects,
   type PhaserRenderingAssetFrameResolver,
 } from "../../../src/vfx/phaserRenderingEffects";
@@ -156,10 +157,18 @@ export function resolveRuntimeRenderingAssetFrame(
     : null;
 }
 
+/** Upper bound on hidden sprites one effect keeps for reuse. */
+const MAX_POOLED_SPRITES = 256;
+
 export class VvfxEffect {
   private readonly project: VfxProject;
   private readonly evaluator: ProjectEvaluator;
   private readonly sprites = new Map<string, Phaser.GameObjects.Image>();
+  /**
+   * Hidden filter-free sprites kept for reuse, so bursts and emitters do not
+   * create and destroy a Phaser game object for every short-lived copy.
+   */
+  private readonly spritePool: Phaser.GameObjects.Image[] = [];
   private readonly layerDepths = new Map<string, number>();
   private elapsed = 0;
   private playing = false;
@@ -483,7 +492,7 @@ export class VvfxEffect {
     const liveKeys = new Set(instances.map((instance) => instance.key));
     for (const [key, sprite] of this.sprites) {
       if (!liveKeys.has(key)) {
-        sprite.destroy();
+        this.releaseSprite(sprite);
         this.sprites.delete(key);
       }
     }
@@ -510,7 +519,7 @@ export class VvfxEffect {
         : "__BASE";
       let sprite = this.sprites.get(instance.key);
       if (!sprite) {
-        sprite = this.scene.add.image(0, 0, availableTexture, availableFrame);
+        sprite = this.acquireSprite(availableTexture, availableFrame);
         this.sprites.set(instance.key, sprite);
       } else if (
         sprite.texture.key !== availableTexture ||
@@ -548,9 +557,32 @@ export class VvfxEffect {
     }
   }
 
+  private acquireSprite(
+    texture: string,
+    frame: string | number,
+  ): Phaser.GameObjects.Image {
+    const pooled = this.spritePool.pop();
+    if (!pooled) return this.scene.add.image(0, 0, texture, frame);
+    // Every per-frame property is reassigned by renderFrame; only the texture
+    // and visibility need restoring here.
+    return pooled.setTexture(texture, frame).setVisible(true);
+  }
+
+  private releaseSprite(sprite: Phaser.GameObjects.Image) {
+    clearPhaserRenderingEffects(sprite);
+    // A sprite that ever enabled filters keeps its filter camera; destroy it
+    // rather than carry that cost into an unrelated copy.
+    if (sprite.filters || this.spritePool.length >= MAX_POOLED_SPRITES) {
+      sprite.destroy();
+      return;
+    }
+    sprite.setVisible(false);
+    this.spritePool.push(sprite);
+  }
+
   private clearSprites() {
     let cleanupError: unknown;
-    for (const sprite of this.sprites.values()) {
+    for (const sprite of [...this.sprites.values(), ...this.spritePool]) {
       try {
         sprite.destroy();
       } catch (error) {
@@ -558,6 +590,7 @@ export class VvfxEffect {
       }
     }
     this.sprites.clear();
+    this.spritePool.length = 0;
     if (cleanupError) throw cleanupError;
   }
 }

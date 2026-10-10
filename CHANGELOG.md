@@ -68,6 +68,10 @@ uses semantic versions for release artifacts.
 - The Inspector's plain-language "What is happening?" summary now leads the
   panel instead of sitting below every section.
 - The Runtime JSON tab badge reads "For games" instead of "Recommended".
+- The Phaser runtime keeps up to 256 hidden, filter-free sprites per effect
+  for reuse, so looping bursts and emitters stop creating and destroying a
+  game object for every short-lived copy. Restart, stop, completion, and
+  destroy still release every sprite.
 - The Phaser runtime and editor preview assign sprite depth only when it
   changes, so a playing effect no longer forces a full host display-list sort
   every frame.

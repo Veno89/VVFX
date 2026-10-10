@@ -70,6 +70,7 @@ class FakeSprite {
   alpha = 1;
   angle = 0;
   depth = 0;
+  visible = true;
 
   constructor(key: string, frame: string | number = "__BASE") {
     this.texture = { key };
@@ -100,6 +101,10 @@ class FakeSprite {
     return this;
   }
   setBlendMode() {
+    return this;
+  }
+  setVisible(visible: boolean) {
+    this.visible = visible;
     return this;
   }
   setDepth(depth: number) {
@@ -1956,17 +1961,52 @@ describe("Phaser runtime package", () => {
     );
 
     expect(originalTarget).toBeDefined();
+    const opacityBefore = originalTarget!.alpha;
     effect.update(110);
 
-    expect(originalTarget?.destroyed).toBe(true);
+    // The superseded activation's sprite is released; pooling may hand the
+    // same game object to the restarted activation, but only one copy is
+    // shown and it carries the new activation's freshly evaluated state.
+    const liveFlashes = fake.sprites.filter(
+      (sprite) =>
+        sprite.texture.key === "builtin-flash" &&
+        !sprite.destroyed &&
+        sprite.visible,
+    );
+    expect(liveFlashes).toHaveLength(1);
+    expect(liveFlashes[0].alpha).toBeCloseTo(opacityBefore, 1);
+  });
+
+  it("reuses hidden sprites for short-lived copies instead of creating new ones", () => {
+    const project = createEmptyProject("Pooled burst");
+    project.preview.duration = 1_000;
+    const burst = createLayer("burst", "Sparks", "builtin-spark");
+    burst.spawn.count = 12;
+    burst.timing.duration = 200;
+    burst.timing.repeat = 1;
+    project.layers.push(burst);
+    const definition = createRuntimeDefinition(project);
+    const fake = createFakeScene([
+      VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+      ...definition.assets.map((asset) => asset.id),
+    ]);
+    const effect = new VvfxEffect(fake.scene, definition, {
+      loop: true,
+      autoDestroy: false,
+    });
+
+    for (let frame = 0; frame < 120; frame += 1) effect.update(16);
+    const created = fake.sprites.length;
+    for (let frame = 0; frame < 240; frame += 1) effect.update(16);
+
+    expect(fake.sprites.length).toBe(created);
+    expect(fake.sprites.every((sprite) => !sprite.destroyed)).toBe(true);
     expect(
-      fake.sprites.some(
-        (sprite) =>
-          sprite !== originalTarget &&
-          sprite.texture.key === "builtin-flash" &&
-          !sprite.destroyed,
-      ),
-    ).toBe(true);
+      fake.sprites.filter((sprite) => sprite.visible).length,
+    ).toBeLessThanOrEqual(12);
+
+    effect.destroy();
+    expect(fake.sprites.every((sprite) => sprite.destroyed)).toBe(true);
   });
 
   it("rebuilds Phaser sprites from canonical state on restart", () => {

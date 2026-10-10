@@ -26,9 +26,14 @@ export interface WorkspacePreferences {
   inspectorWidth: number;
   timelineHeight: number;
   assetSplit: number;
+  /** Interface text scale relative to the browser's base font size. */
+  textScale: WorkspaceTextScale;
   projectOrder: string[];
   projects: Record<string, ProjectWorkspaceView>;
 }
+
+export const WORKSPACE_TEXT_SCALES = [1, 1.125, 1.25] as const;
+export type WorkspaceTextScale = (typeof WORKSPACE_TEXT_SCALES)[number];
 
 interface WorkspaceStorageReader {
   getItem(key: string): string | null;
@@ -49,10 +54,11 @@ export const DEFAULT_PROJECT_WORKSPACE_VIEW: ProjectWorkspaceView = {
 
 export const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
   version: 1,
-  leftWidth: 254,
+  leftWidth: 272,
   inspectorWidth: 368,
   timelineHeight: 250,
   assetSplit: 42,
+  textScale: 1,
   projectOrder: [],
   projects: Object.create(null) as Record<string, ProjectWorkspaceView>,
 };
@@ -140,10 +146,12 @@ export function normalizeWorkspacePreferences(
     projects[projectId] = normalizeProjectView(rawProjects[projectId]);
   return {
     version: 1,
-    leftWidth: bounded(input.leftWidth, 254, 210, 420),
+    leftWidth: bounded(input.leftWidth, 272, 210, 420),
     inspectorWidth: bounded(input.inspectorWidth, 368, 300, 540),
     timelineHeight: bounded(input.timelineHeight, 250, 180, 480),
     assetSplit: bounded(input.assetSplit, 42, 25, 70),
+    textScale:
+      WORKSPACE_TEXT_SCALES.find((scale) => scale === input.textScale) ?? 1,
     projectOrder,
     projects,
   };

@@ -164,8 +164,10 @@ import {
   loadWorkspacePreferences,
   saveWorkspacePreferences,
   updateWorkspaceProjectView,
+  WORKSPACE_TEXT_SCALES,
   workspaceProjectView,
   type ProjectWorkspaceView,
+  type WorkspaceTextScale,
 } from "./workspace";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -211,7 +213,7 @@ const TutorialCenter = lazy(() =>
   })),
 );
 
-/** Warm the on-demand dialogs once the workspace is idle. */
+/** Warm the on-demand dialogs as soon as someone reaches for the top bar. */
 function preloadEditorDialogs() {
   void import("./components/ExportDialog");
   void import("./components/TemplateLibraryDialog");
@@ -522,6 +524,16 @@ export function VfxEditor() {
     },
     [project.metadata.id, project.layers, project.preview.duration],
   );
+  useEffect(() => {
+    // Every UI font size is in rem, so scaling the root scales the interface
+    // text without zooming the preview canvas or the layout geometry.
+    const root = document.documentElement;
+    root.style.fontSize =
+      workspace.textScale === 1 ? "" : `${workspace.textScale * 100}%`;
+    return () => {
+      root.style.fontSize = "";
+    };
+  }, [workspace.textScale]);
   const beginResize = useCallback(
     (
       event: ReactPointerEvent<HTMLElement>,
@@ -1969,11 +1981,6 @@ export function VfxEditor() {
     [notify, refreshStoredTemplates],
   );
 
-  useEffect(() => {
-    const timer = window.setTimeout(preloadEditorDialogs, 2_000);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const pointerNavigationRef = useRef(false);
   useEffect(() => {
     const rememberNavigationStyle = (event: PointerEvent | KeyboardEvent) => {
@@ -2127,6 +2134,7 @@ export function VfxEditor() {
       }}
     >
       <TopBar
+        onActionIntent={preloadEditorDialogs}
         projectName={project.metadata.name}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
@@ -2782,6 +2790,24 @@ export function VfxEditor() {
             <Info size={13} /> Preview is safely limited to 500 sprites at once.
           </span>
         )}
+        <label className="text-size-control">
+          Text size
+          <select
+            value={workspace.textScale}
+            onChange={(event) => {
+              const textScale = Number(
+                event.target.value,
+              ) as WorkspaceTextScale;
+              setWorkspace((current) => ({ ...current, textScale }));
+            }}
+          >
+            {WORKSPACE_TEXT_SCALES.map((scale) => (
+              <option key={scale} value={scale}>
+                {Math.round(scale * 100)}%
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="shortcut-hints">
           <kbd>Space</kbd> play <kbd>R</kbd> restart <kbd>Ctrl D</kbd> duplicate{" "}
           <kbd>Del</kbd> delete

@@ -891,7 +891,7 @@ export function AssetPanel({
           <small>
             {preparingUploads
               ? "This usually takes only a moment"
-              : "Drop or browse · PNG or WebP · several at once"}
+              : "PNG or WebP · white art tints to any color"}
           </small>
         </span>
       </button>
@@ -1037,14 +1037,6 @@ export function AssetPanel({
             )}
           </div>
         ))}
-      </div>
-
-      <div className="mini-lesson">
-        <WandSparkles size={15} />
-        <p>
-          <strong>Start with white artwork.</strong> Tint can turn one white
-          image into any color later.
-        </p>
       </div>
     </aside>
   );

@@ -8,6 +8,9 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- A **Text size** setting (100%, 112.5%, 125%) in the status bar, saved with
+  the browser workspace.
+- An inline app icon, so browsers no longer request a missing `/favicon.ico`.
 - A start screen at the end of the workspace tour and over an empty preview:
   begin the guided first-effect lesson or one of four complete starter effects
   in one click.
@@ -35,12 +38,21 @@ uses semantic versions for release artifacts.
 - Runtime JSON `duration` now ends at the last enabled content when **Loop
   active range** is on, so `onComplete` and loops no longer wait through
   trailing composition silence.
-- Learn, Templates, and Export dialogs load on demand (and warm up once the
-  workspace is idle), cutting the editor's startup chunk from 532 KB to
-  452 KB.
+- Learn, Templates, and Export dialogs load on demand, cutting the editor's
+  startup chunk from 532 KB to 452 KB.
 - The editor preview's Phaser loop sleeps after 400 ms without changes,
   pointer activity, or resizing, so a paused editor stops redrawing every
   frame. Recording and stress previews stay awake.
+- Interface text is now sized in rem with an 11 px floor (previously down to
+  6.5 px), so browser text settings apply. Sliders, help icons, and switches
+  have larger pointer targets; layer rows show a Solo icon instead of "S" and
+  keep their actions visible at 60% opacity.
+- The top bar no longer wraps, the layer panel's explainer paragraphs moved
+  into help tips, and the white-artwork tip joined the upload hint so the
+  layer list and asset list keep their space. The default left rail is
+  272 px wide.
+- Learn, Templates, and Export dialogs preload when the pointer or focus
+  reaches the top bar.
 - The Inspector's plain-language "What is happening?" summary now leads the
   panel instead of sitting below every section.
 - The Runtime JSON tab badge reads "For games" instead of "Recommended".

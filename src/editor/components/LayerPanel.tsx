@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  ScanEye,
 } from "lucide-react";
 import {
   Fragment,
@@ -36,6 +37,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { LAYER_TYPE_LABELS } from "../guidance";
+import { HelpTip } from "./Controls";
 import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
@@ -473,15 +475,17 @@ export function LayerPanel({
       <div className="group-list-block">
         <div className="group-list-heading">
           <span>
-            <Boxes size={13} /> Effect groups
+            <Boxes size={13} /> Effect groups{" "}
+            <HelpTip
+              label="Effect groups"
+              text="Group related layers to move or delay them together."
+            />
           </span>
           <button type="button" onClick={onCreateGroup}>
             <Plus size={12} /> Group
           </button>
         </div>
-        {groups.length === 0 ? (
-          <p>Group related layers to move or delay them together.</p>
-        ) : (
+        {groups.length === 0 ? null : (
           <div className="group-list">
             {groups.map((group) => {
               const members = layers.filter(
@@ -772,11 +776,11 @@ export function LayerPanel({
                           solo: !layer.solo,
                         } as Partial<VfxLayer>)
                       }
-                      title="Solo this layer"
+                      title="Solo: show only this layer in the preview"
                       aria-label={`Solo ${layer.name}`}
                       aria-pressed={layer.solo}
                     >
-                      <span className="solo-letter">S</span>
+                      <ScanEye size={14} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
@@ -1046,8 +1050,11 @@ export function LayerPanel({
         {actionAnnouncement}
       </span>
       <p className="panel-footnote">
-        Top layers render in front · drag or use layer Actions to reorder ·
-        folders and locks stay in this browser workspace.
+        Top row renders in front{" "}
+        <HelpTip
+          label="Layer order"
+          text="Top layers render in front. Drag a row or use its Actions menu to reorder. Folders and locks stay in this browser workspace."
+        />
       </p>
     </section>
   );

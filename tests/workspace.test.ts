@@ -65,6 +65,14 @@ describe("professional workspace preferences", () => {
     ]);
   });
 
+  it("keeps only supported interface text scales", () => {
+    expect(normalizeWorkspacePreferences({ textScale: 1.25 }).textScale).toBe(
+      1.25,
+    );
+    expect(normalizeWorkspacePreferences({ textScale: 3 }).textScale).toBe(1);
+    expect(normalizeWorkspacePreferences({}).textScale).toBe(1);
+  });
+
   it("leaves the work range open for projects without a stored view", () => {
     const view = workspaceProjectView(
       DEFAULT_WORKSPACE_PREFERENCES,

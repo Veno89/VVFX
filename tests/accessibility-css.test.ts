@@ -38,4 +38,15 @@ describe("editor accessibility CSS contract", () => {
     expect(css).toMatch(/min-width:\s*320px/);
     expect(css).not.toMatch(/min-width:\s*1120px/);
   });
+
+  it("sizes interface text in rem with an 11px floor so it follows browser and app text scale", async () => {
+    const css = await readFile(resolve("app", "globals.css"), "utf8");
+    expect(css).not.toMatch(/font-size:\s*[\d.]+px/);
+    expect(css).not.toMatch(/font:\s*(?:\d{3}\s+)?[\d.]+px/);
+    const sizes = [...css.matchAll(/([\d.]+)rem\s*(?:;|\/)/g)]
+      .filter((match) => /font/.test(css.slice(match.index - 40, match.index)))
+      .map((match) => Number(match[1]) * 16);
+    expect(sizes.length).toBeGreaterThan(100);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(11);
+  });
 });

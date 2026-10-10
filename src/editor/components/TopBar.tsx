@@ -49,6 +49,7 @@ export function TopBar({
   onExport,
   onNewProject,
   onLearn,
+  onActionIntent,
 }: {
   projectName: string;
   canUndo: boolean;
@@ -65,6 +66,8 @@ export function TopBar({
   onExport: () => void;
   onNewProject: () => void;
   onLearn: () => void;
+  /** Pointer or focus reached the project actions; warm their dialogs. */
+  onActionIntent?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
@@ -200,7 +203,12 @@ export function TopBar({
           <Redo2 size={15} />
         </button>
       </div>
-      <nav className="topbar-actions" aria-label="Project actions">
+      <nav
+        className="topbar-actions"
+        aria-label="Project actions"
+        onPointerEnter={onActionIntent}
+        onFocus={onActionIntent}
+      >
         <button
           className="topbar-action--overflow"
           type="button"

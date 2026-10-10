@@ -38,6 +38,7 @@ import {
 import { createPortal } from "react-dom";
 import { LAYER_TYPE_LABELS } from "../guidance";
 import { HelpTip } from "./Controls";
+import { EffectThumbnail } from "./EffectThumbnail";
 import { useFocusRegion } from "../useFocusRegion";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../../vfx/presets";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
@@ -123,6 +124,7 @@ export function LayerPanel({
   showAdvanced?: boolean;
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [activeAddPreset, setActiveAddPreset] = useState<string | null>(null);
   const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
   const [addMenuIndex, setAddMenuIndex] = useState(0);
   const [actionsMenuIndex, setActionsMenuIndex] = useState(0);
@@ -384,17 +386,28 @@ export function LayerPanel({
                       ? 0
                       : -1
                   }
-                  onFocus={() =>
-                    setAddMenuIndex(SCRATCH_LAYER_TYPES.length + presetIndex)
-                  }
+                  className="has-thumbnail"
+                  onFocus={() => {
+                    setAddMenuIndex(SCRATCH_LAYER_TYPES.length + presetIndex);
+                    setActiveAddPreset(preset.id);
+                  }}
+                  onPointerEnter={() => setActiveAddPreset(preset.id)}
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
                   }}
                 >
-                  <strong>{preset.name} · complete effect</strong>
-                  <small>{preset.description}</small>
-                  <small>Ingredients: {preset.ingredients.join(" + ")}</small>
+                  <EffectThumbnail
+                    id={preset.id}
+                    createLayers={preset.create}
+                    size={44}
+                    playing={activeAddPreset === preset.id}
+                  />
+                  <span className="add-menu__text">
+                    <strong>{preset.name} · complete effect</strong>
+                    <small>{preset.description}</small>
+                    <small>Ingredients: {preset.ingredients.join(" + ")}</small>
+                  </span>
                 </button>
               ))}
               {LAYER_PRESETS.map((preset, presetIndex) => (
@@ -410,26 +423,37 @@ export function LayerPanel({
                       ? 0
                       : -1
                   }
-                  onFocus={() =>
+                  className="has-thumbnail"
+                  onFocus={() => {
                     setAddMenuIndex(
                       SCRATCH_LAYER_TYPES.length +
                         COMPOSITION_PRESETS.length +
                         presetIndex,
-                    )
-                  }
+                    );
+                    setActiveAddPreset(preset.id);
+                  }}
+                  onPointerEnter={() => setActiveAddPreset(preset.id)}
                   onClick={() => {
                     onAddPreset(preset.id);
                     setAddOpen(false);
                   }}
                 >
-                  <strong>
-                    {preset.name}
-                    {preset.maturity === "experimental" && (
-                      <span className="preset-maturity">Experimental</span>
-                    )}
-                  </strong>
-                  <small>{preset.description}</small>
-                  <small>Good for: {preset.goodFor}</small>
+                  <EffectThumbnail
+                    id={`layer-${preset.id}`}
+                    createLayers={() => [preset.create()]}
+                    size={44}
+                    playing={activeAddPreset === preset.id}
+                  />
+                  <span className="add-menu__text">
+                    <strong>
+                      {preset.name}
+                      {preset.maturity === "experimental" && (
+                        <span className="preset-maturity">Experimental</span>
+                      )}
+                    </strong>
+                    <small>{preset.description}</small>
+                    <small>Good for: {preset.goodFor}</small>
+                  </span>
                 </button>
               ))}
             </div>

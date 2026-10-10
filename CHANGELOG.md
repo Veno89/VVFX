@@ -8,6 +8,10 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- **Animated preset thumbnails** in the start screen and the layer Add menu.
+  They draw the preset's real, deterministic motion with Canvas 2D, show a
+  busy still frame at rest, play while hovered or focused, and stay still
+  under reduced motion. Experimental WebGL effects are not drawn in them.
 - **Sprite sheet + PNG frames export** (.zip) in Export → Preview video, at
   12–30 FPS and new 256 or 512 px square sprite sizes. The archive holds one
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,

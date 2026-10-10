@@ -1,5 +1,7 @@
-import { GraduationCap, Sparkles } from "lucide-react";
+import { GraduationCap } from "lucide-react";
+import { useState } from "react";
 import { COMPOSITION_PRESETS } from "../../vfx/presets";
+import { EffectThumbnail } from "./EffectThumbnail";
 
 /** Complete effects that read well as a first thing to play with. */
 export const STARTER_PRESET_IDS = [
@@ -25,6 +27,7 @@ export function StartChoices({
   onStartGuide: () => void;
   onStartPreset: (presetId: string) => void;
 }) {
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   return (
     <div className="start-choices">
       <button
@@ -46,8 +49,17 @@ export function StartChoices({
             type="button"
             className="start-choice"
             onClick={() => onStartPreset(preset.id)}
+            onPointerEnter={() => setActivePreset(preset.id)}
+            onPointerLeave={() => setActivePreset(null)}
+            onFocus={() => setActivePreset(preset.id)}
+            onBlur={() => setActivePreset(null)}
           >
-            <Sparkles size={15} aria-hidden="true" />
+            <EffectThumbnail
+              id={preset.id}
+              createLayers={preset.create}
+              size={52}
+              playing={activePreset === preset.id}
+            />
             <span>
               <strong>{preset.name}</strong>
               <small>{preset.ingredients.join(" · ")}</small>

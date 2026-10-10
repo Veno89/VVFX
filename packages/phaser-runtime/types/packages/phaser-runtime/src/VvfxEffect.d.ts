@@ -36,6 +36,11 @@ export declare class VvfxEffect {
   private readonly defaultAssetFrames;
   private readonly beamEndpoints;
   private readonly onComplete?;
+  private readonly onCue?;
+  /** Validated cues in time order, carried as the project's Timeline markers. */
+  private readonly cues;
+  /** Cues at or before this time already fired in the current pass. */
+  private cueCursor;
   private readonly onWarning?;
   private releaseAssets;
   constructor(
@@ -71,6 +76,11 @@ export declare class VvfxEffect {
   private readonly handleSceneUpdate;
   private readonly handleSceneShutdown;
   private readonly resolveRenderingAssetFrame;
+  /**
+   * Fires each cue once per pass, in time order. The cursor moves before any
+   * host callback runs, so a throwing callback cannot fire a cue twice.
+   */
+  private emitCues;
   private scheduleRender;
   private cancelScheduledRender;
   private renderImmediately;

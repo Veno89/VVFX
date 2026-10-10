@@ -1977,6 +1977,107 @@ describe("Phaser runtime package", () => {
     expect(liveFlashes[0].alpha).toBeCloseTo(opacityBefore, 1);
   });
 
+  describe("Timeline marker cues", () => {
+    const cueProject = () => {
+      const project = createEmptyProject("Cued impact");
+      project.preview.duration = 1_000;
+      project.preview.loop = false;
+      const flash = createLayer("animated", "Flash", "builtin-flash");
+      flash.timing.duration = 600;
+      project.layers.push(flash);
+      project.timeline.markers = [
+        { id: "start", time: 0, label: "whoosh" },
+        { id: "hit", time: 120, label: "impact" },
+        { id: "late", time: 400, label: "shake" },
+      ];
+      return project;
+    };
+
+    it("exports markers as time-ordered cues and omits the list when there are none", () => {
+      const definition = createRuntimeDefinition(cueProject());
+      expect(definition.cues).toEqual([
+        { name: "whoosh", time: 0 },
+        { name: "impact", time: 120 },
+        { name: "shake", time: 400 },
+      ]);
+
+      const looping = cueProject();
+      looping.preview.loop = true;
+      looping.timeline.markers.push({
+        id: "tail",
+        time: 900,
+        label: "silence",
+      });
+      expect(
+        createRuntimeDefinition(looping).cues?.map((cue) => cue.name),
+      ).toEqual(["whoosh", "impact", "shake"]);
+
+      const plain = createEmptyProject("No cues");
+      plain.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+      expect("cues" in createRuntimeDefinition(plain)).toBe(false);
+    });
+
+    it("validates cues and keeps them through runtime normalization", () => {
+      const definition = createRuntimeDefinition(cueProject());
+      expect(
+        validateRuntimeDefinition(JSON.stringify(definition)).definition?.cues,
+      ).toEqual(definition.cues);
+      for (const cues of [
+        "impact",
+        [{ name: "", time: 10 }],
+        [{ name: "late", time: 5_000 }],
+        [{ name: "negative", time: -1 }],
+        [{ name: "nan", time: Number.NaN }],
+      ])
+        expect(validateRuntimeDefinition({ ...definition, cues }).ok).toBe(
+          false,
+        );
+    });
+
+    it("fires each cue once per pass, from time zero, across loops and restarts", () => {
+      const definition = createRuntimeDefinition(cueProject());
+      const fake = createFakeScene([
+        VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+        ...definition.assets.map((asset) => asset.id),
+      ]);
+      const fired: string[] = [];
+      const effect = new VvfxEffect(fake.scene, definition, {
+        loop: true,
+        autoDestroy: false,
+        onCue: (cue) => fired.push(cue.name),
+      });
+
+      effect.update(16);
+      expect(fired).toEqual(["whoosh"]);
+      effect.update(200);
+      expect(fired).toEqual(["whoosh", "impact"]);
+      effect.update(800);
+      expect(fired).toEqual(["whoosh", "impact", "shake", "whoosh"]);
+
+      effect.restart();
+      fired.length = 0;
+      effect.update(130);
+      expect(fired).toEqual(["whoosh", "impact"]);
+      effect.destroy();
+    });
+
+    it("skips cues after a one-shot duration cap", () => {
+      const definition = createRuntimeDefinition(cueProject());
+      const fake = createFakeScene([
+        VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+        ...definition.assets.map((asset) => asset.id),
+      ]);
+      const fired: string[] = [];
+      const effect = new VvfxEffect(fake.scene, definition, {
+        maxDurationMs: 300,
+        onCue: (cue) => fired.push(cue.name),
+      });
+      effect.update(1_000);
+      expect(fired).toEqual(["whoosh", "impact"]);
+      expect(effect.isDestroyed).toBe(true);
+    });
+  });
+
   it("reuses hidden sprites for short-lived copies instead of creating new ones", () => {
     const project = createEmptyProject("Pooled burst");
     project.preview.duration = 1_000;

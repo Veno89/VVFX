@@ -23,6 +23,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
+import { exportPlaybackDuration } from "../../vfx/projectState";
 import {
   analyzeGifRecordingWork,
   canRecordWebm,
@@ -202,11 +203,18 @@ export function ExportDialog({
     gifRecordingWork && !gifRecordingWork.allowed
       ? gifRecordingWork.reason
       : null;
+  const cueCount = project.timeline.markers.filter(
+    (marker) => marker.time <= exportPlaybackDuration(project),
+  ).length;
+  const cueSummary =
+    cueCount > 0
+      ? `Its ${cueCount} Timeline marker${cueCount === 1 ? "" : "s"} fire${cueCount === 1 ? "s" : ""} the runtime's onCue callback by name, for syncing sound or screen shake. `
+      : "Add Timeline markers to fire named onCue callbacks in your game. ";
   const info =
     tab === "preview"
       ? "Export the clean Phaser preview at normal speed, without editor guides. Choose WebM video or an animated GIF plus a centered size and aspect preset."
       : tab === "runtime"
-        ? `Recommended for game integration: drop this exact definition into your effect library and play it with @vvfx/phaser-runtime. ${runtimeCapabilities.beamEndpoints ? `It contains ${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}, so the game can supply world-space endpoints.` : "It has no Beam layers, so it plays at an origin x/y and does not advertise endpoint fitting."}`
+        ? `Recommended for game integration: drop this exact definition into your effect library and play it with @vvfx/phaser-runtime. ${cueSummary}${runtimeCapabilities.beamEndpoints ? `It contains ${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}, so the game can supply world-space endpoints.` : "It has no Beam layers, so it plays at an origin x/y and does not advertise endpoint fitting."}`
         : tab === "phaser"
           ? `Advanced standalone source-file wrapper. It embeds the Runtime JSON and calls @vvfx/phaser-runtime; use it when you want one typed helper file instead of your game's shared effect loader. ${runtimeCapabilities.beamEndpoints ? "Its helper accepts world-space Beam endpoints." : "Because this effect has no Beam layers, its helper intentionally exposes only point placement."}`
           : "The complete editable project, including uploaded images. Re-import this .vvfx file to continue later.";

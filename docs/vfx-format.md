@@ -467,7 +467,8 @@ Runtime export removes preview background, editor selection/solo state, browser 
   "duration": 3000,
   "seed": 8421,
   "assets": [],
-  "layers": []
+  "layers": [],
+  "cues": [{ "name": "impact", "time": 120 }]
 }
 ```
 
@@ -477,6 +478,13 @@ moment of enabled content, including random timing variation and trail tails,
 so one-shot effects complete and loops restart without trailing silence. Turn
 the option off to export the full composition duration. Eye visibility and Solo
 never shorten an export.
+
+`cues` is optional and additive within format 16: a time-ordered list of
+`{ "name": string, "time": milliseconds }` taken from the project's Timeline
+markers that fall within the exported duration. It is omitted when there are
+none. Runtime builds with cue support validate it (at most 100 entries, safe names, times
+from 0 to `duration`) and fire `onCue`; earlier runtimes ignore the field, so
+the same file still plays everywhere.
 
 Runtime layers add an explicit numeric `depth` based on their stored
 back-to-front order. The editor displays that order conventionally in reverse:

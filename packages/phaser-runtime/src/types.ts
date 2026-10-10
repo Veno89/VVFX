@@ -52,6 +52,13 @@ export interface VvfxRuntimeLayer {
   beam: BeamSettings | null;
 }
 
+/** A named moment exported from a Timeline marker. */
+export interface VvfxRuntimeCue {
+  name: string;
+  /** Milliseconds from the start of the effect. */
+  time: number;
+}
+
 export interface VvfxRuntimeDefinition {
   format: "vvfx-runtime";
   formatVersion: 16;
@@ -60,6 +67,11 @@ export interface VvfxRuntimeDefinition {
   seed: number;
   assets: VvfxRuntimeAsset[];
   layers: VvfxRuntimeLayer[];
+  /**
+   * Optional and additive within format 16: runtimes without cue support ignore it,
+   * and effects without markers omit it.
+   */
+  cues?: VvfxRuntimeCue[];
 }
 
 export interface RuntimeValidationResult {
@@ -90,6 +102,12 @@ export interface VvfxEffectOptions {
   /** Caps one-shot playback and cleanup before the authored duration. */
   maxDurationMs?: number;
   onComplete?: () => void;
+  /**
+   * Called when playback passes a cue exported from a Timeline marker, for
+   * syncing sound, screen shake, hit-stop, or damage numbers. Fires once per
+   * pass, including each loop.
+   */
+  onCue?: (cue: VvfxRuntimeCue) => void;
   /** Receives one-time compatibility warnings, such as Canvas FX fallback. */
   onWarning?: (message: string) => void;
 }

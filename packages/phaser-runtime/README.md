@@ -52,6 +52,22 @@ const effect = await playVvfx(this, impact, {
 effect.setPosition(player.x, player.y);
 ```
 
+Timeline markers in the editor export as named cues. Pass `onCue` to sync
+sound, screen shake, hit-stop, or damage numbers with the effect. Each cue
+fires once per pass in time order, including every loop and after `restart()`;
+cues after a `maxDurationMs` cap never fire. Runtime JSON without markers omits
+`cues`, and runtime builds without cue support simply ignore them.
+
+```ts
+await playVvfx(this, impact, {
+  originX: target.x,
+  originY: target.y,
+  onCue: ({ name }) => {
+    if (name === "impact") this.cameras.main.shake(120, 0.01);
+  },
+});
+```
+
 Calls to `setPosition`, `setEndpoints`, and `clearEndpoints` made in the same
 JavaScript turn are coalesced into one render. A Scene `update` flushes the
 latest values immediately, so following a moving target does not double-render.

@@ -24,7 +24,11 @@ import {
   assertMappedSpriteSheetTexture,
   runtimeAssetTextureKey,
 } from "./textures";
-import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
+import type {
+  VvfxEffectOptions,
+  VvfxRuntimeCue,
+  VvfxRuntimeDefinition,
+} from "./types";
 
 const ownValue = <T>(
   record: Record<string, T> | undefined,
@@ -188,6 +192,11 @@ export class VvfxEffect {
   private readonly defaultAssetFrames = new Map<string, string>();
   private readonly beamEndpoints = new Map<string, BeamEndpoints>();
   private readonly onComplete?: () => void;
+  private readonly onCue?: (cue: VvfxRuntimeCue) => void;
+  /** Validated cues in time order, carried as the project's Timeline markers. */
+  private readonly cues: readonly VvfxRuntimeCue[];
+  /** Cues at or before this time already fired in the current pass. */
+  private cueCursor = -1;
   private readonly onWarning?: (message: string) => void;
   private releaseAssets: (() => void) | null;
 
@@ -266,6 +275,14 @@ export class VvfxEffect {
     }
     const onComplete = ownValue(safeOptions, "onComplete");
     const onWarning = ownValue(safeOptions, "onWarning");
+    const onCue = ownValue(safeOptions, "onCue");
+    this.onCue =
+      typeof onCue === "function"
+        ? (onCue as (cue: VvfxRuntimeCue) => void)
+        : undefined;
+    this.cues = this.project.timeline.markers
+      .map((marker) => ({ name: marker.label, time: marker.time }))
+      .sort((left, right) => left.time - right.time);
     this.onComplete =
       typeof onComplete === "function" ? (onComplete as () => void) : undefined;
     this.onWarning =
@@ -309,6 +326,7 @@ export class VvfxEffect {
   restart() {
     if (this.destroyed) return this;
     this.elapsed = 0;
+    this.cueCursor = -1;
     this.playing = true;
     // Restart is a lifecycle boundary, not just a seek. Rebuild every Phaser
     // object from canonical evaluator output so no controller, input state, or
@@ -322,6 +340,7 @@ export class VvfxEffect {
     this.cancelScheduledRender();
     this.playing = false;
     this.elapsed = 0;
+    this.cueCursor = -1;
     this.clearSprites();
     return this;
   }
@@ -381,21 +400,23 @@ export class VvfxEffect {
       this.loop || this.maxDurationMs === null
         ? authoredDuration
         : Math.min(authoredDuration, this.maxDurationMs);
+    const passEnd = Math.min(this.elapsed, duration);
+    const wrapped = this.loop && this.elapsed >= duration;
+    if (wrapped) this.elapsed %= duration;
+    this.emitCues(passEnd, duration, wrapped);
+    if (this.destroyed) return;
+    // A looping effect has already wrapped, so only one-shots reach the end.
     if (this.elapsed >= duration) {
-      if (this.loop) {
-        this.elapsed %= duration;
-      } else {
-        this.playing = false;
-        try {
-          this.clearSprites();
-          this.onComplete?.();
-        } finally {
-          // Host callbacks are not allowed to defeat the runtime's cleanup
-          // guarantee. Their exception still propagates after destroy runs.
-          if (this.autoDestroy) this.destroy();
-        }
-        return;
+      this.playing = false;
+      try {
+        this.clearSprites();
+        this.onComplete?.();
+      } finally {
+        // Host callbacks are not allowed to defeat the runtime's cleanup
+        // guarantee. Their exception still propagates after destroy runs.
+        if (this.autoDestroy) this.destroy();
       }
+      return;
     }
     this.renderFrame();
   }
@@ -443,6 +464,31 @@ export class VvfxEffect {
         this.assetKeys,
         this.assetFrames,
       );
+
+  /**
+   * Fires each cue once per pass, in time order. The cursor moves before any
+   * host callback runs, so a throwing callback cannot fire a cue twice.
+   */
+  private emitCues(passEnd: number, duration: number, wrapped: boolean) {
+    const due: VvfxRuntimeCue[] = [];
+    const collect = (from: number, to: number) => {
+      for (const cue of this.cues) {
+        if (cue.time > to) break;
+        if (cue.time > from && cue.time <= duration) due.push({ ...cue });
+      }
+    };
+    collect(this.cueCursor, passEnd);
+    this.cueCursor = passEnd;
+    if (wrapped) {
+      collect(-1, this.elapsed);
+      this.cueCursor = this.elapsed;
+    }
+    if (!this.onCue) return;
+    for (const cue of due) {
+      if (this.destroyed) return;
+      this.onCue(cue);
+    }
+  }
 
   private scheduleRender() {
     if (this.renderQueued || this.destroyed) return;

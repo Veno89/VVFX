@@ -16,5 +16,6 @@ export type {
   VvfxRuntimeAsset,
   VvfxRuntimeDefinition,
   VvfxRuntimeLayer,
+  VvfxRuntimeCue,
 } from "./types";
 export type { BeamEndpoints } from "../../../src/vfx/types";

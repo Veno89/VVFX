@@ -8,6 +8,12 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- **Runtime cues.** Timeline markers within the exported duration travel in
+  Runtime JSON as an optional `cues` list (additive within format 16; older
+  runtimes ignore it). The runtime's new `onCue` option fires each cue once per
+  pass, including loops and restarts, for syncing sound, screen shake,
+  hit-stop, or damage numbers. Generated TypeScript exposes `onCue` only when
+  the effect has cues, and the Export dialog says how many it has.
 - A **Shape library** with 23 ready-made white shapes (glow dot, rings, star,
   sparkle, flare, shard, droplet, slash arc, lightning bolt, rune circle, smoke
   puff, beam band, and more). Picking one adds an ordinary embedded PNG

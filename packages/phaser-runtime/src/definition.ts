@@ -15,6 +15,7 @@ import {
   MAX_PROJECT_IMAGE_PIXELS,
   MAX_PROJECT_LAYERS,
   MAX_RUNTIME_DEFINITION_BYTES,
+  MAX_TIMELINE_MARKERS,
   MAX_VFX_NAME_LENGTH,
   utf8ByteLength,
 } from "../../../src/vfx/inputLimits";
@@ -357,6 +358,7 @@ function validateRuntimeDefinitionUnchecked(
   const seed = ownValue(value, "seed");
   const rawAssets = ownValue(value, "assets");
   const rawLayers = ownValue(value, "layers");
+  const rawCues = ownValue(value, "cues");
   if (
     !isSafeName(name) ||
     typeof duration !== "number" ||
@@ -385,6 +387,35 @@ function validateRuntimeDefinitionUnchecked(
       ok: false,
       error: "The Vvfx runtime definition contains a damaged list.",
     };
+  // Cues are optional and additive within format 16. They travel through the
+  // project normalizer as Timeline markers, which bounds their count, names,
+  // and times exactly like editor markers.
+  const cueMarkers: Array<{ id: string; time: number; label: string }> = [];
+  if (rawCues !== undefined) {
+    if (
+      !Array.isArray(rawCues) ||
+      !isDenseArray(rawCues) ||
+      rawCues.length > MAX_TIMELINE_MARKERS
+    )
+      return {
+        ok: false,
+        error: `Runtime cues must be a list of at most ${MAX_TIMELINE_MARKERS} entries.`,
+      };
+    for (let index = 0; index < rawCues.length; index += 1) {
+      const rawCue = rawCues[index];
+      const cueName = isRecord(rawCue) ? ownValue(rawCue, "name") : undefined;
+      const cueTime = isRecord(rawCue) ? ownValue(rawCue, "time") : undefined;
+      if (
+        !isSafeName(cueName) ||
+        typeof cueTime !== "number" ||
+        !Number.isFinite(cueTime) ||
+        cueTime < 0 ||
+        cueTime > duration
+      )
+        return { ok: false, error: `Runtime cue ${index + 1} is damaged.` };
+      cueMarkers.push({ id: `cue-${index}`, time: cueTime, label: cueName });
+    }
+  }
 
   const structureError = inspectRuntimeStructure(
     value,
@@ -709,7 +740,7 @@ function validateRuntimeDefinitionUnchecked(
       duration,
       randomSeed: seed,
     },
-    timeline: { markers: [], notes: "" },
+    timeline: { markers: cueMarkers, notes: "" },
     groups: [],
     layers,
   };
@@ -778,7 +809,14 @@ function normalizedRuntimeDefinitionToProject(
       duration: normalized.duration,
       randomSeed: normalized.seed,
     },
-    timeline: { markers: [], notes: "" },
+    timeline: {
+      markers: (normalized.cues ?? []).map((cue, index) => ({
+        id: `cue-${index}`,
+        time: cue.time,
+        label: cue.name,
+      })),
+      notes: "",
+    },
     groups: [],
     layers: normalized.layers.map(
       (layer) =>

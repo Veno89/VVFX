@@ -36,11 +36,16 @@ export function createRuntimeDefinition(
         : [],
     ),
   );
+  const duration = exportPlaybackDuration(resolvedProject);
+  const cues = resolvedProject.timeline.markers
+    .filter((marker) => marker.time <= duration)
+    .map((marker) => ({ name: marker.label, time: marker.time }))
+    .sort((left, right) => left.time - right.time);
   return {
     format: "vvfx-runtime",
     formatVersion: 16,
     name: resolvedProject.metadata.name,
-    duration: exportPlaybackDuration(resolvedProject),
+    duration,
     seed: resolvedProject.preview.randomSeed,
     assets: resolvedProject.assets
       .filter((asset) => requiredAssetIds.has(asset.id))
@@ -92,6 +97,7 @@ export function createRuntimeDefinition(
       keyframes: layer.keyframes,
       beam: layer.beam,
     })),
+    ...(cues.length > 0 ? { cues } : {}),
   };
 }
 
@@ -355,17 +361,17 @@ export function generatePhaserCode(project: VfxProject): string {
   const currentProject = requireCurrentProject(project, "runtime-export");
   const capabilities = analyzeRuntimeExportCapabilities(currentProject);
   const functionName = `play${currentProject.metadata.name.replace(/[^a-zA-Z0-9]/g, "") || "Vfx"}`;
-  const definition = JSON.stringify(
-    createRuntimeDefinition(currentProject),
-    null,
-    2,
-  );
+  const runtimeDefinition = createRuntimeDefinition(currentProject);
+  const cueNames = [
+    ...new Set((runtimeDefinition.cues ?? []).map((cue) => cue.name)),
+  ];
+  const definition = JSON.stringify(runtimeDefinition, null, 2);
   return `import Phaser from "phaser";
 import {
   playVvfx,
 ${capabilities.beamEndpoints ? "  type BeamEndpoints,\n  type BeamFit,\n" : ""}  type VvfxEffect,
   type VvfxRuntimeDefinition,
-} from "@vvfx/phaser-runtime";
+${cueNames.length > 0 ? "  type VvfxRuntimeCue,\n" : ""}} from "@vvfx/phaser-runtime";
 
 /** Exact Vvfx definition. Editor-only background, grid, zoom, and visibility are omitted. */
 export const vvfxDefinition: VvfxRuntimeDefinition = ${definition};
@@ -393,7 +399,7 @@ ${capabilities.beamEndpoints ? "    beamFit?: BeamFit;\n    beamThicknessScale?:
     loop?: boolean;
     autoDestroy?: boolean;
     onWarning?: (message: string) => void;
-  } = {},
+${cueNames.length > 0 ? `    /** Fires at Timeline markers: ${cueNames.map((name) => JSON.stringify(name).replaceAll("*/", "*\\/")).join(", ")}. */\n    onCue?: (cue: VvfxRuntimeCue) => void;\n` : ""}  } = {},
 ): Promise<VvfxEffect> {
   const definition =
     options.seed === undefined
@@ -410,7 +416,7 @@ ${capabilities.beamEndpoints ? "    beamFit: options.beamFit,\n    beamThickness
     loop: options.loop,
     autoDestroy: options.autoDestroy,
     onWarning: options.onWarning,
-  });
+${cueNames.length > 0 ? "    onCue: options.onCue,\n" : ""}  });
 }
 `;
 }

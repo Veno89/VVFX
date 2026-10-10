@@ -385,6 +385,29 @@ describe("game exports", () => {
     ).toEqual([]);
   });
 
+  it("exposes onCue in generated code only when markers export cues", () => {
+    const project = createExampleProject();
+    project.timeline.markers = [
+      { id: "impact-marker", time: 100, label: "impact */ end" },
+    ];
+    const code = generatePhaserCode(project);
+    expect(code).toContain("type VvfxRuntimeCue");
+    expect(code).toContain("onCue?: (cue: VvfxRuntimeCue) => void;");
+    expect(code).toContain("onCue: options.onCue");
+    expect(code).toContain('"impact *\\/ end"');
+    const transpiled = ts.transpileModule(code, {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+      reportDiagnostics: true,
+    });
+    expect(
+      transpiled.diagnostics?.filter(
+        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+      ),
+    ).toEqual([]);
+
+    expect(generatePhaserCode(createExampleProject())).not.toContain("onCue");
+  });
+
   it("keeps experimental effects in runtime exports and rejects lossy standalone code", () => {
     const project = createEmptyProject("WebGL erosion");
     const glow = createLayer("animated", "Glow", "builtin-ring");

@@ -557,6 +557,23 @@ export function Inspector({
         </p>
       )}
       <div className="inspector-scroll" inert={locked}>
+        <div className="what-happens what-happens--lead">
+          <Link2 size={15} />
+          <div>
+            <strong>What is happening?</strong>
+            <p>{describeLayer(layer)}</p>
+          </div>
+        </div>
+        {(needsSmokeFade || identicalBurst) && (
+          <div className="context-tip">
+            <Sparkles size={14} />
+            <p>
+              {needsSmokeFade
+                ? "Tip: Smoke usually feels more natural when its ending opacity is close to 0%."
+                : "Tip: A little random size and movement can make this burst feel less mechanical."}
+            </p>
+          </div>
+        )}
         {!layer.assetId && (
           <div className="friendly-error">
             This layer has no image yet. Choose one below to make it visible.
@@ -3065,24 +3082,6 @@ export function Inspector({
             </FieldGroup>
           )}
         </SettingsSection>
-
-        <div className="what-happens">
-          <Link2 size={15} />
-          <div>
-            <strong>What is happening?</strong>
-            <p>{describeLayer(layer)}</p>
-          </div>
-        </div>
-        {(needsSmokeFade || identicalBurst) && (
-          <div className="context-tip">
-            <Sparkles size={14} />
-            <p>
-              {needsSmokeFade
-                ? "Tip: Smoke usually feels more natural when its ending opacity is close to 0%."
-                : "Tip: A little random size and movement can make this burst feel less mechanical."}
-            </p>
-          </div>
-        )}
       </div>
     </aside>
   );

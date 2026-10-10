@@ -8,6 +8,12 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- A start screen at the end of the workspace tour and over an empty preview:
+  begin the guided first-effect lesson or one of four complete starter effects
+  in one click.
+- Export preflight now summarizes passing checks in one line, with the full
+  list one click away, and the dialog reopens on the last export type used.
+
 - Central project, template, runtime, upload, and embedded-image integrity
   limits with adversarial coverage.
 - Dependency-aware image removal, typed notices, responsive project actions,
@@ -29,6 +35,12 @@ uses semantic versions for release artifacts.
 - Runtime JSON `duration` now ends at the last enabled content when **Loop
   active range** is on, so `onComplete` and loops no longer wait through
   trailing composition silence.
+- The editor preview's Phaser loop sleeps after 400 ms without changes,
+  pointer activity, or resizing, so a paused editor stops redrawing every
+  frame. Recording and stress previews stay awake.
+- The Inspector's plain-language "What is happening?" summary now leads the
+  panel instead of sitting below every section.
+- The Runtime JSON tab badge reads "For games" instead of "Recommended".
 - The Phaser runtime and editor preview assign sprite depth only when it
   changes, so a playing effect no longer forces a full host display-list sort
   every frame.

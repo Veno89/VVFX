@@ -120,7 +120,8 @@ import {
   DEFINITION_DRAWER_ID,
   DefinitionDrawer,
 } from "./components/DefinitionDrawer";
-import { ExportDialog } from "./components/ExportDialog";
+import { ExportDialog, type ExportTab } from "./components/ExportDialog";
+import { PreviewStartPanel } from "./components/StartChoices";
 import { GroupInspector } from "./components/GroupInspector";
 import { EffectInspector } from "./components/EffectInspector";
 import { Inspector } from "./components/Inspector";
@@ -312,6 +313,7 @@ export function VfxEditor() {
   const playbackClock = useMemo(() => createPlaybackClock(), []);
   const [previewRestartRevision, setPreviewRestartRevision] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
+  const [lastExportTab, setLastExportTab] = useState<ExportTab>("preview");
   const [exportingPreview, setExportingPreview] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -794,6 +796,13 @@ export function VfxEditor() {
       setBrowserStorageBlocked(true);
     setOnboardingStep(null);
   }, [browserStorage]);
+
+  const startFirstEffectGuide = useCallback(() => {
+    setLearningOpen(false);
+    finishOnboarding();
+    setGuideActionStep(null);
+    setGuideStep(0);
+  }, [finishOnboarding]);
 
   useEffect(() => {
     if (!playing) return;
@@ -2398,6 +2407,17 @@ export function VfxEditor() {
           loopEnd={activePlaybackEnd}
           selectedId={effectiveSelectedId}
           captureMode={exportingPreview}
+          emptyState={
+            project.layers.length === 0 &&
+            guideStep === null &&
+            onboardingStep === null &&
+            !exportingPreview ? (
+              <PreviewStartPanel
+                onStartGuide={startFirstEffectGuide}
+                onStartPreset={addPreset}
+              />
+            ) : undefined
+          }
           onCanvasReady={handlePreviewCanvasReady}
           onProjectChange={updateProject}
           onViewChange={(patch) =>
@@ -2841,6 +2861,8 @@ export function VfxEditor() {
           project={project}
           activeDuration={playbackEnd - playbackStart}
           currentPreviewSize={previewCanvasSize}
+          initialTab={lastExportTab}
+          onTabChange={setLastExportTab}
           onRecordPreview={recordPreview}
           onClose={() => setExportOpen(false)}
         />
@@ -3215,12 +3237,7 @@ export function VfxEditor() {
             setGuideStep(null);
             setOnboardingStep(0);
           }}
-          onStartFirstEffect={() => {
-            setLearningOpen(false);
-            setOnboardingStep(null);
-            setGuideActionStep(null);
-            setGuideStep(0);
-          }}
+          onStartFirstEffect={startFirstEffectGuide}
           onBuildRecipe={(recipeId) => {
             addPreset(recipeId);
             setLearningOpen(false);
@@ -3236,6 +3253,11 @@ export function VfxEditor() {
             else setOnboardingStep(onboardingStep + 1);
           }}
           onSkip={finishOnboarding}
+          onStartGuide={startFirstEffectGuide}
+          onStartPreset={(presetId) => {
+            finishOnboarding();
+            addPreset(presetId);
+          }}
         />
       )}
       {guideStep !== null && (

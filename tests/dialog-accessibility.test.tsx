@@ -298,6 +298,43 @@ describe("dialog keyboard accessibility", () => {
     },
   );
 
+  it("reopens Export on the last tab used and collapses passing preflight checks", () => {
+    const project = createEmptyProject("Remembered export");
+    project.layers.push(createLayer("animated", "Flash", "builtin-flash"));
+    const onTabChange = vi.fn();
+    render(
+      <ExportDialog
+        project={project}
+        activeDuration={800}
+        initialTab="runtime"
+        onTabChange={onTabChange}
+        onRecordPreview={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const tablist = screen.getByRole("tablist", { name: "Export type" });
+    expect(
+      within(tablist).getByRole("tab", { name: /Runtime JSON/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(
+      within(tablist).getByRole("tab", { name: "Preview video" }),
+    );
+    expect(onTabChange).toHaveBeenCalledWith("preview");
+
+    const preflight = screen.getByRole("region", { name: "Export preflight" });
+    expect(preflight).toHaveTextContent(/All \d+ checks pass/);
+    const toggle = within(preflight).getByRole("button", {
+      name: "Show checks",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(
+      within(preflight).getByRole("button", { name: "Hide checks" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(within(preflight).getByText("Visible content")).toBeVisible();
+  });
+
   it("exposes related Export tabs and panels with roving keyboard selection", async () => {
     render(
       <ExportDialog

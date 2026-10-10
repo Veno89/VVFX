@@ -21,6 +21,7 @@ import {
   Timer,
   X,
 } from "lucide-react";
+import { StartChoices } from "./StartChoices";
 import {
   useState,
   type KeyboardEvent,
@@ -128,14 +129,20 @@ export function OnboardingOverlay({
   onBack,
   onNext,
   onSkip,
+  onStartGuide,
+  onStartPreset,
 }: {
   step: number;
   onBack: () => void;
   onNext: () => void;
   onSkip: () => void;
+  /** When provided, the last step offers a first project to start from. */
+  onStartGuide?: () => void;
+  onStartPreset?: (presetId: string) => void;
 }) {
   const item = TOUR_STEPS[step];
   const last = step === TOUR_STEPS.length - 1;
+  const offerStart = last && onStartGuide && onStartPreset;
   const dialogRef = useFocusRegion<HTMLDivElement>({ onEscape: onSkip });
   return (
     <div
@@ -145,7 +152,7 @@ export function OnboardingOverlay({
       aria-modal="true"
       aria-labelledby="tour-title"
     >
-      <section className="tour-card">
+      <section className={`tour-card ${offerStart ? "tour-card--start" : ""}`}>
         <button
           className="tour-close"
           type="button"
@@ -162,6 +169,12 @@ export function OnboardingOverlay({
           <MousePointer2 size={14} />
           <span>{item.detail}</span>
         </div>
+        {offerStart && (
+          <StartChoices
+            onStartGuide={onStartGuide}
+            onStartPreset={onStartPreset}
+          />
+        )}
         <div
           className="tour-dots"
           aria-label={`Step ${step + 1} of ${TOUR_STEPS.length}`}
@@ -186,7 +199,7 @@ export function OnboardingOverlay({
             {step + 1} / {TOUR_STEPS.length}
           </span>
           <button type="button" className="primary-action" onClick={onNext}>
-            {last ? "Start creating" : "Next"}{" "}
+            {offerStart ? "Empty project" : last ? "Start creating" : "Next"}{" "}
             {!last && <ChevronRight size={15} />}
           </button>
         </footer>

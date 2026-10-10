@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -45,7 +46,7 @@ import {
 import type { VfxProject } from "../../vfx/types";
 import { useFocusRegion } from "../useFocusRegion";
 
-type ExportTab = "preview" | "runtime" | "phaser" | "project";
+export type ExportTab = "preview" | "runtime" | "phaser" | "project";
 type PreviewFormat = PreviewRecordingRequest["format"];
 
 const EXPORT_TABS: ExportTab[] = ["preview", "runtime", "phaser", "project"];
@@ -76,6 +77,8 @@ export function ExportDialog({
   onRecordPreview,
   onClose,
   currentPreviewSize,
+  initialTab = "preview",
+  onTabChange,
 }: {
   project: VfxProject;
   activeDuration: number;
@@ -85,8 +88,13 @@ export function ExportDialog({
   ) => Promise<PreviewRecording>;
   onClose: () => void;
   currentPreviewSize?: { width: number; height: number } | null;
+  /** Tab to open on, so the editor can reopen the last export type used. */
+  initialTab?: ExportTab;
+  onTabChange?: (tab: ExportTab) => void;
 }) {
-  const [tab, setTab] = useState<ExportTab>("preview");
+  const [tab, setTab] = useState<ExportTab>(initialTab);
+  // null follows the preflight status: collapsed when every check passes.
+  const [checksExpanded, setChecksExpanded] = useState<boolean | null>(null);
   const [copiedTab, setCopiedTab] = useState<ExportTab | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
@@ -219,6 +227,8 @@ export function ExportDialog({
     () => analyzeExportPreflight(project, preflightProfileId),
     [preflightProfileId, project],
   );
+  const checksVisible = checksExpanded ?? preflight.status !== "pass";
+  const preflightListId = useId();
   const preflightBlocksExport =
     preflight.status === "error" && tab !== "project";
 
@@ -231,6 +241,7 @@ export function ExportDialog({
     setCopiedTab(null);
     setCopyError(null);
     setTab(nextTab);
+    onTabChange?.(nextTab);
   };
 
   const moveTabFocus = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -412,7 +423,7 @@ export function ExportDialog({
           >
             <FileJson size={15} /> Runtime JSON
             <small className="export-tab-badge" aria-hidden="true">
-              Recommended
+              For games
             </small>
           </button>
           <button
@@ -474,7 +485,22 @@ export function ExportDialog({
             </label>
           </header>
           <p>{preflight.profile.description}</p>
-          <ul>
+          <div className="export-preflight__summary">
+            <span>
+              {preflight.status === "pass"
+                ? `All ${preflight.checks.length} checks pass for this profile.`
+                : `${preflight.checks.filter((check) => check.severity !== "pass").length} of ${preflight.checks.length} checks need attention.`}
+            </span>
+            <button
+              type="button"
+              aria-expanded={checksVisible}
+              aria-controls={preflightListId}
+              onClick={() => setChecksExpanded(!checksVisible)}
+            >
+              {checksVisible ? "Hide checks" : "Show checks"}
+            </button>
+          </div>
+          <ul id={preflightListId} hidden={!checksVisible}>
             {preflight.checks.map((check) => (
               <li key={check.id} className={`is-${check.severity}`}>
                 {check.severity === "error" ? (

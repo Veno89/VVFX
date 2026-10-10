@@ -3054,6 +3054,10 @@ button:disabled {
   );
   border: 1px solid rgba(99, 221, 243, 0.12);
 }
+.what-happens--lead {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+}
 .what-happens svg {
   flex: 0 0 auto;
   color: var(--cyan);
@@ -4196,7 +4200,7 @@ kbd {
 }
 .export-preflight {
   flex: 0 1 auto;
-  max-height: 152px;
+  max-height: 240px;
   margin: 0 14px 9px;
   padding: 8px 10px;
   overflow: auto;
@@ -4223,7 +4227,7 @@ kbd {
 }
 .export-preflight > header label {
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
 }
 .export-preflight select {
   height: 25px;
@@ -4231,12 +4235,33 @@ kbd {
   background: #111722;
   border: 1px solid #2c3545;
   border-radius: 4px;
-  font-size: 8.5px;
+  font-size: 11px;
 }
 .export-preflight > p {
   margin: 2px 0 7px;
   color: var(--faint);
-  font-size: 8.5px;
+  font-size: 11px;
+}
+.export-preflight__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+  color: #cbd4df;
+  font-size: 11.5px;
+}
+.export-preflight__summary button {
+  min-height: 26px;
+  padding: 0 10px;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid #2c3545;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.export-preflight ul[hidden] {
+  display: none;
 }
 .export-preflight ul {
   display: grid;
@@ -4264,19 +4289,14 @@ kbd {
   display: grid;
   gap: 1px;
 }
-.export-preflight li strong,
-.export-preflight li small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .export-preflight li strong {
   color: #bdc6d3;
-  font-size: 8px;
+  font-size: 11px;
 }
 .export-preflight li small {
   color: var(--faint);
-  font-size: 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
 }
 .export-preflight li.is-pass > svg {
   color: var(--mint);
@@ -6110,4 +6130,101 @@ kbd {
     inset: 12px;
     width: auto;
   }
+}
+
+/* First-run start choices: empty preview overlay and final tour step. */
+.preview-start {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  overflow-y: auto;
+  text-align: center;
+  background: rgba(9, 11, 17, 0.72);
+}
+.preview-start h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+.preview-start > p {
+  max-width: 460px;
+  margin: 0 0 6px;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.start-choices {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  text-align: left;
+}
+.preview-start .start-choices {
+  margin-top: 0;
+}
+.start-choices__label {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 650;
+}
+.start-choices__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+.start-choice {
+  min-height: 56px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  color: var(--text);
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border-bright);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.start-choice:hover,
+.start-choice:focus-visible {
+  border-color: var(--cyan);
+  background: #1a2230;
+}
+.start-choice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--cyan);
+}
+.start-choice span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.start-choice strong {
+  font-size: 13px;
+}
+.start-choice small {
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.start-choice--guide {
+  background: var(--cyan-soft);
+  border-color: rgba(99, 221, 243, 0.45);
+}
+.start-choice--guide svg {
+  color: var(--mint);
+}
+.canvas-hint[hidden] {
+  display: none;
+}
+.tour-card--start {
+  width: min(540px, calc(100vw - 32px));
 }

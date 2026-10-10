@@ -12,7 +12,7 @@ import {
   RotateCcw,
   SlidersHorizontal,
 } from "lucide-react";
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { PhaserPreview } from "../../preview/PhaserPreview";
 import type {
   PreviewPerformanceSample,
@@ -58,6 +58,7 @@ export function PreviewPanel({
   captureMode = false,
   onCanvasReady,
   lockedLayerIds = [],
+  emptyState,
 }: {
   project: VfxProject;
   time: number;
@@ -88,6 +89,8 @@ export function PreviewPanel({
   captureMode?: boolean;
   onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
   lockedLayerIds?: string[];
+  /** Overlay shown on the canvas while the effect has nothing to play. */
+  emptyState?: ReactNode;
 }) {
   const backgroundFieldId = useId();
   const seedFieldId = useId();
@@ -340,7 +343,8 @@ export function PreviewPanel({
           onCanvasReady={onCanvasReady}
           lockedLayerIds={lockedLayerIds}
         />
-        <div className="canvas-hint">
+        {emptyState}
+        <div className="canvas-hint" hidden={Boolean(emptyState)}>
           {captureMode
             ? "Recording one clean effect copy"
             : stressCopies > 1

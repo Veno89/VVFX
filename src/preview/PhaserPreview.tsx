@@ -40,6 +40,13 @@ import {
   destroyStalePreviewSprites,
 } from "./spriteLifecycle";
 
+/**
+ * The preview only needs Phaser's render loop while something changes. After
+ * this long without a new frame, pointer activity, or resize, the loop sleeps
+ * so a paused editor stops redrawing 60 times a second.
+ */
+const PREVIEW_IDLE_SLEEP_MS = 400;
+
 interface PhaserPreviewProps {
   project: VfxProject;
   time: number;
@@ -399,6 +406,9 @@ export function PhaserPreview({
   const lastPerformanceSignatureRef = useRef("");
   const idlePerformanceTimerRef = useRef<number | null>(null);
   const lastRestartRevisionRef = useRef(restartRevision);
+  const idleSleepTimerRef = useRef<number | null>(null);
+  const alwaysAwakeRef = useRef(false);
+  alwaysAwakeRef.current = captureMode || stressCopies > 1;
   const [textureRevision, setTextureRevision] = useState(0);
   const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
   const lockedIds = useMemo(() => new Set(lockedLayerIds), [lockedLayerIds]);
@@ -432,9 +442,44 @@ export function PhaserPreview({
     () => () => {
       if (idlePerformanceTimerRef.current !== null)
         window.clearTimeout(idlePerformanceTimerRef.current);
+      if (idleSleepTimerRef.current !== null)
+        window.clearTimeout(idleSleepTimerRef.current);
     },
     [],
   );
+
+  const keepAwakeRef = useRef(() => {});
+  keepAwakeRef.current = () => {
+    const game = gameRef.current;
+    if (!game) return;
+    game.loop.wake(true);
+    if (idleSleepTimerRef.current !== null)
+      window.clearTimeout(idleSleepTimerRef.current);
+    idleSleepTimerRef.current = null;
+    // Recording and stress previews read every frame, so they never sleep.
+    if (alwaysAwakeRef.current) return;
+    idleSleepTimerRef.current = window.setTimeout(() => {
+      idleSleepTimerRef.current = null;
+      if (!alwaysAwakeRef.current) gameRef.current?.loop.sleep();
+    }, PREVIEW_IDLE_SLEEP_MS);
+  };
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const wake = () => keepAwakeRef.current();
+    const events = ["pointerdown", "pointermove", "pointerup", "wheel"];
+    for (const name of events)
+      mount.addEventListener(name, wake, { passive: true });
+    // Phaser's scale manager checks the parent size from its loop.
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(wake);
+    resizeObserver?.observe(mount);
+    return () => {
+      for (const name of events) mount.removeEventListener(name, wake);
+      resizeObserver?.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (!mountRef.current || gameRef.current) return;
@@ -1039,6 +1084,7 @@ export function PhaserPreview({
         stressLimited: replication.limited,
       });
     }, 1_050);
+    keepAwakeRef.current();
   }, [
     captureMode,
     evaluator,

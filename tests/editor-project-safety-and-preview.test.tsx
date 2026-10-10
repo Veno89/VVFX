@@ -485,7 +485,7 @@ describe("New project safety", () => {
     expect(screen.getByText("Not saved yet")).toBeInTheDocument();
   });
 
-  it("uses the same protected replacement flow from the guided build", () => {
+  it("uses the same protected replacement flow from the guided build", async () => {
     const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<VfxEditor />);
 
@@ -493,7 +493,9 @@ describe("New project safety", () => {
     fireEvent.change(projectName, { target: { value: "Guided draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Learn" }));
     fireEvent.click(
-      screen.getByRole("button", { name: /Build your first shockwave/i }),
+      await screen.findByRole("button", {
+        name: /Build your first shockwave/i,
+      }),
     );
     const guide = screen.getByRole("dialog", {
       name: "Build your first shockwave tutorial",
@@ -530,12 +532,14 @@ describe("New project safety", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toHaveFocus();
   });
 
-  it("moves a clean guided build directly to Continue", () => {
+  it("moves a clean guided build directly to Continue", async () => {
     render(<VfxEditor />);
 
     fireEvent.click(screen.getByRole("button", { name: "Learn" }));
     fireEvent.click(
-      screen.getByRole("button", { name: /Build your first shockwave/i }),
+      await screen.findByRole("button", {
+        name: /Build your first shockwave/i,
+      }),
     );
     const createEmpty = screen.getByRole("button", {
       name: "Create empty project",

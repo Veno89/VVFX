@@ -8,6 +8,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -120,7 +122,7 @@ import {
   DEFINITION_DRAWER_ID,
   DefinitionDrawer,
 } from "./components/DefinitionDrawer";
-import { ExportDialog, type ExportTab } from "./components/ExportDialog";
+import type { ExportTab } from "./components/ExportDialog";
 import { PreviewStartPanel } from "./components/StartChoices";
 import { GroupInspector } from "./components/GroupInspector";
 import { EffectInspector } from "./components/EffectInspector";
@@ -129,7 +131,6 @@ import {
   FirstEffectGuide,
   OnboardingOverlay,
   TOUR_STEPS,
-  TutorialCenter,
   type TourFocus,
 } from "./components/LearningCenter";
 import { LayerPanel } from "./components/LayerPanel";
@@ -143,10 +144,7 @@ import {
 } from "./components/ProjectSafetyDialogs";
 import { ProjectsDialog } from "./components/ProjectsDialog";
 import { Timeline } from "./components/Timeline";
-import {
-  TemplateLibraryDialog,
-  type TemplateSaveScope,
-} from "./components/TemplateLibraryDialog";
+import type { TemplateSaveScope } from "./components/TemplateLibraryDialog";
 import { TopBar, type ProjectSaveStatus } from "./components/TopBar";
 import { downloadText } from "./download";
 import { createBrowserStorageAccess } from "./browserStorage";
@@ -194,6 +192,31 @@ const upsertSavedTemplate = (
 
 const isAbortError = (error: unknown) =>
   error instanceof Error && error.name === "AbortError";
+
+// Dialogs a person opens on demand load separately so the first paint only
+// downloads the workspace itself.
+const ExportDialog = lazy(() =>
+  import("./components/ExportDialog").then((module) => ({
+    default: module.ExportDialog,
+  })),
+);
+const TemplateLibraryDialog = lazy(() =>
+  import("./components/TemplateLibraryDialog").then((module) => ({
+    default: module.TemplateLibraryDialog,
+  })),
+);
+const TutorialCenter = lazy(() =>
+  import("./components/TutorialCenter").then((module) => ({
+    default: module.TutorialCenter,
+  })),
+);
+
+/** Warm the on-demand dialogs once the workspace is idle. */
+function preloadEditorDialogs() {
+  void import("./components/ExportDialog");
+  void import("./components/TemplateLibraryDialog");
+  void import("./components/TutorialCenter");
+}
 
 type NoticeTone = "success" | "info" | "warning" | "error";
 
@@ -1946,6 +1969,11 @@ export function VfxEditor() {
     [notify, refreshStoredTemplates],
   );
 
+  useEffect(() => {
+    const timer = window.setTimeout(preloadEditorDialogs, 2_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const pointerNavigationRef = useRef(false);
   useEffect(() => {
     const rememberNavigationStyle = (event: PointerEvent | KeyboardEvent) => {
@@ -2857,15 +2885,17 @@ export function VfxEditor() {
         />
       )}
       {exportOpen && (
-        <ExportDialog
-          project={project}
-          activeDuration={playbackEnd - playbackStart}
-          currentPreviewSize={previewCanvasSize}
-          initialTab={lastExportTab}
-          onTabChange={setLastExportTab}
-          onRecordPreview={recordPreview}
-          onClose={() => setExportOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <ExportDialog
+            project={project}
+            activeDuration={playbackEnd - playbackStart}
+            currentPreviewSize={previewCanvasSize}
+            initialTab={lastExportTab}
+            onTabChange={setLastExportTab}
+            onRecordPreview={recordPreview}
+            onClose={() => setExportOpen(false)}
+          />
+        </Suspense>
       )}
       {projectsOpen && (
         <ProjectsDialog
@@ -3013,153 +3043,157 @@ export function VfxEditor() {
         />
       )}
       {templatesOpen && (
-        <TemplateLibraryDialog
-          projectName={project.metadata.name}
-          selectedLayerName={selectedLayer?.name}
-          selectedGroupName={
-            selectedGroup &&
-            project.layers.some((layer) => layer.groupId === selectedGroup.id)
-              ? selectedGroup.name
-              : undefined
-          }
-          canSaveCurrent={project.layers.length > 0}
-          templates={savedTemplates}
-          invalidSavedCount={invalidStoredTemplates.length}
-          excessSavedCount={excessStoredTemplates}
-          saveSummaries={templateSaveSummaries}
-          onSaveCurrent={saveCurrentTemplate}
-          onInsert={insertSavedTemplate}
-          onInsertBuiltIn={(presetId) => {
-            projectImageValidation.current?.abort();
-            projectImageValidation.current = null;
-            addPreset(presetId);
-            closeTemplateLibrary();
-          }}
-          onRename={async (template, name) => {
-            const storedTemplate = await saveTemplate({
-              ...template,
-              name,
-              updatedAt: new Date().toISOString(),
-            });
-            setSavedTemplates((current) =>
-              upsertSavedTemplate(current, storedTemplate),
-            );
-            try {
-              await refreshStoredTemplates();
-              notify(`Renamed template to “${name}”.`, "success");
-            } catch {
-              notify(
-                `Renamed template to “${name}”, but the template list could not be refreshed yet.`,
-                "warning",
-              );
+        <Suspense fallback={null}>
+          <TemplateLibraryDialog
+            projectName={project.metadata.name}
+            selectedLayerName={selectedLayer?.name}
+            selectedGroupName={
+              selectedGroup &&
+              project.layers.some((layer) => layer.groupId === selectedGroup.id)
+                ? selectedGroup.name
+                : undefined
             }
-          }}
-          onDuplicate={async (template) => {
-            const now = new Date().toISOString();
-            const copy = await saveTemplate({
-              ...clone(template),
-              id: makeId("template"),
-              name: `${template.name.slice(0, MAX_VFX_NAME_LENGTH - 5).trimEnd()} copy`,
-              createdAt: now,
-              updatedAt: now,
-            });
-            setSavedTemplates((current) => upsertSavedTemplate(current, copy));
-            try {
-              await refreshStoredTemplates();
-              notify(`Duplicated “${copy.name}”.`, "success");
-            } catch {
-              notify(
-                `Duplicated “${copy.name}”, but the template list could not be refreshed yet.`,
-                "warning",
+            canSaveCurrent={project.layers.length > 0}
+            templates={savedTemplates}
+            invalidSavedCount={invalidStoredTemplates.length}
+            excessSavedCount={excessStoredTemplates}
+            saveSummaries={templateSaveSummaries}
+            onSaveCurrent={saveCurrentTemplate}
+            onInsert={insertSavedTemplate}
+            onInsertBuiltIn={(presetId) => {
+              projectImageValidation.current?.abort();
+              projectImageValidation.current = null;
+              addPreset(presetId);
+              closeTemplateLibrary();
+            }}
+            onRename={async (template, name) => {
+              const storedTemplate = await saveTemplate({
+                ...template,
+                name,
+                updatedAt: new Date().toISOString(),
+              });
+              setSavedTemplates((current) =>
+                upsertSavedTemplate(current, storedTemplate),
               );
-            }
-          }}
-          onExportOne={(template) => {
-            downloadText(
-              `${template.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "vvfx-template"}.vvfx-template`,
-              serializeTemplate(template),
-              "application/json",
-            );
-            notify(`Exported “${template.name}”.`, "success");
-          }}
-          onDelete={async (template) => {
-            await deleteTemplate(template.id);
-            setSavedTemplates((current) =>
-              current.filter((candidate) => candidate.id !== template.id),
-            );
-            setExcessStoredTemplates((current) => Math.max(0, current - 1));
-            try {
-              await refreshStoredTemplates();
-              notify(`Deleted “${template.name}”.`, "success");
-            } catch {
-              notify(
-                `Deleted “${template.name}”, but the template list could not be refreshed yet.`,
-                "warning",
-              );
-            }
-          }}
-          onRemoveInvalidSaved={async () => {
-            const invalidRecords = invalidStoredTemplates;
-            const count = invalidRecords.length;
-            if (
-              !window.confirm(
-                `Remove ${count} unreadable ${count === 1 ? "template" : "templates"} from this browser? The stored data cannot be recovered afterward.`,
-              )
-            )
-              return;
-            let removed = 0;
-            for (const record of invalidRecords) {
               try {
-                await deleteInvalidTemplateRecord(record.key);
-              } catch (error) {
-                const remaining = count - removed;
-                if (removed === 0)
-                  throw error instanceof Error
-                    ? error
-                    : new Error(
-                        "The unreadable templates could not be removed.",
-                      );
-                throw new Error(
-                  `Removed ${removed} unreadable ${removed === 1 ? "template" : "templates"} before cleanup stopped. ${remaining} ${remaining === 1 ? "template remains" : "templates remain"} unreadable. ${
-                    error instanceof Error
-                      ? error.message
-                      : "The remaining stored data could not be removed."
-                  }`,
+                await refreshStoredTemplates();
+                notify(`Renamed template to “${name}”.`, "success");
+              } catch {
+                notify(
+                  `Renamed template to “${name}”, but the template list could not be refreshed yet.`,
+                  "warning",
                 );
               }
-              removed += 1;
-              setInvalidStoredTemplates((current) =>
-                current.filter((candidate) => candidate !== record),
+            }}
+            onDuplicate={async (template) => {
+              const now = new Date().toISOString();
+              const copy = await saveTemplate({
+                ...clone(template),
+                id: makeId("template"),
+                name: `${template.name.slice(0, MAX_VFX_NAME_LENGTH - 5).trimEnd()} copy`,
+                createdAt: now,
+                updatedAt: now,
+              });
+              setSavedTemplates((current) =>
+                upsertSavedTemplate(current, copy),
+              );
+              try {
+                await refreshStoredTemplates();
+                notify(`Duplicated “${copy.name}”.`, "success");
+              } catch {
+                notify(
+                  `Duplicated “${copy.name}”, but the template list could not be refreshed yet.`,
+                  "warning",
+                );
+              }
+            }}
+            onExportOne={(template) => {
+              downloadText(
+                `${template.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "vvfx-template"}.vvfx-template`,
+                serializeTemplate(template),
+                "application/json",
+              );
+              notify(`Exported “${template.name}”.`, "success");
+            }}
+            onDelete={async (template) => {
+              await deleteTemplate(template.id);
+              setSavedTemplates((current) =>
+                current.filter((candidate) => candidate.id !== template.id),
               );
               setExcessStoredTemplates((current) => Math.max(0, current - 1));
-            }
-            try {
-              await refreshStoredTemplates();
+              try {
+                await refreshStoredTemplates();
+                notify(`Deleted “${template.name}”.`, "success");
+              } catch {
+                notify(
+                  `Deleted “${template.name}”, but the template list could not be refreshed yet.`,
+                  "warning",
+                );
+              }
+            }}
+            onRemoveInvalidSaved={async () => {
+              const invalidRecords = invalidStoredTemplates;
+              const count = invalidRecords.length;
+              if (
+                !window.confirm(
+                  `Remove ${count} unreadable ${count === 1 ? "template" : "templates"} from this browser? The stored data cannot be recovered afterward.`,
+                )
+              )
+                return;
+              let removed = 0;
+              for (const record of invalidRecords) {
+                try {
+                  await deleteInvalidTemplateRecord(record.key);
+                } catch (error) {
+                  const remaining = count - removed;
+                  if (removed === 0)
+                    throw error instanceof Error
+                      ? error
+                      : new Error(
+                          "The unreadable templates could not be removed.",
+                        );
+                  throw new Error(
+                    `Removed ${removed} unreadable ${removed === 1 ? "template" : "templates"} before cleanup stopped. ${remaining} ${remaining === 1 ? "template remains" : "templates remain"} unreadable. ${
+                      error instanceof Error
+                        ? error.message
+                        : "The remaining stored data could not be removed."
+                    }`,
+                  );
+                }
+                removed += 1;
+                setInvalidStoredTemplates((current) =>
+                  current.filter((candidate) => candidate !== record),
+                );
+                setExcessStoredTemplates((current) => Math.max(0, current - 1));
+              }
+              try {
+                await refreshStoredTemplates();
+                notify(
+                  `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}.`,
+                  "success",
+                );
+              } catch {
+                notify(
+                  `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}, but the template list could not be refreshed yet.`,
+                  "warning",
+                );
+              }
+            }}
+            onImport={importTemplateFile}
+            onExport={() => {
+              downloadText(
+                "vvfx-effect-templates.vvfx-templates",
+                serializeTemplatePack(savedTemplates),
+                "application/json",
+              );
               notify(
-                `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}.`,
+                `Exported ${savedTemplates.length} template${savedTemplates.length === 1 ? "" : "s"}.`,
                 "success",
               );
-            } catch {
-              notify(
-                `Removed ${count} unreadable ${count === 1 ? "template" : "templates"}, but the template list could not be refreshed yet.`,
-                "warning",
-              );
-            }
-          }}
-          onImport={importTemplateFile}
-          onExport={() => {
-            downloadText(
-              "vvfx-effect-templates.vvfx-templates",
-              serializeTemplatePack(savedTemplates),
-              "application/json",
-            );
-            notify(
-              `Exported ${savedTemplates.length} template${savedTemplates.length === 1 ? "" : "s"}.`,
-              "success",
-            );
-          }}
-          onClose={closeTemplateLibrary}
-        />
+            }}
+            onClose={closeTemplateLibrary}
+          />
+        </Suspense>
       )}
       {saveAsOpen && (
         <SaveAsDialog
@@ -3230,19 +3264,21 @@ export function VfxEditor() {
         />
       )}
       {learningOpen && (
-        <TutorialCenter
-          onClose={() => setLearningOpen(false)}
-          onStartTour={() => {
-            setLearningOpen(false);
-            setGuideStep(null);
-            setOnboardingStep(0);
-          }}
-          onStartFirstEffect={startFirstEffectGuide}
-          onBuildRecipe={(recipeId) => {
-            addPreset(recipeId);
-            setLearningOpen(false);
-          }}
-        />
+        <Suspense fallback={null}>
+          <TutorialCenter
+            onClose={() => setLearningOpen(false)}
+            onStartTour={() => {
+              setLearningOpen(false);
+              setGuideStep(null);
+              setOnboardingStep(0);
+            }}
+            onStartFirstEffect={startFirstEffectGuide}
+            onBuildRecipe={(recipeId) => {
+              addPreset(recipeId);
+              setLearningOpen(false);
+            }}
+          />
+        </Suspense>
       )}
       {onboardingStep !== null && (
         <OnboardingOverlay

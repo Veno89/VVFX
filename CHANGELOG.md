@@ -35,6 +35,9 @@ uses semantic versions for release artifacts.
 - Runtime JSON `duration` now ends at the last enabled content when **Loop
   active range** is on, so `onComplete` and loops no longer wait through
   trailing composition silence.
+- Learn, Templates, and Export dialogs load on demand (and warm up once the
+  workspace is idle), cutting the editor's startup chunk from 532 KB to
+  452 KB.
 - The editor preview's Phaser loop sleeps after 400 ms without changes,
   pointer activity, or resizing, so a paused editor stops redrawing every
   frame. Recording and stress previews stay awake.

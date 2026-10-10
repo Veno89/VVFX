@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Inspector } from "../src/editor/components/Inspector";
 import { AssetPanel } from "../src/editor/components/AssetPanel";
-import { TutorialCenter } from "../src/editor/components/LearningCenter";
+import { TutorialCenter } from "../src/editor/components/TutorialCenter";
 import {
   DEFAULT_BEHAVIOR,
   DEFAULT_COLOR_OVER_LIFETIME,

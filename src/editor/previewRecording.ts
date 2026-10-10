@@ -12,7 +12,7 @@ export const WEBM_MIME_TYPES = [
 export interface PreviewRecording {
   blob: Blob;
   mimeType: string;
-  format: "webm" | "gif";
+  format: "webm" | "gif" | "spritesheet";
   width: number;
   height: number;
   duration: number;
@@ -24,9 +24,11 @@ export interface PreviewExportSize {
 }
 
 export interface PreviewRecordingRequest {
-  format: "webm" | "gif";
+  format: "webm" | "gif" | "spritesheet";
   size: PreviewExportSize;
   signal: AbortSignal;
+  /** Sprite-sheet frame rate; video formats use their fixed rates. */
+  framesPerSecond?: number;
 }
 
 export const GIF_MAX_FRAMES = 450;

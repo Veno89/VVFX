@@ -911,6 +911,15 @@ export function VfxEditor() {
           },
           onProgress,
         };
+        if (request.format === "spritesheet") {
+          const { recordCanvasAsSpriteSheet } =
+            await import("./spriteSheetExport");
+          return await recordCanvasAsSpriteSheet({
+            ...recordingOptions,
+            framesPerSecond: request.framesPerSecond,
+            name: project.metadata.name,
+          });
+        }
         return request.format === "gif"
           ? await recordCanvasAsGif(recordingOptions)
           : await recordCanvasAsWebm(recordingOptions);

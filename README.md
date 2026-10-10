@@ -135,6 +135,8 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   are downloaded.
 - Clean local WebM (30 FPS) and GIF (15 FPS) export using the active Timeline
   range, with editor guides removed automatically.
+- Sprite sheet + PNG frames export (.zip) for any engine: one packed sheet, a
+  TexturePacker-style JSON atlas, and every frame as its own PNG.
 - A compact Effect toolbelt on the selected layer and a contextual Effect
   Inspector for adding, selecting, tuning, disabling, or removing effects. Each
   effect has a per-copy Timeline clip with exact timing, fade-in/fade-out, and a

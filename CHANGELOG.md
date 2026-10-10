@@ -8,6 +8,11 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- **Sprite sheet + PNG frames export** (.zip) in Export → Preview video, at
+  12–30 FPS and new 256 or 512 px square sprite sizes. The archive holds one
+  packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
+  and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
+  or Construct. Sheets stay within 8192 px and 240 frames.
 - **Runtime cues.** Timeline markers within the exported duration travel in
   Runtime JSON as an optional `cues` list (additive within format 16; older
   runtimes ignore it). The runtime's new `onCue` option fires each cue once per

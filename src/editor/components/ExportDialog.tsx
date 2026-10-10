@@ -32,6 +32,7 @@ import {
   type PreviewRecordingRequest,
 } from "../previewRecording";
 import { downloadBlob, downloadText, safeFilename } from "../download";
+import { planSpriteSheet, SPRITE_SHEET_FRAME_RATES } from "../spriteSheetPlan";
 import {
   analyzeRuntimeExportCapabilities,
   generatePhaserCode,
@@ -54,7 +55,30 @@ const EXPORT_TABS: ExportTab[] = ["preview", "runtime", "phaser", "project"];
 const exportTabId = (tab: ExportTab) => `export-tab-${tab}`;
 const exportPanelId = (tab: ExportTab) => `export-panel-${tab}`;
 
+const PREVIEW_EXTENSIONS: Record<PreviewFormat, string> = {
+  webm: "webm",
+  gif: "gif",
+  spritesheet: "zip",
+};
+const PREVIEW_FORMAT_NAMES: Record<PreviewFormat, string> = {
+  webm: "WebM video",
+  gif: "Animated GIF",
+  spritesheet: "Sprite sheet + PNG frames",
+};
+
 const PREVIEW_SIZES = [
+  {
+    id: "sprite-256",
+    label: "Sprite 1:1 · 256 × 256",
+    width: 256,
+    height: 256,
+  },
+  {
+    id: "sprite-512",
+    label: "Sprite 1:1 · 512 × 512",
+    width: 512,
+    height: 512,
+  },
   { id: "game", label: "Game 16:9 · 640 × 360", width: 640, height: 360 },
   { id: "hd", label: "HD 16:9 · 1280 × 720", width: 1280, height: 720 },
   { id: "square", label: "Square 1:1 · 720 × 720", width: 720, height: 720 },
@@ -109,6 +133,7 @@ export function ExportDialog({
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [previewFormat, setPreviewFormat] = useState<PreviewFormat>("webm");
   const [previewSizeId, setPreviewSizeId] = useState("game");
+  const [spriteFramesPerSecond, setSpriteFramesPerSecond] = useState(15);
   const [preflightProfileId, setPreflightProfileId] =
     useState<ExportPreflightProfileId>("balanced");
   const [lastRecording, setLastRecording] = useState<PreviewRecording | null>(
@@ -199,10 +224,39 @@ export function ExportDialog({
     previewSize.height,
     previewSize.width,
   ]);
+  const spriteSheetPlan = useMemo(() => {
+    const width = previewSize.width ?? currentPreviewSize?.width;
+    const height = previewSize.height ?? currentPreviewSize?.height;
+    return previewFormat === "spritesheet" && width && height
+      ? planSpriteSheet({
+          duration: activeDuration,
+          framesPerSecond: spriteFramesPerSecond,
+          frameWidth: width,
+          frameHeight: height,
+        })
+      : null;
+  }, [
+    activeDuration,
+    currentPreviewSize?.height,
+    currentPreviewSize?.width,
+    previewFormat,
+    previewSize.height,
+    previewSize.width,
+    spriteFramesPerSecond,
+  ]);
   const gifBudgetError =
     gifRecordingWork && !gifRecordingWork.allowed
       ? gifRecordingWork.reason
-      : null;
+      : spriteSheetPlan && !spriteSheetPlan.allowed
+        ? spriteSheetPlan.reason
+        : null;
+  const previewExtension = PREVIEW_EXTENSIONS[previewFormat];
+  const previewFramesPerSecond =
+    previewFormat === "webm"
+      ? 30
+      : previewFormat === "gif"
+        ? 15
+        : spriteFramesPerSecond;
   const cueCount = project.timeline.markers.filter(
     (marker) => marker.time <= exportPlaybackDuration(project),
   ).length;
@@ -338,6 +392,7 @@ export function ExportDialog({
           format: previewFormat,
           size: { width: previewSize.width, height: previewSize.height },
           signal: controller.signal,
+          framesPerSecond: spriteFramesPerSecond,
         },
         (progress) => {
           if (
@@ -353,7 +408,7 @@ export function ExportDialog({
       )
         return;
       setLastRecording(result);
-      downloadBlob(`${base}.${result.format}`, result.blob);
+      downloadBlob(`${base}.${PREVIEW_EXTENSIONS[result.format]}`, result.blob);
     } catch (error) {
       if (requestId !== recordingRequestRef.current) return;
       setRecordingError(
@@ -554,14 +609,42 @@ export function ExportDialog({
                   value={previewFormat}
                   disabled={recording}
                   onChange={(event) => {
-                    setPreviewFormat(event.target.value as PreviewFormat);
+                    const format = event.target.value as PreviewFormat;
+                    setPreviewFormat(format);
+                    // Engine sprites are usually small squares.
+                    if (
+                      format === "spritesheet" &&
+                      !previewSizeId.startsWith("sprite")
+                    )
+                      setPreviewSizeId("sprite-256");
                     setRecordingError(null);
                   }}
                 >
                   <option value="webm">WebM video · 30 FPS</option>
                   <option value="gif">Animated GIF · 15 FPS</option>
+                  <option value="spritesheet">
+                    Sprite sheet + PNG frames (.zip)
+                  </option>
                 </select>
               </label>
+              {previewFormat === "spritesheet" && (
+                <label>
+                  Frame rate
+                  <select
+                    value={spriteFramesPerSecond}
+                    disabled={recording}
+                    onChange={(event) =>
+                      setSpriteFramesPerSecond(Number(event.target.value))
+                    }
+                  >
+                    {SPRITE_SHEET_FRAME_RATES.map((rate) => (
+                      <option key={rate} value={rate}>
+                        {rate} FPS
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 Size and aspect ratio
                 <select
@@ -585,16 +668,16 @@ export function ExportDialog({
                 <Film size={23} />
               </span>
               <div>
-                <strong>
-                  {previewFormat === "webm" ? "WebM video" : "Animated GIF"}
-                </strong>
+                <strong>{PREVIEW_FORMAT_NAMES[previewFormat]}</strong>
                 <p>
                   {(activeDuration / 1000).toFixed(2)} seconds at{" "}
-                  {previewFormat === "webm" ? 30 : 15} FPS · {previewSize.label}{" "}
-                  · normal playback speed
+                  {previewFramesPerSecond} FPS · {previewSize.label}
+                  {spriteSheetPlan?.allowed
+                    ? ` · ${spriteSheetPlan.frameCount} frames in a ${spriteSheetPlan.columns} × ${spriteSheetPlan.rows} sheet (${spriteSheetPlan.sheetWidth} × ${spriteSheetPlan.sheetHeight} px)`
+                    : " · normal playback speed"}
                 </p>
               </div>
-              <span className="preview-export-format">.{previewFormat}</span>
+              <span className="preview-export-format">.{previewExtension}</span>
             </div>
             <ul className="preview-export-details">
               <li>
@@ -610,7 +693,9 @@ export function ExportDialog({
               <li>
                 {previewFormat === "webm"
                   ? "Transparent checkerboard backgrounds remain transparent where the browser and video player support WebM alpha."
-                  : "GIF uses a compact 255-color palette plus transparency and loops automatically."}
+                  : previewFormat === "gif"
+                    ? "GIF uses a compact 255-color palette plus transparency and loops automatically."
+                    : "The ZIP holds one packed PNG sheet, a TexturePacker-style JSON atlas (Phaser, PixiJS, and most 2D engine importers read it), and every frame as its own PNG for Godot, Unity, GameMaker, or Construct. Keep the checkerboard background for transparent frames."}
               </li>
             </ul>
             {recording && (
@@ -619,7 +704,9 @@ export function ExportDialog({
                   <span>
                     {previewFormat === "webm"
                       ? "Recording preview…"
-                      : "Rendering GIF frames…"}
+                      : previewFormat === "gif"
+                        ? "Rendering GIF frames…"
+                        : "Rendering sprite-sheet frames…"}
                   </span>
                   <strong>{Math.round(recordingProgress * 100)}%</strong>
                 </div>
@@ -645,7 +732,7 @@ export function ExportDialog({
             {lastRecording && !recording && !recordingError && (
               <p className="preview-export-success" role="status">
                 Downloaded {lastRecording.width} × {lastRecording.height}{" "}
-                {lastRecording.format.toUpperCase()} ·{" "}
+                {PREVIEW_FORMAT_NAMES[lastRecording.format]} ·{" "}
                 {Math.max(1, Math.ceil(lastRecording.blob.size / 1024))} KB
               </p>
             )}
@@ -706,7 +793,7 @@ export function ExportDialog({
                   }
                   onClick={() => void recordPreview()}
                 >
-                  <Download size={15} /> Export & download .{previewFormat}
+                  <Download size={15} /> Export & download .{previewExtension}
                 </button>
               )}
             </>

@@ -1,14 +1,17 @@
 import { normalizeHexColor } from "./color";
 import { validateProject } from "./serialization";
-import type { VfxProject } from "./types";
+import { activeTimelineEnd } from "./projectState";
+import type { VfxLayer, VfxProject } from "./types";
 
 /**
- * "Try variations": deterministic alternative versions of a whole effect.
- * Each one changes only the aspects the user picked and is validated like an
- * imported project, so keeping one can never produce an invalid effect.
+ * "Try variations": deterministic alternative versions of a whole effect or
+ * of one layer. Each one changes only the aspects the user picked and is
+ * validated like an imported project, so keeping one can never produce an
+ * invalid effect.
  */
 
-export type VariationAspect = "colors" | "size" | "speed" | "randomness";
+export type VariationAspect =
+  "colors" | "size" | "speed" | "count" | "randomness";
 
 export const VARIATION_ASPECTS: {
   id: VariationAspect;
@@ -17,8 +20,14 @@ export const VARIATION_ASPECTS: {
   { id: "colors", label: "Colors" },
   { id: "size", label: "Size" },
   { id: "speed", label: "Speed" },
+  { id: "count", label: "Copy count" },
   { id: "randomness", label: "Randomness" },
 ];
+
+/** Limits a change to one layer, or null for the whole effect. */
+type Scope = string | null;
+const inScope = (layer: VfxLayer, scope: Scope) =>
+  scope === null || layer.id === scope;
 
 export interface EffectVariation {
   id: string;
@@ -92,10 +101,14 @@ export function rotateHue(hex: string, degrees: number) {
   return hslToHex(hue + degrees, saturation, lightness);
 }
 
-/** Every distinct, visibly colored tint the effect uses, in layer order. */
-export function effectColors(project: VfxProject): string[] {
+/** Every distinct, visibly colored tint in scope, in layer order. */
+export function effectColors(
+  project: VfxProject,
+  scope: Scope = null,
+): string[] {
   const colors = new Set<string>();
   for (const layer of project.layers) {
+    if (!inScope(layer, scope)) continue;
     const { tint, colorOverLifetime } = layer.appearance;
     if (tint) colors.add(normalizeHexColor(tint));
     if (colorOverLifetime.enabled)
@@ -106,8 +119,30 @@ export function effectColors(project: VfxProject): string[] {
   return [...colors].filter((color) => hexToHsl(color)[1] > 0.05);
 }
 
-function recolor(project: VfxProject, degrees: number) {
+/**
+ * Which aspects can change anything in scope. A random pattern belongs to
+ * the whole effect, so it is not offered for one layer.
+ */
+export function availableAspects(
+  project: VfxProject,
+  scope: Scope = null,
+): VariationAspect[] {
+  const layers = project.layers.filter((layer) => inScope(layer, scope));
+  if (layers.length === 0) return [];
+  return VARIATION_ASPECTS.map((aspect) => aspect.id).filter((aspect) =>
+    aspect === "colors"
+      ? effectColors(project, scope).length > 0
+      : aspect === "count"
+        ? layers.some((layer) => layer.spawn !== null)
+        : aspect === "randomness"
+          ? scope === null
+          : true,
+  );
+}
+
+function recolor(project: VfxProject, degrees: number, scope: Scope) {
   for (const layer of project.layers) {
+    if (!inScope(layer, scope)) continue;
     const appearance = layer.appearance;
     if (appearance.tint) appearance.tint = rotateHue(appearance.tint, degrees);
     for (const stop of appearance.colorOverLifetime.stops)
@@ -115,8 +150,10 @@ function recolor(project: VfxProject, degrees: number) {
   }
 }
 
-function resize(project: VfxProject, factor: number) {
-  for (const { transform, keyframes } of project.layers) {
+function resize(project: VfxProject, factor: number, scope: Scope) {
+  for (const layer of project.layers) {
+    if (!inScope(layer, scope)) continue;
+    const { transform, keyframes } = layer;
     transform.startScale *= factor;
     transform.endScale *= factor;
     transform.startScaleX *= factor;
@@ -131,9 +168,10 @@ function resize(project: VfxProject, factor: number) {
 }
 
 /** Stretches every millisecond value; motion distances stay the same. */
-function retime(project: VfxProject, factor: number) {
+function retime(project: VfxProject, factor: number, scope: Scope) {
   const ms = (value: number) => Math.round(value * factor);
   for (const layer of project.layers) {
+    if (!inScope(layer, scope)) continue;
     layer.timing.delay = ms(layer.timing.delay);
     layer.timing.duration = Math.max(1, ms(layer.timing.duration));
     layer.random.delay = ms(layer.random.delay);
@@ -146,9 +184,26 @@ function retime(project: VfxProject, factor: number) {
     layer.trail.lifetime = ms(layer.trail.lifetime);
     layer.frameAnimation.framesPerSecond /= factor;
   }
-  for (const group of project.groups) group.delay = ms(group.delay);
-  for (const marker of project.timeline.markers) marker.time = ms(marker.time);
-  project.preview.duration = ms(project.preview.duration);
+  if (scope === null) {
+    for (const group of project.groups) group.delay = ms(group.delay);
+    for (const marker of project.timeline.markers)
+      marker.time = ms(marker.time);
+    project.preview.duration = ms(project.preview.duration);
+  } else {
+    // One slower layer may outlast the composition; make room for it.
+    project.preview.duration = Math.max(
+      project.preview.duration,
+      Math.ceil(activeTimelineEnd(project)),
+    );
+  }
+}
+
+/** Scales how many copies bursts and emitters create. */
+function recount(project: VfxProject, factor: number, scope: Scope) {
+  for (const layer of project.layers) {
+    if (!inScope(layer, scope) || !layer.spawn) continue;
+    layer.spawn.count = Math.max(1, Math.round(layer.spawn.count * factor));
+  }
 }
 
 /** A factor away from 1 in [low, high], so every variation is noticeable. */
@@ -162,11 +217,10 @@ export function createVariations(
   aspects: readonly VariationAspect[],
   roll: number,
   count = 6,
+  scope: Scope = null,
 ): EffectVariation[] {
-  const colors = effectColors(project);
-  const active = aspects.filter(
-    (aspect) => aspect !== "colors" || colors.length > 0,
-  );
+  const available = availableAspects(project, scope);
+  const active = aspects.filter((aspect) => available.includes(aspect));
   if (active.length === 0) return [];
   const variations: EffectVariation[] = [];
   for (let index = 0; index < count; index += 1) {
@@ -180,12 +234,12 @@ export function createVariations(
           360,
       );
       const shift = degrees === 0 ? 30 : degrees;
-      recolor(copy, shift);
+      recolor(copy, shift, scope);
       changes.push("New colors");
     }
     if (active.includes("size")) {
       const factor = noticeableFactor(next, 0.65, 1.5);
-      resize(copy, factor);
+      resize(copy, factor, scope);
       changes.push(
         factor > 1
           ? `${factor.toFixed(1)}× bigger`
@@ -194,12 +248,17 @@ export function createVariations(
     }
     if (active.includes("speed")) {
       const factor = noticeableFactor(next, 0.7, 1.45);
-      retime(copy, factor);
+      retime(copy, factor, scope);
       changes.push(
         factor > 1
           ? `${factor.toFixed(1)}× slower`
           : `${(1 / factor).toFixed(1)}× faster`,
       );
+    }
+    if (active.includes("count")) {
+      const factor = noticeableFactor(next, 0.5, 2);
+      recount(copy, factor, scope);
+      changes.push(factor > 1 ? "More copies" : "Fewer copies");
     }
     if (active.includes("randomness")) {
       copy.preview.randomSeed = Math.floor(next() * 999_999);
@@ -208,10 +267,10 @@ export function createVariations(
     const validated = validateProject(copy);
     if (!validated.ok || !validated.project) continue;
     variations.push({
-      id: `variation-${roll}-${index}`,
+      id: `variation-${scope ?? "all"}-${roll}-${index}`,
       project: validated.project,
       changes,
-      swatches: effectColors(validated.project).slice(0, 4),
+      swatches: effectColors(validated.project, scope).slice(0, 4),
     });
   }
   return variations;

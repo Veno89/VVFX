@@ -2012,6 +2012,30 @@ button:disabled {
   max-height: min(72vh, 560px);
   overflow-y: auto;
 }
+.variations-menu__scope {
+  display: flex;
+  gap: 4px;
+}
+.preview-tools .variations-menu__scope button {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 0;
+  height: 28px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-tools .variations-menu__scope button.is-active {
+  color: var(--text);
+  background: var(--panel-3);
+  border-color: var(--cyan);
+}
+.preview-tools .variations-menu__scope button:disabled {
+  opacity: 0.5;
+}
 .variations-menu__aspects {
   display: flex;
   flex-wrap: wrap;

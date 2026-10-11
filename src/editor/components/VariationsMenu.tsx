@@ -3,8 +3,8 @@
 import { Check, Shuffle } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
+  availableAspects,
   createVariations,
-  effectColors,
   VARIATION_ASPECTS,
   type EffectVariation,
   type VariationAspect,
@@ -14,17 +14,25 @@ import { useFocusRegion } from "../useFocusRegion";
 
 const VARIATIONS_DIALOG_ID = "preview-variations-dialog";
 
+const UNAVAILABLE_HINTS: Partial<Record<VariationAspect, string>> = {
+  colors: "Nothing here has a color yet. Add a tint first.",
+  count: "Only Burst and Repeating-copy layers have a copy count.",
+  randomness: "The random pattern belongs to the whole effect.",
+};
+
 /**
- * Offers six alternative versions of the whole effect. Choosing one only
- * previews it; the panel's Keep/Back bar decides whether it replaces the
- * project.
+ * Offers six alternative versions of the whole effect or of the selected
+ * layer. Choosing one only previews it; the panel's Keep/Back bar decides
+ * whether it replaces the project.
  */
 export function VariationsMenu({
   project,
+  selectedLayerId = null,
   activeVariationId,
   onTry,
 }: {
   project: VfxProject;
+  selectedLayerId?: string | null;
   activeVariationId: string | null;
   onTry: (variation: EffectVariation) => void;
 }) {
@@ -35,6 +43,10 @@ export function VariationsMenu({
     "randomness",
   ]);
   const [roll, setRoll] = useState(1);
+  const [layerOnly, setLayerOnly] = useState(false);
+  const selectedLayer =
+    project.layers.find((layer) => layer.id === selectedLayerId) ?? null;
+  const scope = layerOnly && selectedLayer ? selectedLayer.id : null;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useFocusRegion<HTMLDivElement>({
     active: open,
@@ -44,10 +56,13 @@ export function VariationsMenu({
     dismissBoundaryRef: triggerRef,
     onEscape: () => setOpen(false),
   });
-  const hasColors = useMemo(() => effectColors(project).length > 0, [project]);
+  const available = useMemo(
+    () => availableAspects(project, scope),
+    [project, scope],
+  );
   const variations = useMemo(
-    () => (open ? createVariations(project, aspects, roll) : []),
-    [aspects, open, project, roll],
+    () => (open ? createVariations(project, aspects, roll, 6, scope) : []),
+    [aspects, open, project, roll, scope],
   );
   const hasLayers = project.layers.length > 0;
 
@@ -87,19 +102,43 @@ export function VariationsMenu({
           role="dialog"
           aria-label="Effect variations"
         >
+          <div
+            className="variations-menu__scope"
+            role="radiogroup"
+            aria-label="Vary"
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope === null}
+              className={scope === null ? "is-active" : ""}
+              onClick={() => setLayerOnly(false)}
+            >
+              Whole effect
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope !== null}
+              className={scope !== null ? "is-active" : ""}
+              disabled={!selectedLayer}
+              title={
+                selectedLayer ? undefined : "Select a layer to vary it alone"
+              }
+              onClick={() => setLayerOnly(true)}
+            >
+              {selectedLayer ? `Only ${selectedLayer.name}` : "Selected layer"}
+            </button>
+          </div>
           <span className="menu-label">Change</span>
           <div className="variations-menu__aspects">
             {VARIATION_ASPECTS.map((aspect) => {
-              const unavailable = aspect.id === "colors" && !hasColors;
+              const unavailable = !available.includes(aspect.id);
               return (
                 <label
                   key={aspect.id}
                   className="variations-chip"
-                  title={
-                    unavailable
-                      ? "This effect has no colors yet. Add a tint first."
-                      : undefined
-                  }
+                  title={unavailable ? UNAVAILABLE_HINTS[aspect.id] : undefined}
                 >
                   <input
                     type="checkbox"

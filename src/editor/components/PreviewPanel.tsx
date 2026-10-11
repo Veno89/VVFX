@@ -170,6 +170,7 @@ export function PreviewPanel({
           {onTryVariation && (
             <VariationsMenu
               project={project}
+              selectedLayerId={selectedId}
               activeVariationId={activeVariationId}
               onTry={onTryVariation}
             />

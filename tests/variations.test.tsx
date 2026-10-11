@@ -6,6 +6,7 @@ import { createEmptyProject, createLayer } from "../src/vfx/defaults";
 import { activeTimelineEnd } from "../src/vfx/projectState";
 import { validateProject } from "../src/vfx/serialization";
 import {
+  availableAspects,
   createVariations,
   effectColors,
   rotateHue,
@@ -116,6 +117,66 @@ describe("effect variations", () => {
   });
 });
 
+describe("copy count and layer scope", () => {
+  it("varies how many copies bursts and emitters make", () => {
+    const project = coloredProject();
+    const [counted] = createVariations(project, ["count"], 2);
+    const before = project.layers[1].spawn!.count;
+    const after = counted.project.layers[1].spawn!.count;
+    expect(after).not.toBe(before);
+    expect(counted.changes[0]).toMatch(/copies/);
+    // Layers without copies are untouched.
+    expect(counted.project.layers[0]).toEqual(
+      validateProject(project).project!.layers[0],
+    );
+  });
+
+  it("changes only the chosen layer and keeps the effect's timing", () => {
+    const project = coloredProject();
+    const sparks = project.layers[1];
+    const variations = createVariations(
+      project,
+      ["colors", "size", "speed", "count", "randomness"],
+      5,
+      6,
+      sparks.id,
+    );
+    expect(variations).toHaveLength(6);
+    const normalized = validateProject(project).project!;
+    for (const variation of variations) {
+      expect(variation.project.layers[0]).toEqual(normalized.layers[0]);
+      expect(variation.project.preview.randomSeed).toBe(
+        project.preview.randomSeed,
+      );
+      expect(variation.project.timeline.markers).toEqual(
+        project.timeline.markers,
+      );
+      expect(variation.changes).not.toContain("New random pattern");
+      expect(activeTimelineEnd(variation.project)).toBeLessThanOrEqual(
+        variation.project.preview.duration,
+      );
+    }
+    expect(variations[0].id).toContain(sparks.id);
+  });
+
+  it("offers only aspects that can change something in scope", () => {
+    const project = coloredProject();
+    expect(availableAspects(project)).toEqual([
+      "colors",
+      "size",
+      "speed",
+      "count",
+      "randomness",
+    ]);
+    expect(availableAspects(project, project.layers[0].id)).toEqual([
+      "colors",
+      "size",
+      "speed",
+    ]);
+    expect(availableAspects(project, "missing")).toEqual([]);
+  });
+});
+
 describe("Variations in the editor", () => {
   it("previews a variation, then keeps it as one undoable change or goes back", () => {
     render(<VfxEditor />);
@@ -153,5 +214,19 @@ describe("Variations in the editor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(canvas().getAttribute("data-seed")).toBe(originalSeed);
+  }, 30_000);
+
+  it("varies only the selected layer when asked", () => {
+    render(<VfxEditor />);
+    fireEvent.click(screen.getAllByRole("button", { name: /Magic impact/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Variations" }));
+    const menu = screen.getByRole("dialog", { name: "Effect variations" });
+    const layerOnly = within(menu).getByRole("radio", { name: /^Only / });
+    fireEvent.click(layerOnly);
+    expect(layerOnly).toHaveAttribute("aria-checked", "true");
+    expect(within(menu).getByLabelText("Randomness")).toBeDisabled();
+    expect(
+      within(menu).getAllByRole("button", { name: /Version/ }).length,
+    ).toBeGreaterThan(0);
   }, 30_000);
 });

@@ -19,6 +19,9 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- **Variations** can now vary **Copy count** for bursts and emitters, and can
+  vary **only the selected layer** instead of the whole effect. Options that
+  cannot change anything in the chosen scope are disabled with a reason.
 - The **Templates** dialog shows animated thumbnails for built-in starters and
   saved templates, playing on hover or focus. Thumbnails now draw uploaded
   images too, including sprite-sheet frames, crops, and Phaser-style

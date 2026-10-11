@@ -76,6 +76,31 @@ describe("canvas-backed editor exports", () => {
     expect(contexts.length).toBeGreaterThan(0);
   });
 
+  it("previews and adds a custom shape from the maker", () => {
+    const picked: string[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    render(
+      <ShapeLibraryDialog
+        onPick={(shape) => picked.push(shape.name)}
+        onClose={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Star" }));
+    fireEvent.change(screen.getByRole("slider", { name: /^Points/ }), {
+      target: { value: "8" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Ring" }));
+    expect(
+      screen.getByRole("slider", { name: /^Thickness/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Star" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add this shape/ }));
+    expect(picked).toEqual(["Custom 8-point star 128"]);
+  });
+
   it("draws uploaded images with frames, crop, and multiplied tint once decoded", async () => {
     const asset = {
       id: "uploaded-orb",
@@ -175,9 +200,11 @@ describe("canvas-backed editor exports", () => {
     const onPick = vi.fn();
     const onClose = vi.fn();
     render(<ShapeLibraryDialog onPick={onPick} onClose={onClose} />);
-    expect(screen.getAllByRole("button", { name: /^Add / })).toHaveLength(
-      LIBRARY_SHAPES.length,
-    );
+    expect(
+      screen
+        .getAllByRole("button", { name: /^Add / })
+        .filter((button) => button.textContent !== " Add this shape"),
+    ).toHaveLength(LIBRARY_SHAPES.length);
     fireEvent.click(screen.getByRole("button", { name: "Add Star" }));
     expect(onPick).toHaveBeenCalledWith(
       expect.objectContaining({ id: "star" }),

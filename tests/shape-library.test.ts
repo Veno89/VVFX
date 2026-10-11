@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { LIBRARY_SHAPES } from "../src/editor/shapeLibrary";
+import {
+  DEFAULT_SHAPE_MAKER,
+  LIBRARY_SHAPES,
+  makeCustomShape,
+  normalizeShapeMaker,
+} from "../src/editor/shapeLibrary";
 
 /** Records 2D drawing calls so shapes can be checked without a real canvas. */
 function recordingContext() {
@@ -60,5 +65,41 @@ describe("shape library", () => {
     shape.draw(first.context, shape.width, shape.height);
     shape.draw(second.context, shape.width, shape.height);
     expect(first.calls).toEqual(second.calls);
+  });
+
+  it("makes custom glows, rings, and stars from clamped settings", () => {
+    expect(
+      normalizeShapeMaker({
+        kind: "nope" as never,
+        size: 9000,
+        softness: -1,
+        thickness: 5,
+        points: 2.4,
+        innerRadius: Number.NaN,
+      }),
+    ).toEqual({
+      kind: "glow",
+      size: 512,
+      softness: 0,
+      thickness: 0.8,
+      points: 3,
+      innerRadius: 0.15,
+    });
+    const drawn = (["glow", "ring", "star"] as const).map((kind) => {
+      const shape = makeCustomShape({
+        ...DEFAULT_SHAPE_MAKER,
+        kind,
+        points: 7,
+      });
+      const { context, calls } = recordingContext();
+      shape.draw(context, shape.width, shape.height);
+      expect(shape.width).toBe(128);
+      return { shape, calls };
+    });
+    expect(drawn[0].calls).toContain("arc");
+    expect(drawn[1].calls).toContain("stroke");
+    expect(drawn[2].calls).toContain("fill");
+    expect(drawn[2].shape.name).toBe("Custom 7-point star 128");
+    expect(new Set(drawn.map(({ shape }) => shape.id)).size).toBe(3);
   });
 });

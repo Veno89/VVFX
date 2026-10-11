@@ -19,6 +19,9 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- The Shape library gains **Make your own**: a glow, ring, or star with size,
+  softness, ring thickness, star points, and inner size, previewed live and
+  added as an ordinary white PNG like any library shape.
 - **Variations** can now vary **Copy count** for bursts and emitters, and can
   vary **only the selected layer** instead of the whole effect. Options that
   cannot change anything in the chosen scope are disabled with a reason.

@@ -519,3 +519,104 @@ export async function renderLibraryShape(shape: LibraryShape): Promise<File> {
   if (!blob) throw new Error(`${shape.name} could not be prepared.`);
   return new File([blob], `${shape.name}.png`, { type: "image/png" });
 }
+
+export type ShapeMakerKind = "glow" | "ring" | "star";
+
+/** Settings for a made-to-order glow, ring, or star. */
+export interface ShapeMakerSettings {
+  kind: ShapeMakerKind;
+  /** Square canvas size in pixels, 32–512. */
+  size: number;
+  /** 0 is a crisp edge, 1 is a fully soft falloff. */
+  softness: number;
+  /** Ring line width as a share of its radius, 0.04–0.8. */
+  thickness: number;
+  /** Star points, 3–12. */
+  points: number;
+  /** Star inner radius as a share of the outer radius, 0.15–0.9. */
+  innerRadius: number;
+}
+
+export const DEFAULT_SHAPE_MAKER: ShapeMakerSettings = {
+  kind: "glow",
+  size: 128,
+  softness: 0.6,
+  thickness: 0.18,
+  points: 5,
+  innerRadius: 0.45,
+};
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+
+export function normalizeShapeMaker(
+  settings: ShapeMakerSettings,
+): ShapeMakerSettings {
+  return {
+    kind: ["glow", "ring", "star"].includes(settings.kind)
+      ? settings.kind
+      : "glow",
+    size: Math.round(clampNumber(settings.size, 32, 512)),
+    softness: clampNumber(settings.softness, 0, 1),
+    thickness: clampNumber(settings.thickness, 0.04, 0.8),
+    points: Math.round(clampNumber(settings.points, 3, 12)),
+    innerRadius: clampNumber(settings.innerRadius, 0.15, 0.9),
+  };
+}
+
+/** A white shape drawn from maker settings, ready for the upload path. */
+export function makeCustomShape(input: ShapeMakerSettings): LibraryShape {
+  const settings = normalizeShapeMaker(input);
+  const { kind, size, softness } = settings;
+  const label =
+    kind === "glow"
+      ? `Custom glow ${size}`
+      : kind === "ring"
+        ? `Custom ring ${size}`
+        : `Custom ${settings.points}-point star ${size}`;
+  return {
+    id: `custom-${kind}-${size}-${softness}-${settings.thickness}-${settings.points}-${settings.innerRadius}`,
+    name: label,
+    use: "Made with the shape maker",
+    width: size,
+    height: size,
+    draw: (context, width, height) => {
+      const cx = width / 2;
+      const cy = height / 2;
+      if (kind === "glow") {
+        // Softness widens the falloff around a solid core.
+        const core = Math.max(0.02, (1 - softness) * 0.9);
+        radialGlow(context, cx, cy, width / 2, [
+          [0, 1],
+          [core, 1],
+          [1, 0],
+        ]);
+        return;
+      }
+      // Edges blur outward, so leave room for the blur inside the canvas.
+      const blur = softness * width * 0.12;
+      const outer = width / 2 - blur - 2;
+      context.shadowColor = WHITE;
+      context.shadowBlur = blur;
+      if (kind === "ring") {
+        const lineWidth = Math.max(1, outer * settings.thickness);
+        context.strokeStyle = WHITE;
+        context.lineWidth = lineWidth;
+        context.beginPath();
+        context.arc(cx, cy, Math.max(1, outer - lineWidth / 2), 0, Math.PI * 2);
+        context.stroke();
+        return;
+      }
+      context.fillStyle = WHITE;
+      starPath(
+        context,
+        cx,
+        cy,
+        settings.points,
+        outer,
+        outer * settings.innerRadius,
+      );
+      context.fill();
+    },
+  };
+}

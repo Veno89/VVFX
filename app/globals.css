@@ -6646,6 +6646,78 @@ kbd {
   color: var(--faint);
   font-size: 0.75rem;
 }
+.shape-maker {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 14px;
+  margin: 0 18px 12px;
+  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.shape-maker__art {
+  width: 120px;
+  height: 120px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.shape-maker__art img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.shape-maker__controls {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.shape-maker__kinds {
+  display: flex;
+  gap: 4px;
+}
+.shape-maker__kinds button {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.shape-maker__kinds button.is-active {
+  color: var(--text);
+  background: var(--panel-3);
+  border-color: var(--cyan);
+}
+.shape-maker__field {
+  display: grid;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.shape-maker__field output {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.shape-maker .primary-action {
+  justify-self: start;
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #081519;
+  background: var(--cyan);
+  border: 0;
+  border-radius: 7px;
+  font-weight: 750;
+}
+@media (max-width: 520px) {
+  .shape-maker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .shape-library-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));

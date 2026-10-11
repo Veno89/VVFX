@@ -13,6 +13,15 @@ const temporaryPrefix = "vvfx-storage-qualification-";
 const projectName = "Persistent rollback sentinel";
 const corruptProjectId = "corrupt-storage-qualification-record";
 
+/** New, Save As, Load, Templates, and Import live in the top bar's File menu. */
+async function chooseFileAction(page, name) {
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page
+    .getByRole("menu", { name: "File" })
+    .getByRole("menuitem", { name, exact: true })
+    .click();
+}
+
 function runChecked(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
@@ -310,7 +319,7 @@ try {
   activeServer = startServer(repositoryRoot);
   await waitForServer(activeServer);
   opened = await openEditor(browserContext);
-  await opened.page.getByRole("button", { name: "Load", exact: true }).click();
+  await chooseFileAction(opened.page, "Load");
   let projectsDialog = opened.page.getByRole("dialog", {
     name: "Load a saved project",
   });
@@ -331,7 +340,7 @@ try {
 
   await insertCorruptProject(opened.page);
   opened.page.once("dialog", (dialog) => dialog.accept());
-  await opened.page.getByRole("button", { name: "Load", exact: true }).click();
+  await chooseFileAction(opened.page, "Load");
   projectsDialog = opened.page.getByRole("dialog", {
     name: "Load a saved project",
   });
@@ -394,7 +403,7 @@ try {
     headless: true,
   });
   opened = await openEditor(browserContext);
-  await opened.page.getByRole("button", { name: "Load", exact: true }).click();
+  await chooseFileAction(opened.page, "Load");
   projectsDialog = opened.page.getByRole("dialog", {
     name: "Load a saved project",
   });

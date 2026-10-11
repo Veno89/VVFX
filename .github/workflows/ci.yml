@@ -30,7 +30,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: npm run check:audit
       - name: Check formatting
         run: npm run format:check
       - name: Lint

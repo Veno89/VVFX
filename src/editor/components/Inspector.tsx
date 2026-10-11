@@ -82,6 +82,7 @@ import {
   SettingsSection,
   Toggle,
 } from "./Controls";
+import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 
 function FieldGroup({ children }: { children: ReactNode }) {
   return <div className="field-grid">{children}</div>;
@@ -417,6 +418,26 @@ export function Inspector({
         event.id === id ? { ...event, ...patch } : event,
       ),
     });
+  /** Keeps Start/End transform values in step with the curve's ends. */
+  const setKeyframesFromCurve = (keyframes: VfxLayer["keyframes"]) => {
+    const first = keyframes.frames[0];
+    const last = keyframes.frames.at(-1);
+    const transform = { ...layer.transform };
+    if (first) {
+      transform.startScaleX = first.scaleX;
+      transform.startScaleY = first.scaleY;
+      if (!transform.separateScale) transform.startScale = first.scaleX;
+      transform.startOpacity = first.opacity;
+    }
+    if (last) {
+      transform.endScaleX = last.scaleX;
+      transform.endScaleY = last.scaleY;
+      if (!transform.separateScale) transform.endScale = last.scaleX;
+      transform.endOpacity = last.opacity;
+      transform.rotationDuring = last.rotation;
+    }
+    onChange({ ...layer, transform, keyframes });
+  };
   const setKeyframe = (
     index: number,
     patch: Partial<VfxLayer["keyframes"]["frames"][number]>,
@@ -1097,6 +1118,14 @@ export function Inspector({
                 ))}
               </div>
             </div>
+            {layer.keyframes.enabled && layer.keyframes.frames.length >= 2 && (
+              <KeyframeCurveGraph
+                keyframes={layer.keyframes}
+                transform={layer.transform}
+                timing={layer.timing}
+                onChange={setKeyframesFromCurve}
+              />
+            )}
             {layer.keyframes.enabled && (
               <div className="keyframe-list">
                 <p className="section-note">

@@ -19,6 +19,12 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- A **curve graph** in the Inspector's Keyframes section draws size (or width
+  and height), opacity, or rotation over the layer's life with the same
+  per-segment easing the engine uses. Drag points in time and value, click the
+  graph to add a point, and use arrow keys (Shift for bigger steps) or Delete
+  on a focused point. The first and last points stay in step with the layer's
+  Start and End values. No format change.
 - **Variations** (preview header) offers six versions of the whole effect that
   change any mix of colors, size, speed, and random pattern. Choosing one plays
   it in the real preview; **Keep it** applies it as one undoable change and

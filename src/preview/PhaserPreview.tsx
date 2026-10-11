@@ -284,6 +284,37 @@ export function disposePreviewAssetTextureState(
   state.installed.clear();
 }
 
+/** Sharper on high-DPI screens; capped at 2× to bound GPU fill cost. */
+function previewPixelRatio() {
+  return Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+}
+
+function mountCssSize(mount: HTMLElement) {
+  const bounds = mount.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.floor(bounds.width) || 820),
+    height: Math.max(1, Math.floor(bounds.height) || 470),
+  };
+}
+
+function fitPreviewToMount(
+  game: Phaser.Game,
+  scene: Phaser.Scene,
+  mount: HTMLElement,
+) {
+  const pixelRatio = previewPixelRatio();
+  const { width, height } = mountCssSize(mount);
+  if (game.scale.zoom !== 1 / pixelRatio) game.scale.setZoom(1 / pixelRatio);
+  if (
+    game.scale.width !== width * pixelRatio ||
+    game.scale.height !== height * pixelRatio
+  )
+    game.scale.resize(width * pixelRatio, height * pixelRatio);
+  scene.cameras.main.setSize(width * pixelRatio, height * pixelRatio);
+  if (scene.cameras.main.zoom !== pixelRatio)
+    scene.cameras.main.setZoom(pixelRatio);
+}
+
 function createBuiltInTextures(scene: Phaser.Scene) {
   const make = (
     key: string,
@@ -471,9 +502,14 @@ export function PhaserPreview({
     const events = ["pointerdown", "pointermove", "pointerup", "wheel"];
     for (const name of events)
       mount.addEventListener(name, wake, { passive: true });
-    // Phaser's scale manager checks the parent size from its loop.
+    const resize = () => {
+      const game = gameRef.current;
+      const scene = liveRef.current?.scene;
+      if (game && scene) fitPreviewToMount(game, scene, mount);
+      wake();
+    };
     const resizeObserver =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(wake);
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
     resizeObserver?.observe(mount);
     return () => {
       for (const name of events) mount.removeEventListener(name, wake);
@@ -490,20 +526,26 @@ export function PhaserPreview({
       const requestedRenderer = new URLSearchParams(window.location.search).get(
         "renderer",
       );
+      const pixelRatio = previewPixelRatio();
+      const initialSize = mountCssSize(mountRef.current);
       const config: Phaser.Types.Core.GameConfig = {
         type:
           requestedRenderer === "canvas" ? PhaserLib.CANVAS : PhaserLib.AUTO,
         parent: mountRef.current,
-        width: 820,
-        height: 470,
         transparent: true,
         render: { antialias: true, pixelArt: false },
+        // The backing store is CSS size × pixel ratio and the main camera
+        // zooms by the same ratio, so editor math stays in CSS pixels while
+        // high-DPI screens get a sharp preview.
         scale: {
-          mode: PhaserLib.Scale.RESIZE,
-          autoCenter: PhaserLib.Scale.CENTER_BOTH,
+          mode: PhaserLib.Scale.NONE,
+          width: initialSize.width * pixelRatio,
+          height: initialSize.height * pixelRatio,
+          zoom: 1 / pixelRatio,
         },
         scene: {
           create(this: Phaser.Scene) {
+            this.cameras.main.setOrigin(0, 0).setZoom(pixelRatio);
             createBuiltInTextures(this);
             liveRef.current = {
               scene: this,
@@ -569,8 +611,10 @@ export function PhaserPreview({
       sprites.values(),
       pathHandles.values(),
     );
-    const width = scene.scale.width;
-    const height = scene.scale.height;
+    // World units are CSS pixels; the camera zoom covers the pixel ratio.
+    const viewZoom = scene.cameras.main.zoom || 1;
+    const width = scene.scale.width / viewZoom;
+    const height = scene.scale.height / viewZoom;
     const display = previewDisplayState(
       captureMode,
       project.preview.zoom,

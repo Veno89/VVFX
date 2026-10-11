@@ -701,8 +701,12 @@ export function VfxEditor() {
     (canvas: HTMLCanvasElement | null) => {
       previewCanvasRef.current = canvas;
       setPreviewCanvasSize((current) => {
+        // Report CSS pixels: the backing store is larger on high-DPI screens.
         const next = canvas
-          ? { width: canvas.width, height: canvas.height }
+          ? {
+              width: canvas.clientWidth || canvas.width,
+              height: canvas.clientHeight || canvas.height,
+            }
           : null;
         return current?.width === next?.width &&
           current?.height === next?.height

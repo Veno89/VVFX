@@ -8,6 +8,8 @@ uses semantic versions for release artifacts.
 
 ### Added
 
+- A **Zoom to fit** button in the preview header picks the zoom (25–300%) that
+  fits every clearly visible copy across the active range.
 - **Animated preset thumbnails** in the start screen and the layer Add menu.
   They draw the preset's real, deterministic motion with Canvas 2D, show a
   busy still frame at rest, play while hovered or focused, and stay still
@@ -65,6 +67,10 @@ uses semantic versions for release artifacts.
   trailing composition silence.
 - Learn, Templates, and Export dialogs load on demand, cutting the editor's
   startup chunk from 532 KB to 452 KB.
+- The editor preview renders at the screen's pixel ratio (up to 2×), so
+  effects look sharp on Retina and 4K displays. Editor geometry stays in CSS
+  pixels through a camera zoom, and "Current preview size" exports report CSS
+  pixels.
 - The editor preview's Phaser loop sleeps after 400 ms without changes,
   pointer activity, or resizing, so a paused editor stops redrawing every
   frame. Recording and stress previews stay awake.

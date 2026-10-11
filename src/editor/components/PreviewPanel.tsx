@@ -11,8 +11,10 @@ import {
   Plus,
   RotateCcw,
   SlidersHorizontal,
+  Focus,
 } from "lucide-react";
 import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import { fitPreviewZoom } from "../../vfx/previewFit";
 import { PhaserPreview } from "../../preview/PhaserPreview";
 import type {
   PreviewPerformanceSample,
@@ -101,6 +103,7 @@ export function PreviewPanel({
     useState<PreviewPerformanceSample>(initialPerformanceSample);
   const [peakSprites, setPeakSprites] = useState(0);
   const backgroundSelectRef = useRef<HTMLSelectElement>(null);
+  const canvasShellRef = useRef<HTMLDivElement>(null);
   const performanceTriggerRef = useRef<HTMLButtonElement>(null);
   const viewTriggerRef = useRef<HTMLButtonElement>(null);
   const performanceDialogRef = useFocusRegion<HTMLElement>({
@@ -210,8 +213,23 @@ export function PreviewPanel({
           </button>
           <button
             type="button"
+            onClick={() => {
+              const shell = canvasShellRef.current?.getBoundingClientRect();
+              if (!shell?.width || !shell.height) return;
+              onViewChange({
+                zoom: fitPreviewZoom(project, shell.width, shell.height),
+              });
+            }}
+            title="Zoom to fit the whole effect"
+            aria-label="Zoom to fit the effect"
+          >
+            <Focus size={14} />
+          </button>
+          <button
+            type="button"
             onClick={() => onViewChange({ zoom: 1 })}
-            title="Reset zoom"
+            title="Reset zoom to 100%"
+            aria-label="Reset zoom"
           >
             <Maximize2 size={14} />
           </button>
@@ -329,7 +347,7 @@ export function PreviewPanel({
           </div>
         </div>
       </div>
-      <div className="preview-canvas-shell">
+      <div className="preview-canvas-shell" ref={canvasShellRef}>
         <PhaserPreview
           project={project}
           time={time}

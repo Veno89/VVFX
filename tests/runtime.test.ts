@@ -71,6 +71,9 @@ class FakeSprite {
   angle = 0;
   depth = 0;
   visible = true;
+  flipX = false;
+  flipY = false;
+  tint: number | null = null;
 
   constructor(key: string, frame: string | number = "__BASE") {
     this.texture = { key };
@@ -111,10 +114,17 @@ class FakeSprite {
     this.depth = depth;
     return this;
   }
-  setTint() {
+  setFlip(x: boolean, y: boolean) {
+    this.flipX = x;
+    this.flipY = y;
+    return this;
+  }
+  setTint(tint: number) {
+    this.tint = tint;
     return this;
   }
   clearTint() {
+    this.tint = null;
     return this;
   }
   setCrop(x?: number, y?: number, width?: number, height?: number) {
@@ -2075,6 +2085,206 @@ describe("Phaser runtime package", () => {
       effect.update(1_000);
       expect(fired).toEqual(["whoosh", "impact"]);
       expect(effect.isDestroyed).toBe(true);
+    });
+  });
+
+  describe("effect transform controls", () => {
+    const transformScene = () => {
+      const project = createEmptyProject("Transformed effect");
+      project.preview.duration = 1_000;
+      const flash = createLayer("animated", "Flash", "builtin-flash");
+      flash.transform.x = 40;
+      flash.transform.y = 10;
+      flash.transform.rotation = 20;
+      flash.transform.rotationDuring = 0;
+      flash.transform.movementX = 0;
+      flash.transform.movementY = 0;
+      flash.transform.startScale = 1;
+      flash.transform.endScale = 1;
+      flash.timing.duration = 1_000;
+      project.layers.push(flash);
+      const definition = createRuntimeDefinition(project);
+      const fake = createFakeScene([
+        VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+        ...definition.assets.map((asset) => asset.id),
+      ]);
+      return { definition, fake };
+    };
+
+    it("scales, rotates, and mirrors the whole effect around its origin", async () => {
+      const { definition, fake } = transformScene();
+      const effect = new VvfxEffect(fake.scene, definition, {
+        originX: 100,
+        originY: 50,
+        autoDestroy: false,
+      });
+      const sprite = fake.sprites[0];
+      const authored = {
+        scaleX: sprite.scaleX,
+        scaleY: sprite.scaleY,
+        angle: sprite.angle,
+      };
+      expect(sprite.x).toBeCloseTo(140);
+      expect(sprite.y).toBeCloseTo(60);
+
+      effect.setScale(2);
+      await Promise.resolve();
+      expect(sprite.x).toBeCloseTo(180);
+      expect(sprite.y).toBeCloseTo(70);
+      expect(sprite.scaleX).toBeCloseTo(authored.scaleX * 2);
+      expect(sprite.scaleY).toBeCloseTo(authored.scaleY * 2);
+
+      effect.setScale(1).setAngle(90);
+      await Promise.resolve();
+      expect(sprite.x).toBeCloseTo(90);
+      expect(sprite.y).toBeCloseTo(90);
+      expect(sprite.angle).toBeCloseTo(authored.angle + 90);
+
+      effect.setRotation(0).setFlipX(true);
+      await Promise.resolve();
+      expect(sprite.x).toBeCloseTo(60);
+      expect(sprite.y).toBeCloseTo(60);
+      expect(sprite.angle).toBeCloseTo(-authored.angle);
+      expect(sprite.flipX).toBe(true);
+      expect(effect.flipX).toBe(true);
+
+      effect.setFlipY(true);
+      await Promise.resolve();
+      expect(sprite.y).toBeCloseTo(40);
+      expect(sprite.angle).toBeCloseTo(authored.angle);
+      expect([sprite.flipX, sprite.flipY]).toEqual([true, true]);
+
+      // Invalid values leave the current transform alone.
+      effect.setScale(0).setScale(Number.NaN).setAngle(Infinity);
+      expect([effect.scale, effect.angle]).toEqual([1, 0]);
+      effect.destroy();
+    });
+
+    it("applies startup transform options", () => {
+      const { definition, fake } = transformScene();
+      const effect = new VvfxEffect(fake.scene, definition, {
+        scale: 0.5,
+        angle: 180,
+        flipX: true,
+        tint: 0x336699,
+        timeScale: 3,
+        autoDestroy: false,
+      });
+      const sprite = fake.sprites[0];
+      expect(sprite.x).toBeCloseTo(20);
+      expect(sprite.y).toBeCloseTo(-5);
+      expect(sprite.flipX).toBe(true);
+      expect(sprite.tint).toBe(0x336699);
+      expect(effect.timeScale).toBe(3);
+      effect.destroy();
+    });
+
+    it("keeps world-space Beam endpoints exact under any effect transform", async () => {
+      const project = createEmptyProject("Transformed beam");
+      project.preview.duration = 500;
+      const beam = createLayer("beam", "Lightning", "builtin-spark");
+      beam.behavior.flicker.enabled = false;
+      project.layers.push(beam);
+      const definition = createRuntimeDefinition(project);
+      const fake = createFakeScene([
+        VVFX_INTERNAL_MISSING_TEXTURE_KEY,
+        ...definition.assets.map((asset) => asset.id),
+      ]);
+      const effect = new VvfxEffect(fake.scene, definition, {
+        originX: 10,
+        originY: 20,
+        scale: 2,
+        angle: 30,
+        flipX: true,
+        autoDestroy: false,
+      });
+
+      effect.setEndpoints(100, 200, 400, 600);
+      await Promise.resolve();
+
+      const sprite = fake.sprites[0];
+      expect(sprite.x).toBeCloseTo(250);
+      expect(sprite.y).toBeCloseTo(400);
+      expect(Math.abs(sprite.scaleX)).toBeCloseTo(500 / 128);
+      // A mirrored sprite pointing at 180 - θ draws the same line as θ.
+      const direction = (((sprite.angle + 180) % 360) + 360) % 360;
+      expect(direction).toBeCloseTo(53.1301, 3);
+      effect.destroy();
+    });
+
+    it("plays at the requested speed and holds still at time scale 0", () => {
+      const { definition, fake } = transformScene();
+      const effect = new VvfxEffect(fake.scene, definition, {
+        autoDestroy: false,
+        loop: true,
+      });
+      effect.setTimeScale(0.5);
+      effect.update(100);
+      expect(effect.currentTime).toBeCloseTo(50);
+      effect.setTimeScale(0);
+      effect.update(100);
+      expect(effect.currentTime).toBeCloseTo(50);
+      expect(effect.isPlaying).toBe(true);
+      effect.setTimeScale(100);
+      expect(effect.timeScale).toBe(10);
+      effect.setTimeScale(-1);
+      expect(effect.timeScale).toBe(10);
+      effect.destroy();
+    });
+
+    it("replaces authored tints until clearTint restores them", async () => {
+      const { definition, fake } = transformScene();
+      const effect = new VvfxEffect(fake.scene, definition, {
+        autoDestroy: false,
+      });
+      const sprite = fake.sprites[0];
+      const authoredTint = sprite.tint;
+      effect.setTint(0xff0000);
+      await Promise.resolve();
+      expect(sprite.tint).toBe(0xff0000);
+      effect.setTint(0x1000000).setTint(1.5);
+      await Promise.resolve();
+      expect(sprite.tint).toBe(0xff0000);
+      effect.clearTint();
+      await Promise.resolve();
+      expect(sprite.tint).toBe(authoredTint);
+      effect.destroy();
+    });
+
+    it("follows a moving target, even while paused, until it is destroyed", async () => {
+      const { definition, fake } = transformScene();
+      const effect = new VvfxEffect(fake.scene, definition, {
+        autoDestroy: false,
+        loop: true,
+      });
+      const target = Object.assign(new FakeEvents(), { x: 300, y: 200 });
+      effect.follow(target, 0, -16);
+      await Promise.resolve();
+      const sprite = fake.sprites[0];
+      expect(sprite.x).toBeCloseTo(340);
+      expect(sprite.y).toBeCloseTo(194);
+
+      target.x = 500;
+      fake.sceneEvents.emit("update", 0, 16);
+      expect(sprite.x).toBeCloseTo(540);
+
+      effect.pause();
+      target.y = 0;
+      fake.sceneEvents.emit("update", 0, 16);
+      await Promise.resolve();
+      expect(sprite.y).toBeCloseTo(-6);
+
+      effect.play();
+      target.emit("destroy");
+      expect(target.listenerCount("destroy")).toBe(0);
+      target.x = 900;
+      fake.sceneEvents.emit("update", 0, 16);
+      expect(sprite.x).toBeCloseTo(540);
+
+      effect.follow(target);
+      expect(target.listenerCount("destroy")).toBe(1);
+      effect.destroy();
+      expect(target.listenerCount("destroy")).toBe(0);
     });
   });
 

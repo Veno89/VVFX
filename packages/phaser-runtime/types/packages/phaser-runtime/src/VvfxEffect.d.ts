@@ -1,6 +1,10 @@
 import type Phaser from "phaser";
 import type { VfxProject } from "../../../src/vfx/types";
-import type { VvfxEffectOptions, VvfxRuntimeDefinition } from "./types";
+import type {
+  VvfxEffectOptions,
+  VvfxFollowTarget,
+  VvfxRuntimeDefinition,
+} from "./types";
 export declare function resolveRuntimeRenderingAssetFrame(
   scene: Phaser.Scene,
   asset: VfxProject["assets"][number] | undefined,
@@ -25,6 +29,13 @@ export declare class VvfxEffect {
   private renderRequest;
   private originX;
   private originY;
+  private effectScale;
+  private effectAngle;
+  private flipXEnabled;
+  private flipYEnabled;
+  private playbackRate;
+  private tintOverride;
+  private following;
   private readonly baseDepth;
   private readonly loop;
   private readonly autoDestroy;
@@ -53,11 +64,47 @@ export declare class VvfxEffect {
   get isPlaying(): boolean;
   get isDestroyed(): boolean;
   get currentTime(): number;
+  get scale(): number;
+  get angle(): number;
+  get flipX(): boolean;
+  get flipY(): boolean;
+  get timeScale(): number;
   play(): this;
   pause(): this;
   restart(): this;
   stop(): this;
   setPosition(x: number, y: number): this;
+  /**
+   * Scales the whole effect around its origin: copy positions, motion, and
+   * sprite sizes together. 1 is the authored size.
+   */
+  setScale(scale: number): this;
+  /** Rotates the whole effect around its origin, in degrees. */
+  setAngle(degrees: number): this;
+  /** Rotates the whole effect around its origin, in radians. */
+  setRotation(radians: number): this;
+  /** Mirrors the effect left to right, for example to face the other way. */
+  setFlipX(flip: boolean): this;
+  /** Mirrors the effect top to bottom. */
+  setFlipY(flip: boolean): this;
+  /**
+   * Multiplies playback speed: 0.5 is slow motion, 2 is double speed, and 0
+   * holds the current frame while the effect keeps playing. Capped at 10.
+   */
+  setTimeScale(timeScale: number): this;
+  /**
+   * Replaces every copy's authored tint with one color, such as 0x66ccff for
+   * a team color. Call clearTint() to restore the authored colors.
+   */
+  setTint(color: number): this;
+  clearTint(): this;
+  /**
+   * Keeps the effect's origin on a moving object, such as a Phaser sprite,
+   * plus an optional offset. Following stops when the target emits Phaser's
+   * "destroy" event, leaving the effect at its last position.
+   */
+  follow(target: VvfxFollowTarget, offsetX?: number, offsetY?: number): this;
+  stopFollow(): this;
   /**
    * Fits one Beam layer, or every Beam layer when layerId is omitted, between
    * two world-space points. This can be called every frame for moving targets.
@@ -81,6 +128,13 @@ export declare class VvfxEffect {
    * host callback runs, so a throwing callback cannot fire a cue twice.
    */
   private emitCues;
+  private transformChanged;
+  /** Moves the origin onto the follow target; true when it changed. */
+  private syncFollow;
+  /** Maps an effect-space offset to a world-space offset from the origin. */
+  private toWorldOffset;
+  /** Inverse of toWorldOffset, for world-space Beam endpoints. */
+  private toEffectOffset;
   private scheduleRender;
   private cancelScheduledRender;
   private renderImmediately;

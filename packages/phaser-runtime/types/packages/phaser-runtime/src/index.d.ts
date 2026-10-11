@@ -13,6 +13,7 @@ export type {
   BeamFit,
   RuntimeValidationResult,
   VvfxEffectOptions,
+  VvfxFollowTarget,
   VvfxRuntimeAsset,
   VvfxRuntimeDefinition,
   VvfxRuntimeLayer,

@@ -19,6 +19,12 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- **Runtime transform controls.** `VvfxEffect` gains `setScale`, `setAngle`,
+  `setRotation`, `setFlipX`, `setFlipY`, `setTimeScale`, `setTint` /
+  `clearTint`, and `follow` / `stopFollow`, plus matching `scale`, `angle`,
+  `flipX`, `flipY`, `timeScale`, and `tint` startup options. Mirroring flips
+  the artwork and reverses authored spin, Beam endpoints stay exact in world
+  space, and following stops when the target is destroyed. No format change.
 - **Runtime cues.** Timeline markers within the exported duration travel in
   Runtime JSON as an optional `cues` list (additive within format 16; older
   runtimes ignore it). The runtime's new `onCue` option fires each cue once per

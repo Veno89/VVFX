@@ -75,10 +75,27 @@ export interface RuntimeValidationResult {
   error?: string;
 }
 export type BeamFit = "stretch" | "crop";
+/** Anything with a world position, such as a Phaser game object. */
+export interface VvfxFollowTarget {
+  x: number;
+  y: number;
+}
 export interface VvfxEffectOptions {
   originX?: number;
   originY?: number;
   baseDepth?: number;
+  /** Scales the whole effect around its origin; 1 is the authored size. */
+  scale?: number;
+  /** Rotates the whole effect around its origin, in degrees. */
+  angle?: number;
+  /** Mirrors the effect left to right. */
+  flipX?: boolean;
+  /** Mirrors the effect top to bottom. */
+  flipY?: boolean;
+  /** Playback speed multiplier from 0 to 10; 1 is authored speed. */
+  timeScale?: number;
+  /** One 0xRRGGBB color that replaces every copy's authored tint. */
+  tint?: number;
   loop?: boolean;
   autoplay?: boolean;
   autoDestroy?: boolean;

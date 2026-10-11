@@ -26,6 +26,7 @@ import {
 } from "./textures";
 import type {
   VvfxEffectOptions,
+  VvfxFollowTarget,
   VvfxRuntimeCue,
   VvfxRuntimeDefinition,
 } from "./types";
@@ -164,6 +165,28 @@ export function resolveRuntimeRenderingAssetFrame(
 /** Upper bound on hidden sprites one effect keeps for reuse. */
 const MAX_POOLED_SPRITES = 256;
 
+/** Fastest playback speed accepted by setTimeScale. */
+const MAX_VVFX_TIME_SCALE = 10;
+
+const validScale = (value: unknown): value is number =>
+  isSupportedVfxNumber(value) && value > 0;
+
+const validTimeScale = (value: unknown): value is number =>
+  isSupportedVfxNumber(value) && value >= 0;
+
+const validTint = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= 0xffffff;
+
+interface FollowState {
+  target: VvfxFollowTarget;
+  offsetX: number;
+  offsetY: number;
+  release: () => void;
+}
+
 export class VvfxEffect {
   private readonly project: VfxProject;
   private readonly evaluator: ProjectEvaluator;
@@ -181,6 +204,13 @@ export class VvfxEffect {
   private renderRequest = 0;
   private originX: number;
   private originY: number;
+  private effectScale = 1;
+  private effectAngle = 0;
+  private flipXEnabled = false;
+  private flipYEnabled = false;
+  private playbackRate = 1;
+  private tintOverride: number | null = null;
+  private following: FollowState | null = null;
   private readonly baseDepth: number;
   private readonly loop: boolean;
   private readonly autoDestroy: boolean;
@@ -217,6 +247,16 @@ export class VvfxEffect {
     this.originX = finiteOr(ownValue(safeOptions, "originX"), 0);
     this.originY = finiteOr(ownValue(safeOptions, "originY"), 0);
     this.baseDepth = finiteOr(ownValue(safeOptions, "baseDepth"), 0);
+    const scale = ownValue(safeOptions, "scale");
+    if (validScale(scale)) this.effectScale = Math.min(MAX_VFX_SCALE, scale);
+    this.effectAngle = finiteOr(ownValue(safeOptions, "angle"), 0);
+    this.flipXEnabled = ownValue(safeOptions, "flipX") === true;
+    this.flipYEnabled = ownValue(safeOptions, "flipY") === true;
+    const timeScale = ownValue(safeOptions, "timeScale");
+    if (validTimeScale(timeScale))
+      this.playbackRate = Math.min(MAX_VVFX_TIME_SCALE, timeScale);
+    const tint = ownValue(safeOptions, "tint");
+    if (validTint(tint)) this.tintOverride = tint;
     this.loop = ownValue(safeOptions, "loop") === true;
     this.autoDestroy = ownValue(safeOptions, "autoDestroy") !== false;
     const beamFit = ownValue(safeOptions, "beamFit");
@@ -311,6 +351,26 @@ export class VvfxEffect {
     return this.elapsed;
   }
 
+  get scale() {
+    return this.effectScale;
+  }
+
+  get angle() {
+    return this.effectAngle;
+  }
+
+  get flipX() {
+    return this.flipXEnabled;
+  }
+
+  get flipY() {
+    return this.flipYEnabled;
+  }
+
+  get timeScale() {
+    return this.playbackRate;
+  }
+
   play() {
     if (this.destroyed) return this;
     this.playing = true;
@@ -354,6 +414,102 @@ export class VvfxEffect {
   }
 
   /**
+   * Scales the whole effect around its origin: copy positions, motion, and
+   * sprite sizes together. 1 is the authored size.
+   */
+  setScale(scale: number) {
+    if (!validScale(scale)) return this;
+    this.effectScale = Math.min(MAX_VFX_SCALE, scale);
+    return this.transformChanged();
+  }
+
+  /** Rotates the whole effect around its origin, in degrees. */
+  setAngle(degrees: number) {
+    if (!isSupportedVfxNumber(degrees)) return this;
+    this.effectAngle = degrees;
+    return this.transformChanged();
+  }
+
+  /** Rotates the whole effect around its origin, in radians. */
+  setRotation(radians: number) {
+    if (!isSupportedVfxNumber(radians)) return this;
+    return this.setAngle((radians * 180) / Math.PI);
+  }
+
+  /** Mirrors the effect left to right, for example to face the other way. */
+  setFlipX(flip: boolean) {
+    this.flipXEnabled = flip === true;
+    return this.transformChanged();
+  }
+
+  /** Mirrors the effect top to bottom. */
+  setFlipY(flip: boolean) {
+    this.flipYEnabled = flip === true;
+    return this.transformChanged();
+  }
+
+  /**
+   * Multiplies playback speed: 0.5 is slow motion, 2 is double speed, and 0
+   * holds the current frame while the effect keeps playing. Capped at 10.
+   */
+  setTimeScale(timeScale: number) {
+    if (!validTimeScale(timeScale)) return this;
+    this.playbackRate = Math.min(MAX_VVFX_TIME_SCALE, timeScale);
+    return this;
+  }
+
+  /**
+   * Replaces every copy's authored tint with one color, such as 0x66ccff for
+   * a team color. Call clearTint() to restore the authored colors.
+   */
+  setTint(color: number) {
+    if (!validTint(color)) return this;
+    this.tintOverride = color;
+    return this.transformChanged();
+  }
+
+  clearTint() {
+    this.tintOverride = null;
+    return this.transformChanged();
+  }
+
+  /**
+   * Keeps the effect's origin on a moving object, such as a Phaser sprite,
+   * plus an optional offset. Following stops when the target emits Phaser's
+   * "destroy" event, leaving the effect at its last position.
+   */
+  follow(target: VvfxFollowTarget, offsetX = 0, offsetY = 0) {
+    this.stopFollow();
+    if (this.destroyed || !isRecord(target)) return this;
+    const following: FollowState = {
+      target,
+      offsetX: finiteOr(offsetX, 0),
+      offsetY: finiteOr(offsetY, 0),
+      release: () => undefined,
+    };
+    const emitter = target as { on?: unknown; off?: unknown };
+    if (typeof emitter.on === "function" && typeof emitter.off === "function") {
+      type Listen = (event: string, listener: () => void) => unknown;
+      const handleDestroy = () => {
+        if (this.following === following) this.stopFollow();
+      };
+      (emitter.on as Listen).call(target, "destroy", handleDestroy);
+      following.release = () =>
+        (emitter.off as Listen).call(target, "destroy", handleDestroy);
+    }
+    this.following = following;
+    if (this.syncFollow()) this.scheduleRender();
+    return this;
+  }
+
+  stopFollow() {
+    const following = this.following;
+    this.following = null;
+    following?.release();
+    return this;
+  }
+
+  /**
    * Fits one Beam layer, or every Beam layer when layerId is omitted, between
    * two world-space points. This can be called every frame for moving targets.
    */
@@ -391,10 +547,16 @@ export class VvfxEffect {
   }
 
   update(delta: number) {
-    if (!this.playing || this.destroyed) return;
+    if (this.destroyed) return;
+    const moved = this.syncFollow();
+    if (!this.playing) {
+      // A paused effect still tracks its target; a stopped one stays empty.
+      if (moved && this.sprites.size > 0) this.scheduleRender();
+      return;
+    }
     if (!isSupportedVfxNumber(delta)) return;
     this.cancelScheduledRender();
-    this.elapsed += Math.max(0, delta);
+    this.elapsed += Math.max(0, delta) * this.playbackRate;
     const authoredDuration = Math.max(1, this.project.preview.duration);
     const duration =
       this.loop || this.maxDurationMs === null
@@ -430,9 +592,14 @@ export class VvfxEffect {
     this.scene.events.off("shutdown", this.handleSceneShutdown);
     let cleanupError: unknown;
     try {
-      this.clearSprites();
+      this.stopFollow();
     } catch (error) {
       cleanupError = error;
+    }
+    try {
+      this.clearSprites();
+    } catch (error) {
+      cleanupError ??= error;
     }
     this.layerDepths.clear();
     this.defaultAssetFrames.clear();
@@ -490,6 +657,57 @@ export class VvfxEffect {
     }
   }
 
+  private transformChanged() {
+    if (!this.destroyed) this.scheduleRender();
+    return this;
+  }
+
+  /** Moves the origin onto the follow target; true when it changed. */
+  private syncFollow() {
+    const following = this.following;
+    if (!following) return false;
+    const x = following.target.x + following.offsetX;
+    const y = following.target.y + following.offsetY;
+    if (!isSupportedVfxNumber(x) || !isSupportedVfxNumber(y)) return false;
+    if (x === this.originX && y === this.originY) return false;
+    this.originX = x;
+    this.originY = y;
+    return true;
+  }
+
+  /** Maps an effect-space offset to a world-space offset from the origin. */
+  private toWorldOffset(x: number, y: number) {
+    const mirroredX = (this.flipXEnabled ? -x : x) * this.effectScale;
+    const mirroredY = (this.flipYEnabled ? -y : y) * this.effectScale;
+    if (this.effectAngle === 0) return { x: mirroredX, y: mirroredY };
+    const radians = (this.effectAngle * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return {
+      x: mirroredX * cos - mirroredY * sin,
+      y: mirroredX * sin + mirroredY * cos,
+    };
+  }
+
+  /** Inverse of toWorldOffset, for world-space Beam endpoints. */
+  private toEffectOffset(x: number, y: number) {
+    let localX = x;
+    let localY = y;
+    if (this.effectAngle !== 0) {
+      const radians = (this.effectAngle * Math.PI) / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      localX = x * cos + y * sin;
+      localY = -x * sin + y * cos;
+    }
+    localX /= this.effectScale;
+    localY /= this.effectScale;
+    return {
+      x: this.flipXEnabled ? -localX : localX,
+      y: this.flipYEnabled ? -localY : localY,
+    };
+  }
+
   private scheduleRender() {
     if (this.renderQueued || this.destroyed) return;
     this.renderQueued = true;
@@ -518,16 +736,23 @@ export class VvfxEffect {
 
   private renderFrame() {
     const localBeamEndpoints = Object.fromEntries(
-      [...this.beamEndpoints].map(([layerId, endpoints]) => [
-        layerId,
-        {
-          startX: endpoints.startX - this.originX,
-          startY: endpoints.startY - this.originY,
-          endX: endpoints.endX - this.originX,
-          endY: endpoints.endY - this.originY,
-        },
-      ]),
+      [...this.beamEndpoints].map(([layerId, endpoints]) => {
+        const start = this.toEffectOffset(
+          endpoints.startX - this.originX,
+          endpoints.startY - this.originY,
+        );
+        const end = this.toEffectOffset(
+          endpoints.endX - this.originX,
+          endpoints.endY - this.originY,
+        );
+        return [
+          layerId,
+          { startX: start.x, startY: start.y, endX: end.x, endY: end.y },
+        ];
+      }),
     );
+    // A single mirror reverses the direction of every authored rotation.
+    const angleSign = this.flipXEnabled !== this.flipYEnabled ? -1 : 1;
     const instances = this.evaluator.evaluate(
       this.elapsed,
       null,
@@ -574,12 +799,21 @@ export class VvfxEffect {
         sprite.setTexture(availableTexture, availableFrame);
       }
       syncNormalizedSourceCrop(sprite, instance.sourceCrop);
+      const offset = this.toWorldOffset(instance.x, instance.y);
       sprite
-        .setPosition(this.originX + instance.x, this.originY + instance.y)
-        .setScale(instance.scaleX, instance.scaleY)
+        .setPosition(this.originX + offset.x, this.originY + offset.y)
+        .setScale(
+          instance.scaleX * this.effectScale,
+          instance.scaleY * this.effectScale,
+        )
         .setAlpha(instance.opacity)
-        .setAngle(instance.rotation)
+        .setAngle(instance.rotation * angleSign + this.effectAngle)
         .setBlendMode(instance.blendMode === "add" ? 1 : 0);
+      if (
+        sprite.flipX !== this.flipXEnabled ||
+        sprite.flipY !== this.flipYEnabled
+      )
+        sprite.setFlip(this.flipXEnabled, this.flipYEnabled);
       // Phaser queues a sort of the host scene's whole display list on every
       // depth assignment, so only assign when the value actually changes.
       const depth =
@@ -589,7 +823,8 @@ export class VvfxEffect {
           ? 0
           : -0.01 - instance.trailIndex * 0.001);
       if (sprite.depth !== depth) sprite.setDepth(depth);
-      if (instance.tint)
+      if (this.tintOverride !== null) sprite.setTint(this.tintOverride);
+      else if (instance.tint)
         sprite.setTint(tintNumber(instance.tint, instance.tintStrength));
       else sprite.clearTint();
       syncPhaserRenderingEffects({

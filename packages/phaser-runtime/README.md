@@ -68,8 +68,35 @@ await playVvfx(this, impact, {
 });
 ```
 
-Calls to `setPosition`, `setEndpoints`, and `clearEndpoints` made in the same
-JavaScript turn are coalesced into one render. A Scene `update` flushes the
+Transform the whole effect around its origin without re-exporting it.
+`setScale`, `setAngle` (degrees), `setRotation` (radians), `setFlipX`, and
+`setFlipY` move, size, rotate, and mirror every copy together; a mirrored
+effect also mirrors its artwork and spins the other way. `setTimeScale`
+multiplies playback speed (0 holds the current frame, up to 10×), and
+`setTint(0xRRGGBB)` replaces every authored tint until `clearTint()`. The same
+values can be passed at startup as `scale`, `angle`, `flipX`, `flipY`,
+`timeScale`, and `tint`. `maxDurationMs` and cue times stay in effect time, so
+slow motion delays them.
+
+```ts
+const slash = await playVvfx(this, swordSlash, {
+  flipX: player.facing === "left",
+  scale: 1.5,
+  tint: 0x66ccff,
+});
+
+const aura = await playVvfx(this, healingAura, { loop: true });
+aura.follow(player, 0, -12);
+```
+
+`follow(target, offsetX, offsetY)` keeps the origin on anything with `x` and
+`y`, such as a Phaser sprite, every Scene update, including while paused.
+Following stops on `stopFollow()` or when the target emits Phaser's `destroy`
+event; the effect then stays where it was. World-space Beam endpoints stay
+exact under any effect transform.
+
+Calls to `setPosition`, `setEndpoints`, `clearEndpoints`, and the transform
+setters made in the same JavaScript turn are coalesced into one render. A Scene `update` flushes the
 latest values immediately, so following a moving target does not double-render.
 
 For a Beam effect, tightly crop the source artwork and draw it left to right.

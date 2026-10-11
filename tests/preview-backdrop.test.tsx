@@ -70,7 +70,12 @@ describe("preview backdrop storage", () => {
       opacity: 1,
     });
 
-    await savePreviewBackdropSettings({ pixelScale: 3, opacity: 0.4 });
+    await savePreviewBackdropSettings({
+      pixelScale: 3,
+      opacity: 0.4,
+      x: 0,
+      y: 0,
+    });
     const loaded = await loadPreviewBackdrop();
     expect(loaded).toMatchObject({ pixelScale: 3, opacity: 0.4 });
     expect(new Uint8Array(loaded!.data)).toEqual(new Uint8Array(4).fill(7));
@@ -90,14 +95,20 @@ describe("preview backdrop storage", () => {
     expect(normalizeBackdropSettings(5, 2)).toEqual({
       pixelScale: 1,
       opacity: 1,
+      x: 0,
+      y: 0,
     });
-    expect(normalizeBackdropSettings(0.5, 0)).toEqual({
+    expect(normalizeBackdropSettings(0.5, 0, 12.4, -9000)).toEqual({
       pixelScale: 0.5,
       opacity: 0.1,
+      x: 12,
+      y: -2000,
     });
-    expect(normalizeBackdropSettings("2", Number.NaN)).toEqual({
+    expect(normalizeBackdropSettings("2", Number.NaN, "3", null)).toEqual({
       pixelScale: 1,
       opacity: 1,
+      x: 0,
+      y: 0,
     });
   });
 });
@@ -199,7 +210,12 @@ describe("preview panel backdrop", () => {
 
   it("draws the stored screenshot behind a clear canvas at preview zoom", async () => {
     await savePreviewBackdropImage(image());
-    await savePreviewBackdropSettings({ pixelScale: 2, opacity: 0.5 });
+    await savePreviewBackdropSettings({
+      pixelScale: 2,
+      opacity: 0.5,
+      x: 0,
+      y: 0,
+    });
     const { container } = renderPanel();
 
     const backdrop = await waitFor(() => {
@@ -229,6 +245,43 @@ describe("preview panel backdrop", () => {
     expect(
       within(dialog).getByRole("button", { name: /Add game screenshot/ }),
     ).toBeVisible();
+  });
+
+  it("keeps the stand-in character separate and draws it at its offset", async () => {
+    await savePreviewBackdropImage(image());
+    await savePreviewBackdropImage(
+      { ...image(), name: "Hero.png", width: 32, height: 48 },
+      "character",
+    );
+    await savePreviewBackdropSettings(
+      { pixelScale: 2, opacity: 1, x: 40, y: -10 },
+      "character",
+    );
+    const { container } = renderPanel();
+    const hero = await waitFor(() => {
+      const element = container.querySelector<HTMLImageElement>(
+        "img.preview-character",
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    // Zoom 1.5: the offset and the pixel size both follow the preview zoom.
+    expect(hero.style.transform).toContain("translate(60px, -15px)");
+    expect(hero.style.transform).toContain("scale(3)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview appearance" }));
+    const dialog = screen.getByRole("dialog", { name: "Preview appearance" });
+    expect(within(dialog).getByText(/Hero\.png · 32×48/)).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Remove character" }),
+    );
+    expect(container.querySelector("img.preview-character")).toBeNull();
+    await waitFor(async () =>
+      expect(await loadPreviewBackdrop("character")).toBeNull(),
+    );
+    // Removing the character leaves the screenshot alone.
+    expect(await loadPreviewBackdrop()).toMatchObject({ name: "Dungeon.png" });
+    expect(container.querySelector("img.preview-backdrop")).not.toBeNull();
   });
 
   it("hides the screenshot while recording", async () => {

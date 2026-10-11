@@ -56,7 +56,8 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 
 - Live Phaser 4 preview with play, pause, restart, content-aware loop, four
   playback speeds, zoom, grid, several test backgrounds, and an optional game
-  screenshot backdrop for judging size and color in context.
+  screenshot backdrop and stand-in character for judging size and color in
+  context.
 - A keyframe **curve graph**: drag points to shape size, opacity, or rotation
   over a layer's life.
 - **Speed over life** and **emission rate** curves, plus an **attractor/vortex**
@@ -367,7 +368,8 @@ docs/                    Architecture, format, capability, guide, and roadmap
   sprite budget keep child effects bounded. The editor recommends a finite,
   unattached Triggered Animated image or Burst and warns when an existing
   target no longer fits that beginner-safe pattern.
-- Preview background, game screenshot, grid, zoom, selection, eye
+- Preview background, game screenshot, stand-in character, grid, zoom,
+  selection, eye
   visibility, and Solo are not game-runtime data. The screenshot stays in this
   browser and is left out of projects, recordings, and exports. Use **Enabled** to control exported playback.
 - Advanced TypeScript requires the local `@vvfx/phaser-runtime` package. Games

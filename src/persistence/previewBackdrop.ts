@@ -1,13 +1,22 @@
 /**
- * The preview's game-screenshot backdrop lives in its own small database: it
- * belongs to this browser's editor, never to a project, so it must not touch
- * project storage, saved files, or exports.
+ * The preview's game-screenshot backdrop and stand-in character live in their
+ * own small database: they belong to this browser's editor, never to a
+ * project, so they must not touch project storage, saved files, or exports.
  */
 
 export const BACKDROP_DB_NAME = "vvfx-preview-backdrop";
 const BACKDROP_STORE = "backdrop";
-const IMAGE_KEY = "image";
-const SETTINGS_KEY = "settings";
+
+/** The screenshot behind everything, or a character sprite placed on it. */
+export type BackdropSlot = "backdrop" | "character";
+
+const SLOT_KEYS: Record<BackdropSlot, { image: string; settings: string }> = {
+  backdrop: { image: "image", settings: "settings" },
+  character: { image: "character-image", settings: "character-settings" },
+};
+
+/** Largest offset from the effect origin, in effect units. */
+export const BACKDROP_MAX_OFFSET = 2000;
 
 export const BACKDROP_MAX_BYTES = 25 * 1024 * 1024;
 export const BACKDROP_MAX_DIMENSION = 8192;
@@ -27,15 +36,29 @@ export interface PreviewBackdropSettings {
   pixelScale: number;
   /** 0.1–1. */
   opacity: number;
+  /** Image center relative to the effect origin, in effect units. */
+  x: number;
+  y: number;
 }
 
 export type PreviewBackdrop = PreviewBackdropImage & PreviewBackdropSettings;
 
+const offset = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.round(
+        Math.min(BACKDROP_MAX_OFFSET, Math.max(-BACKDROP_MAX_OFFSET, value)),
+      )
+    : 0;
+
 export function normalizeBackdropSettings(
   pixelScale: unknown,
   opacity: unknown,
+  x?: unknown,
+  y?: unknown,
 ): PreviewBackdropSettings {
   return {
+    x: offset(x),
+    y: offset(y),
     pixelScale: BACKDROP_PIXEL_SCALES.includes(
       pixelScale as (typeof BACKDROP_PIXEL_SCALES)[number],
     )
@@ -108,36 +131,59 @@ async function withStore<T>(
   }
 }
 
-export async function loadPreviewBackdrop(): Promise<PreviewBackdrop | null> {
+export async function loadPreviewBackdrop(
+  slot: BackdropSlot = "backdrop",
+): Promise<PreviewBackdrop | null> {
+  const keys = SLOT_KEYS[slot];
   const image = await withStore<unknown>("readonly", (store) =>
-    store.get(IMAGE_KEY),
+    store.get(keys.image),
   );
   if (!isValidBackdropImage(image)) return null;
   const settings = await withStore<unknown>("readonly", (store) =>
-    store.get(SETTINGS_KEY),
+    store.get(keys.settings),
   );
   const stored = (settings ?? {}) as Partial<PreviewBackdropSettings>;
   return {
     ...image,
-    ...normalizeBackdropSettings(stored.pixelScale, stored.opacity),
+    ...normalizeBackdropSettings(
+      stored.pixelScale,
+      stored.opacity,
+      stored.x,
+      stored.y,
+    ),
   };
 }
 
-export async function savePreviewBackdropImage(image: PreviewBackdropImage) {
-  await withStore("readwrite", (store) => store.put(image, IMAGE_KEY));
+export async function savePreviewBackdropImage(
+  image: PreviewBackdropImage,
+  slot: BackdropSlot = "backdrop",
+) {
+  await withStore("readwrite", (store) =>
+    store.put(image, SLOT_KEYS[slot].image),
+  );
 }
 
 export async function savePreviewBackdropSettings(
   settings: PreviewBackdropSettings,
+  slot: BackdropSlot = "backdrop",
 ) {
   await withStore("readwrite", (store) =>
     store.put(
-      normalizeBackdropSettings(settings.pixelScale, settings.opacity),
-      SETTINGS_KEY,
+      normalizeBackdropSettings(
+        settings.pixelScale,
+        settings.opacity,
+        settings.x,
+        settings.y,
+      ),
+      SLOT_KEYS[slot].settings,
     ),
   );
 }
 
-export async function clearPreviewBackdrop() {
-  await withStore("readwrite", (store) => store.clear());
+export async function clearPreviewBackdrop(slot: BackdropSlot = "backdrop") {
+  const keys = SLOT_KEYS[slot];
+  await withStore("readwrite", (store) => {
+    store.delete(keys.settings);
+    return store.delete(keys.image);
+  });
 }

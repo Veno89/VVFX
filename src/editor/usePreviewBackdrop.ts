@@ -8,6 +8,7 @@ import {
   normalizeBackdropSettings,
   savePreviewBackdropImage,
   savePreviewBackdropSettings,
+  type BackdropSlot,
   type PreviewBackdrop,
   type PreviewBackdropImage,
   type PreviewBackdropSettings,
@@ -47,11 +48,13 @@ export interface PreviewBackdropState {
 }
 
 /**
- * The game-screenshot backdrop behind the preview. It belongs to this browser
- * rather than the project, and storage failures only cost persistence.
+ * An editor-only image in the preview: the game-screenshot backdrop or a
+ * stand-in character. It belongs to this browser rather than the project,
+ * and storage failures only cost persistence.
  */
 export function usePreviewBackdrop(
   measure: typeof readImageSize = readImageSize,
+  slot: BackdropSlot = "backdrop",
 ): PreviewBackdropState {
   const [image, setImage] = useState<{
     image: PreviewBackdropImage;
@@ -62,6 +65,7 @@ export function usePreviewBackdrop(
   );
   const [error, setError] = useState<string | null>(null);
   const chosenRef = useRef(false);
+  const noun = slot === "backdrop" ? "screenshot" : "image";
   const url = image?.url ?? null;
 
   // Each image gets its own object URL; release it once it is replaced.
@@ -72,42 +76,42 @@ export function usePreviewBackdrop(
 
   useEffect(() => {
     let cancelled = false;
-    loadPreviewBackdrop()
+    loadPreviewBackdrop(slot)
       .then((stored) => {
-        // A screenshot picked while storage was loading wins.
+        // An image picked while storage was loading wins.
         if (cancelled || !stored || chosenRef.current) return;
-        const { pixelScale, opacity, ...storedImage } = stored;
+        const { pixelScale, opacity, x, y, ...storedImage } = stored;
         setImage({ image: storedImage, url: imageUrl(storedImage) });
-        setSettings({ pixelScale, opacity });
+        setSettings({ pixelScale, opacity, x, y });
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [slot]);
 
   // Store settings once they settle, not on every slider step.
-  const { pixelScale, opacity } = settings;
+  const { pixelScale, opacity, x, y } = settings;
   const hasImage = image !== null;
   useEffect(() => {
     if (!hasImage) return;
     const timer = window.setTimeout(() => {
-      savePreviewBackdropSettings({ pixelScale, opacity }).catch(
+      savePreviewBackdropSettings({ pixelScale, opacity, x, y }, slot).catch(
         () => undefined,
       );
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [hasImage, pixelScale, opacity]);
+  }, [hasImage, pixelScale, opacity, x, y, slot]);
 
   const choose = useCallback(
     async (file: File) => {
       setError(null);
       if (!BACKDROP_TYPES.includes(file.type)) {
-        setError("Choose a PNG, JPEG, or WebP screenshot.");
+        setError(`Choose a PNG, JPEG, or WebP ${noun}.`);
         return;
       }
       if (file.size > BACKDROP_MAX_BYTES) {
-        setError("Choose a screenshot under 25 MB.");
+        setError(`Choose a ${noun} under 25 MB.`);
         return;
       }
       try {
@@ -118,11 +122,11 @@ export function usePreviewBackdrop(
           size.width > BACKDROP_MAX_DIMENSION ||
           size.height > BACKDROP_MAX_DIMENSION
         ) {
-          setError("Choose a screenshot up to 8192 pixels on each side.");
+          setError(`Choose a ${noun} up to 8192 pixels on each side.`);
           return;
         }
         const next: PreviewBackdropImage = {
-          name: file.name.slice(0, 120) || "Screenshot",
+          name: file.name.slice(0, 120) || "Image",
           type: file.type,
           data: await file.arrayBuffer(),
           width: size.width,
@@ -130,12 +134,12 @@ export function usePreviewBackdrop(
         };
         chosenRef.current = true;
         setImage({ image: next, url: imageUrl(next) });
-        savePreviewBackdropImage(next).catch(() => undefined);
+        savePreviewBackdropImage(next, slot).catch(() => undefined);
       } catch {
         setError("This image could not be opened.");
       }
     },
-    [measure],
+    [measure, noun, slot],
   );
 
   const update = useCallback((patch: Partial<PreviewBackdropSettings>) => {
@@ -143,6 +147,8 @@ export function usePreviewBackdrop(
       normalizeBackdropSettings(
         patch.pixelScale ?? current.pixelScale,
         patch.opacity ?? current.opacity,
+        patch.x ?? current.x,
+        patch.y ?? current.y,
       ),
     );
   }, []);
@@ -150,8 +156,8 @@ export function usePreviewBackdrop(
   const remove = useCallback(() => {
     setError(null);
     setImage(null);
-    clearPreviewBackdrop().catch(() => undefined);
-  }, []);
+    clearPreviewBackdrop(slot).catch(() => undefined);
+  }, [slot]);
 
   return {
     backdrop: image ? { ...image.image, ...settings } : null,

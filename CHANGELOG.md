@@ -19,6 +19,11 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- A **stand-in character** (Preview appearance → Stand-in character) places a
+  PNG, JPEG, or WebP sprite behind the effect at an X/Y offset from the origin,
+  with pixel size and opacity, to judge the effect at real scale. Like the game
+  screenshot it is stored separately in this browser, follows preview zoom,
+  never reaches projects or exports, and hides while recording.
 - The Shape library gains **Make your own**: a glow, ring, or star with size,
   softness, ring thickness, star points, and inner size, previewed live and
   added as an ordinary white PNG like any library shape.

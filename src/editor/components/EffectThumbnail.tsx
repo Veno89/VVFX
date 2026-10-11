@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { VfxLayer } from "../../vfx/types";
+import type { VfxAsset, VfxLayer } from "../../vfx/types";
 import {
   createThumbnailScene,
   drawThumbnailFrame,
@@ -8,10 +8,16 @@ import {
 
 const sceneCache = new Map<string, ThumbnailScene>();
 
-function sceneFor(id: string, createLayers: () => VfxLayer[]) {
+function sceneFor(
+  id: string,
+  createLayers: () => VfxLayer[],
+  assets: VfxAsset[] | undefined,
+) {
   const cached = sceneCache.get(id);
   if (cached) return cached;
-  const scene = createThumbnailScene(createLayers());
+  // Saved templates come and go; keep the cache from growing without bound.
+  if (sceneCache.size > 64) sceneCache.clear();
+  const scene = createThumbnailScene(createLayers(), assets);
   sceneCache.set(id, scene);
   return scene;
 }
@@ -24,26 +30,31 @@ function prefersReducedMotion() {
 }
 
 /**
- * A small preview of a preset: a still, busy frame at rest that plays its
- * real motion while the surrounding choice is hovered or focused.
+ * A small preview of a preset or template: a still, busy frame at rest that
+ * plays its real motion while the surrounding choice is hovered or focused.
  */
 export function EffectThumbnail({
   id,
   createLayers,
   size = 56,
   playing = false,
+  assets,
 }: {
-  /** Stable cache key, usually the preset id. */
+  /** Stable cache key, such as a preset id or a template id plus revision. */
   id: string;
   createLayers: () => VfxLayer[];
+  /** Images the layers use; built-in art is always available. */
+  assets?: VfxAsset[];
   size?: number;
   playing?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const createLayersRef = useRef(createLayers);
+  const assetsRef = useRef(assets);
   useEffect(() => {
     createLayersRef.current = createLayers;
-  }, [createLayers]);
+    assetsRef.current = assets;
+  }, [assets, createLayers]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,7 +62,7 @@ export function EffectThumbnail({
     if (!canvas || !context) return;
     let scene: ThumbnailScene;
     try {
-      scene = sceneFor(id, createLayersRef.current);
+      scene = sceneFor(id, createLayersRef.current, assetsRef.current);
     } catch {
       return;
     }
@@ -60,8 +71,17 @@ export function EffectThumbnail({
     canvas.height = Math.round(size * pixelRatio);
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     if (!playing || prefersReducedMotion()) {
-      drawThumbnailFrame(context, scene, scene.posterTime, size);
-      return;
+      let current = true;
+      const drawPoster = () =>
+        drawThumbnailFrame(context, scene, scene.posterTime, size);
+      drawPoster();
+      // Uploaded images decode asynchronously; redraw once they can.
+      void scene.ready.then(() => {
+        if (current) drawPoster();
+      });
+      return () => {
+        current = false;
+      };
     }
     let frame = 0;
     const started = performance.now();

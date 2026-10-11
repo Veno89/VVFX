@@ -8,6 +8,7 @@ import {
 } from "../src/editor/effectThumbnail";
 import { LIBRARY_SHAPES, renderLibraryShape } from "../src/editor/shapeLibrary";
 import { recordCanvasAsSpriteSheet } from "../src/editor/spriteSheetExport";
+import { createLayer } from "../src/vfx/defaults";
 import { COMPOSITION_PRESETS, LAYER_PRESETS } from "../src/vfx/presets";
 
 /** jsdom has no canvas; record 2D calls so canvas code paths can run. */
@@ -73,6 +74,41 @@ describe("canvas-backed editor exports", () => {
       expect(context.calls).toContain("clearRect");
     }
     expect(contexts.length).toBeGreaterThan(0);
+  });
+
+  it("draws uploaded images with frames, crop, and multiplied tint once decoded", async () => {
+    const asset = {
+      id: "uploaded-orb",
+      name: "Orb sheet",
+      mimeType: "image/png" as const,
+      dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+      width: 128,
+      height: 64,
+      spriteSheet: { frameWidth: 64, frameHeight: 64, frameCount: 2 },
+    };
+    const layer = createLayer("animated", "Orb", asset.id);
+    layer.appearance.tint = "#ff8800";
+    layer.timing.duration = 600;
+    const scene = createThumbnailScene([layer], [asset]);
+    const image = scene.images.get(asset.id)!;
+    expect(image).toBeDefined();
+
+    const before = fakeContext();
+    drawThumbnailFrame(before, scene, scene.posterTime, 64);
+    expect(before.calls).not.toContain("drawImage");
+
+    Object.defineProperty(image, "complete", { value: true });
+    Object.defineProperty(image, "naturalWidth", { value: 128 });
+    Object.defineProperty(image, "naturalHeight", { value: 64 });
+    image.onload?.(new Event("load"));
+    await scene.ready;
+    const after = fakeContext();
+    drawThumbnailFrame(after, scene, scene.posterTime, 64);
+    expect(after.calls).toContain("drawImage");
+    // The tinted copy is prepared on its own canvas: multiply, then mask.
+    expect(contexts.some((context) => context.calls.includes("fillRect"))).toBe(
+      true,
+    );
   });
 
   it("renders a still thumbnail at rest and animates while playing", () => {

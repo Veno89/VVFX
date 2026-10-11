@@ -19,6 +19,10 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- The **Templates** dialog shows animated thumbnails for built-in starters and
+  saved templates, playing on hover or focus. Thumbnails now draw uploaded
+  images too, including sprite-sheet frames, crops, and Phaser-style
+  multiplied tints.
 - **Motion curves and an attractor.** Behaviors gain **Change speed over
   life** (a speed curve that keeps the total distance) and **Pull toward a
   point**, an attractor with pull and swirl that also works as a vortex.

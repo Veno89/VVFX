@@ -4,11 +4,9 @@ import {
   Download,
   Copy,
   Pencil,
-  Layers3,
   Library,
   Plus,
   Save,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -22,6 +20,7 @@ import type {
   VfxTemplate,
 } from "../../vfx/templates";
 import { useFocusRegion } from "../useFocusRegion";
+import { EffectThumbnail } from "./EffectThumbnail";
 
 export type TemplateSaveScope = TemplateScope;
 
@@ -86,6 +85,15 @@ export function TemplateLibraryDialog({
 }) {
   const importRef = useRef<HTMLInputElement>(null);
   const [saveOpen, setSaveOpen] = useState(false);
+  // The row under the pointer or keyboard focus plays its thumbnail.
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const previewHandlers = (key: string) => ({
+    onPointerEnter: () => setPlayingId(key),
+    onPointerLeave: () =>
+      setPlayingId((current) => (current === key ? null : current)),
+    onFocus: () => setPlayingId(key),
+    onBlur: () => setPlayingId((current) => (current === key ? null : current)),
+  });
   const [name, setName] = useState(projectName);
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<TemplateSaveScope>("effect");
@@ -430,9 +438,18 @@ export function TemplateLibraryDialog({
             aria-label="Complete-effect starters"
           >
             {COMPOSITION_PRESETS.map((preset) => (
-              <article key={preset.id} role="listitem">
-                <span className="template-list-icon">
-                  <Sparkles size={18} />
+              <article
+                key={preset.id}
+                role="listitem"
+                {...previewHandlers(`preset:${preset.id}`)}
+              >
+                <span className="template-list-thumb">
+                  <EffectThumbnail
+                    id={preset.id}
+                    createLayers={preset.create}
+                    size={52}
+                    playing={playingId === `preset:${preset.id}`}
+                  />
                 </span>
                 <div>
                   <strong>{preset.name}</strong>
@@ -488,9 +505,19 @@ export function TemplateLibraryDialog({
               aria-label="Saved effect templates"
             >
               {templates.map((template) => (
-                <article key={template.id} role="listitem">
-                  <span className="template-list-icon">
-                    <Layers3 size={18} />
+                <article
+                  key={template.id}
+                  role="listitem"
+                  {...previewHandlers(`template:${template.id}`)}
+                >
+                  <span className="template-list-thumb">
+                    <EffectThumbnail
+                      id={`template:${template.id}:${template.updatedAt}`}
+                      createLayers={() => template.layers}
+                      assets={template.assets}
+                      size={52}
+                      playing={playingId === `template:${template.id}`}
+                    />
                   </span>
                   <div>
                     <strong>{template.name}</strong>

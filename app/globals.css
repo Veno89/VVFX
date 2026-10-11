@@ -612,7 +612,7 @@ button:disabled {
   align-self: start;
   min-width: 0;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   grid-auto-rows: max-content;
   align-items: center;
   gap: 7px;
@@ -5020,7 +5020,7 @@ kbd {
 }
 .template-list article {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
   padding: 11px;
@@ -5031,13 +5031,14 @@ kbd {
 .template-list article:hover {
   border-color: #405060;
 }
-.template-list-icon {
-  width: 36px;
-  height: 36px;
+.template-list-thumb {
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
-  color: var(--violet);
-  background: rgba(170, 140, 255, 0.08);
+  overflow: hidden;
+  background: #0d1017;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 .template-list article > div {
@@ -6441,7 +6442,7 @@ kbd {
     align-items: start;
   }
   .template-list article {
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 52px minmax(0, 1fr);
   }
   .template-list-actions {
     grid-column: 1 / -1;

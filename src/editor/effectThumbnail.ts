@@ -2,12 +2,13 @@ import { createEmptyProject } from "../vfx/defaults";
 import { createProjectEvaluator, type ProjectEvaluator } from "../vfx/engine";
 import { activeTimelineEnd } from "../vfx/projectState";
 import { tintNumber } from "../vfx/color";
-import type { EvaluatedInstance, VfxLayer } from "../vfx/types";
+import type { EvaluatedInstance, VfxAsset, VfxLayer } from "../vfx/types";
 
 /**
  * Canvas 2D thumbnails for presets. They reuse the deterministic evaluator,
  * so motion and timing match the editor; experimental WebGL effects are left
- * out and built-in artwork is redrawn with the same geometry as the preview.
+ * out, built-in artwork is redrawn with the same geometry as the preview, and
+ * uploaded images draw once decoded, with Phaser's multiplicative tint.
  */
 
 const TEXTURE_SIZE = 128;
@@ -71,6 +72,10 @@ function drawBuiltIn(context: CanvasRenderingContext2D, kind: BuiltInKind) {
 
 export interface ThumbnailScene {
   evaluator: ProjectEvaluator;
+  assets: Map<string, VfxAsset>;
+  images: Map<string, HTMLImageElement>;
+  /** Settles when every uploaded image has decoded or failed. */
+  ready: Promise<void>;
   duration: number;
   layerOrder: Map<string, number>;
   /** Pixels per effect unit at a 100 px thumbnail. */
@@ -79,18 +84,49 @@ export interface ThumbnailScene {
   posterTime: number;
 }
 
-function instanceExtent(instance: EvaluatedInstance) {
-  // Built-in art fades out well inside its 128 px square; fit the bright core.
+function instanceExtent(
+  instance: EvaluatedInstance,
+  assets: Map<string, VfxAsset>,
+) {
+  const asset = instance.assetId ? assets.get(instance.assetId) : undefined;
+  const sheet = asset?.spriteSheet;
+  const size =
+    asset && !asset.builtIn
+      ? Math.max(
+          sheet?.frameWidth ?? asset.width ?? TEXTURE_SIZE,
+          sheet?.frameHeight ?? asset.height ?? TEXTURE_SIZE,
+        )
+      : TEXTURE_SIZE;
+  // Built-in art fades out well inside its square; fit the bright core.
   const half =
-    TEXTURE_SIZE *
+    size *
     0.36 *
     Math.max(Math.abs(instance.scaleX), Math.abs(instance.scaleY));
   return Math.max(Math.abs(instance.x), Math.abs(instance.y)) + half;
 }
 
-export function createThumbnailScene(layers: VfxLayer[]): ThumbnailScene {
+export function createThumbnailScene(
+  layers: VfxLayer[],
+  assets: VfxAsset[] = [],
+): ThumbnailScene {
   const project = createEmptyProject("Thumbnail");
   project.layers = layers;
+  if (assets.length > 0) project.assets = assets;
+  const assetMap = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const images = new Map<string, HTMLImageElement>();
+  const loads: Promise<void>[] = [];
+  for (const asset of project.assets) {
+    if (asset.builtIn || !asset.dataUrl) continue;
+    const image = new Image();
+    loads.push(
+      new Promise((resolve) => {
+        image.onload = () => resolve();
+        image.onerror = () => resolve();
+      }),
+    );
+    image.src = asset.dataUrl;
+    images.set(asset.id, image);
+  }
   const evaluator = createProjectEvaluator(project);
   const duration = Math.max(200, activeTimelineEnd(project));
   let extent = 1;
@@ -104,7 +140,7 @@ export function createThumbnailScene(layers: VfxLayer[]): ThumbnailScene {
       presence += instance.opacity;
       // Faint stragglers should not shrink the whole effect.
       if (instance.opacity < 0.2) continue;
-      extent = Math.max(extent, instanceExtent(instance));
+      extent = Math.max(extent, instanceExtent(instance, assetMap));
     }
     if (presence > busiest) {
       busiest = presence;
@@ -113,6 +149,9 @@ export function createThumbnailScene(layers: VfxLayer[]): ThumbnailScene {
   }
   return {
     evaluator,
+    assets: assetMap,
+    images,
+    ready: Promise.all(loads).then(() => undefined),
     duration,
     layerOrder: new Map(layers.map((layer, index) => [layer.id, index])),
     fitScale: Math.min(1.4, 48 / extent),
@@ -157,6 +196,85 @@ function quantizedTint(instance: EvaluatedInstance): number | null {
   return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
+const uploadedCache = new Map<string, HTMLCanvasElement>();
+
+/** The visible source rectangle: one sprite-sheet frame, then any crop. */
+function sourceRect(
+  asset: VfxAsset,
+  image: HTMLImageElement,
+  instance: EvaluatedInstance,
+) {
+  const sheet = asset.spriteSheet;
+  let x = 0;
+  let y = 0;
+  let width = image.naturalWidth;
+  let height = image.naturalHeight;
+  if (sheet && instance.frame !== null) {
+    const columns = Math.max(1, Math.floor(width / sheet.frameWidth));
+    x = (instance.frame % columns) * sheet.frameWidth;
+    y = Math.floor(instance.frame / columns) * sheet.frameHeight;
+    width = sheet.frameWidth;
+    height = sheet.frameHeight;
+  }
+  const frame = { width, height };
+  const crop = instance.sourceCrop;
+  if (crop) {
+    x += crop.x * width;
+    y += crop.y * height;
+    width *= crop.width;
+    height *= crop.height;
+  }
+  return {
+    x,
+    y,
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+    frame,
+    offsetX: crop ? crop.x * frame.width : 0,
+    offsetY: crop ? crop.y * frame.height : 0,
+  };
+}
+
+function uploadedTexture(
+  asset: VfxAsset,
+  image: HTMLImageElement,
+  rect: ReturnType<typeof sourceRect>,
+  tint: number | null,
+) {
+  const key = `${asset.id}|${rect.x},${rect.y},${rect.width},${rect.height}|${tint ?? "none"}`;
+  const cached = uploadedCache.get(key);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(rect.width);
+  canvas.height = Math.ceil(rect.height);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const drawSource = () =>
+    context.drawImage(
+      image,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      0,
+      0,
+      rect.width,
+      rect.height,
+    );
+  drawSource();
+  if (tint !== null && tint !== 0xffffff) {
+    // Phaser multiplies texture color by the tint; keep the image's alpha.
+    context.globalCompositeOperation = "multiply";
+    context.fillStyle = `#${tint.toString(16).padStart(6, "0")}`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalCompositeOperation = "destination-in";
+    drawSource();
+  }
+  if (uploadedCache.size > 256) uploadedCache.clear();
+  uploadedCache.set(key, canvas);
+  return canvas;
+}
+
 export function drawThumbnailFrame(
   context: CanvasRenderingContext2D,
   scene: ThumbnailScene,
@@ -175,11 +293,26 @@ export function drawThumbnailFrame(
         (right.trailIndex ?? -1) - (left.trailIndex ?? -1),
     );
   for (const instance of instances) {
-    const kind = instance.assetId
-      ? BUILT_IN_KINDS[instance.assetId]
+    const asset = instance.assetId
+      ? scene.assets.get(instance.assetId)
       : undefined;
-    if (!kind) continue;
-    const texture = builtInTexture(kind, quantizedTint(instance));
+    const kind = instance.assetId
+      ? (BUILT_IN_KINDS[instance.assetId] ??
+        (asset?.builtIn as BuiltInKind | undefined))
+      : undefined;
+    let texture: HTMLCanvasElement | null = null;
+    let drawX = -TEXTURE_SIZE / 2;
+    let drawY = -TEXTURE_SIZE / 2;
+    if (kind) {
+      texture = builtInTexture(kind, quantizedTint(instance));
+    } else if (asset && instance.assetId) {
+      const image = scene.images.get(instance.assetId);
+      if (!image?.complete || image.naturalWidth === 0) continue;
+      const rect = sourceRect(asset, image, instance);
+      texture = uploadedTexture(asset, image, rect, quantizedTint(instance));
+      drawX = -rect.frame.width / 2 + rect.offsetX;
+      drawY = -rect.frame.height / 2 + rect.offsetY;
+    }
     if (!texture) continue;
     context.save();
     context.globalAlpha = Math.min(1, instance.opacity);
@@ -191,7 +324,7 @@ export function drawThumbnailFrame(
     );
     context.rotate((instance.rotation * Math.PI) / 180);
     context.scale(instance.scaleX * zoom, instance.scaleY * zoom);
-    context.drawImage(texture, -TEXTURE_SIZE / 2, -TEXTURE_SIZE / 2);
+    context.drawImage(texture, drawX, drawY);
     context.restore();
   }
 }

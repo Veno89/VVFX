@@ -442,6 +442,18 @@ export function PhaserPreview({
   alwaysAwakeRef.current = captureMode || stressCopies > 1;
   const [textureRevision, setTextureRevision] = useState(0);
   const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
+  const projectLookups = useMemo(
+    () => ({
+      assetIds: new Set(project.assets.map((asset) => asset.id)),
+      layerIds: new Set(project.layers.map((layer) => layer.id)),
+      layersById: new Map(project.layers.map((layer) => [layer.id, layer])),
+      layerDepth: new Map(
+        project.layers.map((layer, index) => [layer.id, index] as const),
+      ),
+    }),
+    [project.assets, project.layers],
+  );
+  const gridSignatureRef = useRef("");
   const lockedIds = useMemo(() => new Set(lockedLayerIds), [lockedLayerIds]);
   const latestAssetsRef = useRef(project.assets);
   latestAssetsRef.current = project.assets;
@@ -629,8 +641,14 @@ export function PhaserPreview({
         : backgroundColor(project),
     );
 
-    grid.clear();
-    if (display.showGrid) {
+    // The grid only changes with size, zoom, or visibility; redrawing its
+    // lines every frame was pure overhead during playback.
+    const gridSignature = display.showGrid ? `${width}:${height}:${zoom}` : "";
+    if (gridSignatureRef.current !== gridSignature) {
+      gridSignatureRef.current = gridSignature;
+      grid.clear();
+    }
+    if (display.showGrid && grid.commandBuffer.length === 0) {
       grid.lineStyle(1, 0xffffff, 0.055);
       const spacing = Math.max(16, 40 * zoom);
       for (let x = (width / 2) % spacing; x < width; x += spacing)
@@ -662,8 +680,8 @@ export function PhaserPreview({
     const editingEnabled = !captureMode && stressCopies === 1;
     const sampleTime = window.performance.now();
     const nextKeys = new Set(instances.map((instance) => instance.key));
-    const currentAssetIds = new Set(project.assets.map((asset) => asset.id));
-    const currentLayerIds = new Set(project.layers.map((layer) => layer.id));
+    const { assetIds: currentAssetIds, layerIds: currentLayerIds } =
+      projectLookups;
     destroyStalePreviewSprites(sprites, nextKeys, currentLayerIds);
 
     instances.forEach((instance) => {
@@ -728,12 +746,8 @@ export function PhaserPreview({
       }
 
       syncNormalizedSourceCrop(sprite, instance.sourceCrop);
-      const sourceLayer = project.layers.find(
-        (layer) => layer.id === instance.layerId,
-      );
-      const layerDepth = project.layers.findIndex(
-        (layer) => layer.id === instance.layerId,
-      );
+      const sourceLayer = projectLookups.layersById.get(instance.layerId);
+      const layerDepth = projectLookups.layerDepth.get(instance.layerId) ?? -1;
       const dragging = Boolean(sprite.getData("vvfxDragging"));
       if (!dragging) {
         sprite.setData("vvfxLayerX", sourceLayer?.transform.x ?? 0);
@@ -1134,6 +1148,7 @@ export function PhaserPreview({
     evaluator,
     lockedIds,
     project,
+    projectLookups,
     selectedId,
     stressCopies,
     textureRevision,

@@ -74,6 +74,9 @@ uses semantic versions for release artifacts.
 - The editor preview's Phaser loop sleeps after 400 ms without changes,
   pointer activity, or resizing, so a paused editor stops redrawing every
   frame. Recording and stress previews stay awake.
+- The editor preview redraws its grid only when size, zoom, or visibility
+  change, and looks layers and assets up from per-project maps instead of
+  rebuilding sets and scanning the layer list for every copy on every frame.
 - Interface text is now sized in rem with an 11 px floor (previously down to
   6.5 px), so browser text settings apply. Sliders, help icons, and switches
   have larger pointer targets; layer rows show a Solo icon instead of "S" and

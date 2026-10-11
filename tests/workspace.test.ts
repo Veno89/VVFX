@@ -162,4 +162,11 @@ describe("professional workspace preferences", () => {
     expect(methodsBlocked.removeItem("key")).toBe(false);
     expect(methodsBlocked.available).toBe(false);
   });
+
+  it("gives new browsers a smaller image library so more layers fit", () => {
+    expect(normalizeWorkspacePreferences({}).assetSplit).toBe(38);
+    expect(normalizeWorkspacePreferences({ assetSplit: 50 }).assetSplit).toBe(
+      50,
+    );
+  });
 });

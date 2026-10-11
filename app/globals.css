@@ -404,7 +404,7 @@ button:disabled {
 .left-rail {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(120px, var(--vvfx-asset-split, 42%)) 5px minmax(
+  grid-template-rows: minmax(120px, var(--vvfx-asset-split, 38%)) 5px minmax(
       160px,
       1fr
     );
@@ -768,6 +768,53 @@ button:disabled {
 }
 .asset-card__details > * {
   min-width: 0;
+}
+/*
+ * Compact library: unselected assets are small tiles in a grid; the selected
+ * one spans the row with its name, details, and actions. Every control stays
+ * in the page, so keyboard and assistive-technology access is unchanged.
+ */
+.asset-list {
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  grid-auto-flow: row dense;
+  gap: 4px;
+}
+.asset-card.is-selected {
+  grid-column: 1 / -1;
+}
+.asset-card:not(.is-selected) {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 2px;
+  min-height: 0;
+  padding: 6px 3px 3px;
+  background: rgba(255, 255, 255, 0.018);
+}
+.asset-card:not(.is-selected) .asset-card__thumb {
+  width: 44px;
+  height: 44px;
+}
+.asset-card:not(.is-selected) .asset-card__thumb img {
+  max-width: 39px;
+  max-height: 39px;
+}
+.asset-card:not(.is-selected) .asset-card__meta {
+  width: 100%;
+}
+.asset-card:not(.is-selected) .asset-card__meta input {
+  text-align: center;
+  font-size: 0.6875rem;
+}
+.asset-card:not(.is-selected) .asset-card__meta small,
+.asset-card:not(.is-selected) .asset-warning {
+  display: none;
+}
+.asset-card:not(.is-selected) .asset-card__actions {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: var(--panel-2);
+  border-radius: 6px;
 }
 .asset-preparation-notice {
   margin: 0 10px 4px;

@@ -141,6 +141,11 @@ uses semantic versions for release artifacts.
   New, Save As, Load, Templates, and Import moved into the File menu, which
   replaces the narrow-screen Actions menu, lists each action's purpose or
   shortcut, and returns focus to File when a dialog it opened closes.
+- The Asset Library shows unselected images as a compact grid of tiles, and
+  the selected image spans the row with its details, so about three times as
+  many images fit in the same height. New browsers give the library 38% of the
+  left column (previously 42%) so more layers fit; the divider still resizes
+  it. Every per-image control stays available to keyboard and screen readers.
 - The Asset Library's upload and Shapes buttons share one compact row, and
   Beginner upload notices no longer mention spawn silhouettes.
 - The top bar no longer wraps, the layer panel's explainer paragraphs moved

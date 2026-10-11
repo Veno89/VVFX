@@ -60,7 +60,7 @@ export const DEFAULT_WORKSPACE_PREFERENCES: WorkspacePreferences = {
   leftWidth: 272,
   inspectorWidth: 368,
   timelineHeight: 250,
-  assetSplit: 42,
+  assetSplit: 38,
   textScale: 1,
   controlLevel: "beginner",
   projectOrder: [],
@@ -153,7 +153,7 @@ export function normalizeWorkspacePreferences(
     leftWidth: bounded(input.leftWidth, 272, 210, 420),
     inspectorWidth: bounded(input.inspectorWidth, 368, 300, 540),
     timelineHeight: bounded(input.timelineHeight, 250, 180, 480),
-    assetSplit: bounded(input.assetSplit, 42, 25, 70),
+    assetSplit: bounded(input.assetSplit, 38, 25, 70),
     textScale:
       WORKSPACE_TEXT_SCALES.find((scale) => scale === input.textScale) ?? 1,
     // Workspaces saved before this setting existed belong to people who

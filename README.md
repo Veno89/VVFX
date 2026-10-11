@@ -26,6 +26,14 @@ Open the local address printed in the terminal, normally
 `http://localhost:3000`. Everything stays on your device; Vvfx has no account,
 backend, cloud save, or required deployment.
 
+## Host it
+
+`npm run build` writes a static site to `dist/client` (`next.config.ts` sets
+`output: "export"`), so any static host can serve it. `netlify.toml` already
+configures Netlify: build command `npm run build`, publish directory
+`dist/client`, Node 22. Projects still save only in each visitor's browser, so
+remind visitors to keep `.vvfx` exports as backups.
+
 Do not paste or drag a `file:///` URL into the app. Browsers block a localhost
 page from reading arbitrary local-file URLs. Use the Asset Library upload/drop
 control, which safely reads and embeds PNG/WebP files selected by you.

@@ -17,7 +17,8 @@ describe("production entrypoints", () => {
   });
 
   it("keeps production build configuration executable", () => {
-    expect(nextConfig).toEqual({});
+    // A static export: the editor needs no server, so any static host works.
+    expect(nextConfig).toEqual({ output: "export" });
     expect(viteConfig).toMatchObject({ plugins: expect.any(Array) });
     expect(runtimeViteConfig).toMatchObject({
       build: {

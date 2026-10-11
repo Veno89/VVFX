@@ -73,6 +73,9 @@ uses semantic versions for release artifacts.
 
 ### Changed
 
+- `npm run build` now produces a static site in `dist/client` (Next.js
+  `output: "export"`), and a `netlify.toml` builds and publishes it on
+  Netlify. `vinext start` still serves the same build locally.
 - Runtime JSON `duration` now ends at the last enabled content when **Loop
   active range** is on, so `onComplete` and loops no longer wait through
   trailing composition silence.

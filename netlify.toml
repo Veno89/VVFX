@@ -1,0 +1,15 @@
+# The editor is a static export (next.config.ts sets output: "export"), so
+# Netlify only serves files: everything runs and saves in the visitor's browser.
+[build]
+  command = "npm run build"
+  publish = "dist/client"
+
+[build.environment]
+  # package.json requires Node 22.13 or later.
+  NODE_VERSION = "22"
+
+# File names under _next/static carry content hashes, so they never change.
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

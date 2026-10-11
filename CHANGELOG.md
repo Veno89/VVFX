@@ -19,6 +19,11 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- A **game screenshot backdrop** (Preview appearance → Game screenshot) shows
+  a PNG, JPEG, or WebP screenshot behind the effect, centered on its origin,
+  at 0.5–4× screenshot pixel size and 10–100% opacity, following preview zoom.
+  It is kept in this browser's own storage, never in projects, and is hidden
+  while recording so it never reaches exports.
 - **Runtime transform controls.** `VvfxEffect` gains `setScale`, `setAngle`,
   `setRotation`, `setFlipX`, `setFlipY`, `setTimeScale`, `setTint` /
   `clearTint`, and `follow` / `stopFollow`, plus matching `scale`, `angle`,

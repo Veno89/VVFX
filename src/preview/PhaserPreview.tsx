@@ -64,6 +64,8 @@ interface PhaserPreviewProps {
   onPerformanceSample?: (sample: PreviewPerformanceSample) => void;
   onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
   lockedLayerIds?: string[];
+  /** Leave the canvas clear so a backdrop behind it shows through. */
+  transparentBackground?: boolean;
 }
 
 interface PathHandle {
@@ -355,18 +357,21 @@ function createBuiltInTextures(scene: Phaser.Scene) {
   });
 }
 
+/** The solid preview background as a CSS hex color. */
+export function previewBackgroundHex(project: VfxProject): string {
+  return project.preview.background === "black"
+    ? "#000000"
+    : project.preview.background === "dark"
+      ? "#11151f"
+      : project.preview.background === "white"
+        ? "#ffffff"
+        : project.preview.background === "custom"
+          ? project.preview.customColor
+          : "#141723";
+}
+
 function backgroundColor(project: VfxProject): number {
-  const value =
-    project.preview.background === "black"
-      ? "#000000"
-      : project.preview.background === "dark"
-        ? "#11151f"
-        : project.preview.background === "white"
-          ? "#ffffff"
-          : project.preview.background === "custom"
-            ? project.preview.customColor
-            : "#141723";
-  return Number.parseInt(value.replace("#", ""), 16);
+  return Number.parseInt(previewBackgroundHex(project).replace("#", ""), 16);
 }
 
 export function previewDisplayState(
@@ -424,6 +429,7 @@ export function PhaserPreview({
   onPerformanceSample,
   onCanvasReady,
   lockedLayerIds = [],
+  transparentBackground = false,
 }: PhaserPreviewProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
@@ -636,7 +642,7 @@ export function PhaserPreview({
     );
     const zoom = display.zoom;
     scene.cameras.main.setBackgroundColor(
-      project.preview.background === "checkerboard"
+      project.preview.background === "checkerboard" || transparentBackground
         ? "rgba(0,0,0,0)"
         : backgroundColor(project),
     );
@@ -1153,13 +1159,14 @@ export function PhaserPreview({
     stressCopies,
     textureRevision,
     time,
+    transparentBackground,
     restartRevision,
   ]);
 
   return (
     <div
       ref={mountRef}
-      className={`phaser-mount ${project.preview.background === "checkerboard" ? "is-checkerboard" : ""}`}
+      className={`phaser-mount ${project.preview.background === "checkerboard" && !transparentBackground ? "is-checkerboard" : ""}`}
       aria-label={
         stressCopies > 1
           ? "Live VFX stress preview. Editing handles are paused."

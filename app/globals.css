@@ -1927,6 +1927,45 @@ button:disabled {
 .phaser-mount canvas {
   display: block;
 }
+.preview-canvas-shell.has-backdrop {
+  /* Keeps the backdrop above the shell's own background, below the canvas. */
+  isolation: isolate;
+}
+.preview-backdrop {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: -1;
+  max-width: none;
+  max-height: none;
+  transform-origin: center;
+  pointer-events: none;
+  user-select: none;
+}
+.backdrop-field__name {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backdrop-field__actions {
+  display: flex;
+  gap: 6px;
+}
+.backdrop-field button {
+  width: auto;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.backdrop-field__error {
+  color: #ff8fa3;
+  font-size: 0.75rem;
+}
+.preview-canvas-shell.is-checkerboard,
 .phaser-mount.is-checkerboard {
   background-color: #171b24;
   background-image:

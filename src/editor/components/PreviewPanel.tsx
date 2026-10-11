@@ -4,6 +4,7 @@ import {
   Dices,
   Gauge,
   Grid3X3,
+  ImagePlus,
   Maximize2,
   Minus,
   Pause,
@@ -12,10 +13,15 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Focus,
+  Trash2,
 } from "lucide-react";
 import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { fitPreviewZoom } from "../../vfx/previewFit";
-import { PhaserPreview } from "../../preview/PhaserPreview";
+import {
+  PhaserPreview,
+  previewBackgroundHex,
+} from "../../preview/PhaserPreview";
+import { BACKDROP_PIXEL_SCALES } from "../../persistence/previewBackdrop";
 import type {
   PreviewPerformanceSample,
   StressCopyCount,
@@ -28,6 +34,7 @@ import type {
 import { HelpTip } from "./Controls";
 import { PerformanceInspector } from "./PerformanceInspector";
 import { useFocusRegion } from "../useFocusRegion";
+import { usePreviewBackdrop } from "../usePreviewBackdrop";
 
 const PERFORMANCE_DIALOG_ID = "preview-performance-dialog";
 const VIEW_DIALOG_ID = "preview-appearance-dialog";
@@ -96,6 +103,14 @@ export function PreviewPanel({
 }) {
   const backgroundFieldId = useId();
   const seedFieldId = useId();
+  const backdropScaleId = useId();
+  const backdropOpacityId = useId();
+  const backdropInputRef = useRef<HTMLInputElement>(null);
+  const backdropState = usePreviewBackdrop();
+  const { backdrop } = backdropState;
+  // Recording captures only the canvas, so hide the backdrop while it runs
+  // rather than suggest it will appear in the video.
+  const showBackdrop = Boolean(backdrop && backdropState.url && !captureMode);
   const [viewOpen, setViewOpen] = useState(false);
   const [performanceOpen, setPerformanceOpen] = useState(false);
   const [stressCopies, setStressCopies] = useState<StressCopyCount>(1);
@@ -260,8 +275,8 @@ export function PreviewPanel({
               >
                 <span className="menu-label">Canvas only — not exported</span>
                 <p className="view-menu-note">
-                  Background, grid, and zoom only help you inspect the effect.
-                  The background never becomes part of the exported VFX.
+                  Background, screenshot, grid, and zoom only help you inspect
+                  the effect. None of them become part of the exported VFX.
                 </p>
                 <div className="view-menu-field">
                   <span className="view-menu-field__label">
@@ -302,6 +317,85 @@ export function PreviewPanel({
                     />
                   </label>
                 )}
+                <div className="view-menu-field backdrop-field">
+                  <span className="view-menu-field__label">
+                    Game screenshot{" "}
+                    <HelpTip
+                      label="Game screenshot"
+                      text="Put a screenshot of your game behind the effect to judge its size and colors in context. It is centered on the effect's origin, stays in this browser, and is never saved in projects or exports."
+                    />
+                  </span>
+                  {backdrop ? (
+                    <>
+                      <span
+                        className="backdrop-field__name"
+                        title={backdrop.name}
+                      >
+                        {backdrop.name} · {backdrop.width}×{backdrop.height}
+                      </span>
+                      <label htmlFor={backdropScaleId}>
+                        Screenshot pixel size
+                      </label>
+                      <select
+                        id={backdropScaleId}
+                        value={backdrop.pixelScale}
+                        onChange={(event) =>
+                          backdropState.update({
+                            pixelScale: Number(event.target.value),
+                          })
+                        }
+                      >
+                        {BACKDROP_PIXEL_SCALES.map((scale) => (
+                          <option key={scale} value={scale}>
+                            {scale === 1
+                              ? "1× (same as effect pixels)"
+                              : `${scale}×`}
+                          </option>
+                        ))}
+                      </select>
+                      <label htmlFor={backdropOpacityId}>
+                        Screenshot opacity {Math.round(backdrop.opacity * 100)}%
+                      </label>
+                      <input
+                        id={backdropOpacityId}
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={5}
+                        value={Math.round(backdrop.opacity * 100)}
+                        onChange={(event) =>
+                          backdropState.update({
+                            opacity: Number(event.target.value) / 100,
+                          })
+                        }
+                      />
+                      <span className="backdrop-field__actions">
+                        <button
+                          type="button"
+                          onClick={() => backdropInputRef.current?.click()}
+                        >
+                          <ImagePlus size={14} aria-hidden="true" /> Replace
+                        </button>
+                        <button type="button" onClick={backdropState.remove}>
+                          <Trash2 size={14} aria-hidden="true" /> Remove
+                        </button>
+                      </span>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => backdropInputRef.current?.click()}
+                    >
+                      <ImagePlus size={14} aria-hidden="true" /> Add game
+                      screenshot
+                    </button>
+                  )}
+                  {backdropState.error && (
+                    <span className="backdrop-field__error" role="alert">
+                      {backdropState.error}
+                    </span>
+                  )}
+                </div>
                 <span className="menu-label">Effect variation — exported</span>
                 <div className="seed-field view-menu-field">
                   <span className="view-menu-field__label">
@@ -347,8 +441,43 @@ export function PreviewPanel({
           </div>
         </div>
       </div>
-      <div className="preview-canvas-shell" ref={canvasShellRef}>
+      <input
+        ref={backdropInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        hidden
+        aria-label="Choose a game screenshot"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void backdropState.choose(file);
+        }}
+      />
+      <div
+        className={`preview-canvas-shell${showBackdrop ? " has-backdrop" : ""}${showBackdrop && project.preview.background === "checkerboard" ? " is-checkerboard" : ""}`}
+        ref={canvasShellRef}
+        style={
+          showBackdrop && project.preview.background !== "checkerboard"
+            ? { backgroundColor: previewBackgroundHex(project) }
+            : undefined
+        }
+      >
+        {showBackdrop && backdrop && backdropState.url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="preview-backdrop"
+            src={backdropState.url}
+            alt=""
+            width={backdrop.width}
+            height={backdrop.height}
+            style={{
+              opacity: backdrop.opacity,
+              transform: `translate(-50%, -50%) scale(${backdrop.pixelScale * project.preview.zoom})`,
+            }}
+          />
+        )}
         <PhaserPreview
+          transparentBackground={showBackdrop}
           project={project}
           time={time}
           restartRevision={restartRevision}

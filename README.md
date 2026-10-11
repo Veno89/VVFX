@@ -47,7 +47,8 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 ## What is included
 
 - Live Phaser 4 preview with play, pause, restart, content-aware loop, four
-  playback speeds, zoom, grid, and several test backgrounds.
+  playback speeds, zoom, grid, several test backgrounds, and an optional game
+  screenshot backdrop for judging size and color in context.
 - Still image, animated image, endpoint-fitted Beam, burst, and
   repeating-copy/emitter layers.
 - Beam endpoint authoring with a draggable preview handle, automatic rotation
@@ -350,8 +351,9 @@ docs/                    Architecture, format, capability, guide, and roadmap
   sprite budget keep child effects bounded. The editor recommends a finite,
   unattached Triggered Animated image or Burst and warns when an existing
   target no longer fits that beginner-safe pattern.
-- Preview background, grid, zoom, selection, eye visibility, and Solo are not
-  game-runtime data. Use **Enabled** to control exported playback.
+- Preview background, game screenshot, grid, zoom, selection, eye
+  visibility, and Solo are not game-runtime data. The screenshot stays in this
+  browser and is left out of projects, recordings, and exports. Use **Enabled** to control exported playback.
 - Advanced TypeScript requires the local `@vvfx/phaser-runtime` package. Games
   must preload texture keys supplied through `assetKeys`; use the recommended
   Runtime JSON route for a reusable game-side effect library.

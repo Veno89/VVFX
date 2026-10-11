@@ -20,6 +20,7 @@ export function htmlPlayer(): Plugin {
     const result = await build({
       configFile: false,
       root,
+      publicDir: false,
       logLevel: "silent",
       build: {
         write: false,

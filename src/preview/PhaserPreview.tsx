@@ -523,6 +523,8 @@ export function PhaserPreview({
   const alwaysAwakeRef = useRef(false);
   alwaysAwakeRef.current = captureMode || stressCopies > 1;
   const [textureRevision, setTextureRevision] = useState(0);
+  // Phaser is a large separate download; say so instead of a blank canvas.
+  const [engineReady, setEngineReady] = useState(false);
   const evaluator = useMemo(() => createProjectEvaluator(project), [project]);
   const projectLookups = useMemo(
     () => ({
@@ -667,6 +669,7 @@ export function PhaserPreview({
         },
       };
       gameRef.current = new PhaserLib.Game(config);
+      setEngineReady(true);
       canvasReadyRef.current?.(gameRef.current.canvas);
     });
     return () => {
@@ -1221,14 +1224,22 @@ export function PhaserPreview({
   ]);
 
   return (
-    <div
-      ref={mountRef}
-      className={`phaser-mount ${project.preview.background === "checkerboard" && !transparentBackground ? "is-checkerboard" : ""}`}
-      aria-label={
-        stressCopies > 1
-          ? "Live VFX stress preview. Editing handles are paused."
-          : "Live VFX preview. Drag a visible part to reposition its layer."
-      }
-    />
+    <>
+      <div
+        ref={mountRef}
+        className={`phaser-mount ${project.preview.background === "checkerboard" && !transparentBackground ? "is-checkerboard" : ""}`}
+        aria-label={
+          stressCopies > 1
+            ? "Live VFX stress preview. Editing handles are paused."
+            : "Live VFX preview. Drag a visible part to reposition its layer."
+        }
+      />
+      {!engineReady && (
+        <div className="preview-loading" role="status">
+          <span className="preview-loading__pulse" aria-hidden="true" />
+          Loading the preview engine…
+        </div>
+      )}
+    </>
   );
 }

@@ -171,6 +171,7 @@ import {
   type WorkspaceTextScale,
 } from "./workspace";
 import type { EffectVariation } from "../vfx/variations";
+import { registerOfflineSupport } from "./offline";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -634,6 +635,9 @@ export function VfxEditor() {
     if (guideStep === 0 && guideActionStep === 0)
       guideContinueRef.current?.focus({ preventScroll: true });
   }, [guideActionStep, guideStep]);
+  useEffect(() => {
+    void registerOfflineSupport();
+  }, []);
   const latestProjectRef = useRef(project);
   const savedFingerprintRef = useRef(savedFingerprint);
   const saveInFlightRef = useRef<Promise<void> | null>(null);

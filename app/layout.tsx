@@ -13,6 +13,8 @@ export const metadata: Metadata = {
   description:
     "Create layered, animated 2D game effects visually and export them for Phaser.",
   icons: { icon: APP_ICON },
+  // Lets browsers install the hosted editor as an app (see public/sw.js).
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({

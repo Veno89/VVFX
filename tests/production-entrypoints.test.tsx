@@ -21,6 +21,8 @@ describe("production entrypoints", () => {
     expect(nextConfig).toEqual({ output: "export" });
     expect(viteConfig).toMatchObject({ plugins: expect.any(Array) });
     expect(runtimeViteConfig).toMatchObject({
+      // The runtime package must not pick up the editor's public/ files.
+      publicDir: false,
       build: {
         emptyOutDir: true,
         sourcemap: true,

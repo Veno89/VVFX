@@ -19,6 +19,12 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- The hosted editor is **installable and works offline**: a web manifest and
+  a service worker (registered only over HTTPS) cache the app after the first
+  visit, always preferring the network for the page so new deploys arrive.
+  The README now links the hosted site.
+- The preview shows a "Loading the preview engine…" placeholder while the
+  Phaser chunk downloads instead of a blank canvas.
 - A **stand-in character** (Preview appearance → Stand-in character) places a
   PNG, JPEG, or WebP sprite behind the effect at an X/Y offset from the origin,
   with pixel size and opacity, to judge the effect at real scale. Like the game

@@ -1,6 +1,10 @@
 # Vvfx
 
-Vvfx is a local visual playground for building layered 2D game effects from
+**[Open Vvfx](https://jolly-bombolone-57934f.netlify.app)**: it runs in the
+browser with nothing to install, can be installed as an app, and keeps working
+offline after the first visit. Projects are saved only in your own browser.
+
+Vvfx is a visual playground for building layered 2D game effects from
 transparent PNG and WebP images. It is designed to be understandable on the
 first day while still exposing useful timing, movement, spawning, randomness,
 behavior, blending, and Phaser export controls.
@@ -29,7 +33,10 @@ backend, cloud save, or required deployment.
 ## Host it
 
 `npm run build` writes a static site to `dist/client` (`next.config.ts` sets
-`output: "export"`), so any static host can serve it. `netlify.toml` already
+`output: "export"`), so any static host can serve it. Over HTTPS the site
+registers `public/sw.js`, which serves the last loaded version offline and
+caches hashed build files, and `public/manifest.webmanifest` makes it
+installable. Plain-HTTP local runs skip the service worker. `netlify.toml` already
 configures Netlify: build command `npm run build`, publish directory
 `dist/client`, Node 22. Projects still save only in each visitor's browser, so
 remind visitors to keep `.vvfx` exports as backups.

@@ -2195,6 +2195,40 @@ button:disabled {
   background: var(--cyan);
   border-color: transparent;
 }
+.preview-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  pointer-events: none;
+}
+.preview-loading__pulse {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(99, 221, 243, 0.55),
+    rgba(99, 221, 243, 0) 70%
+  );
+  animation: preview-loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes preview-loading-pulse {
+  50% {
+    transform: scale(1.25);
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-loading__pulse {
+    animation: none;
+  }
+}
 .canvas-hint {
   position: absolute;
   right: 10px;

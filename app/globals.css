@@ -1960,6 +1960,15 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.html-export-options {
+  align-items: center;
+}
+.html-export-options .checkbox-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
 .backdrop-field__actions {
   display: flex;
   gap: 6px;
@@ -4235,8 +4244,11 @@ kbd {
   display: flex;
   gap: 3px;
   padding: 9px 14px 0;
+  overflow-x: auto;
 }
 .dialog-tabs button {
+  flex: 0 0 auto;
+  white-space: nowrap;
   height: 33px;
   padding: 0 11px;
   display: flex;

@@ -31,7 +31,6 @@ vi.mock("../src/preview/PhaserPreview", () => ({
     previewProps.transparent.push(Boolean(transparentBackground));
     return <canvas aria-label="Effect preview" />;
   },
-  previewBackgroundHex: () => "#000000",
 }));
 
 const image = (bytes = 4) => ({

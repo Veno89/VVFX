@@ -27,6 +27,7 @@ describe("canonical quality gates", () => {
       "**/*.d.ts",
       "vite.config.ts",
       "packages/phaser-runtime/vite.config.ts",
+      "build/html-player-vite-plugin.ts",
     ]);
     expect(PRODUCTION_COVERAGE_THRESHOLDS).toEqual(
       PRODUCTION_COVERAGE_BASELINE,

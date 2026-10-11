@@ -13,15 +13,19 @@ export const PERFORMANCE_BUDGET_PROFILE = Object.freeze({
     "Deterministic byte budgets use the Phase 0 three-run build baseline plus a reviewed regression band. Hardware-dependent latency and GPU budgets remain a separate qualification gate.",
 });
 
+// 2026-10: the client totals were re-baselined for two reviewed additions
+// that do not touch startup: the static-export HTML pages (index.html,
+// 404.html, index.rsc) and the Web page export's player script, a lazy chunk
+// that loads only when that export runs. The band above baseline stays ~5%.
 export const PERFORMANCE_BUDGETS = Object.freeze({
   editorClientTotalBytes: {
-    baseline: 2_409_777,
-    maximum: 2_530_000,
+    baseline: 2_653_262,
+    maximum: 2_790_000,
     description: "complete production client output",
   },
   editorClientJavaScriptBytes: {
-    baseline: 2_310_131,
-    maximum: 2_425_000,
+    baseline: 2_492_619,
+    maximum: 2_620_000,
     description: "all production client JavaScript",
   },
   editorPhaserBytes: {

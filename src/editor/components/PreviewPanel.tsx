@@ -17,10 +17,8 @@ import {
 } from "lucide-react";
 import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { fitPreviewZoom } from "../../vfx/previewFit";
-import {
-  PhaserPreview,
-  previewBackgroundHex,
-} from "../../preview/PhaserPreview";
+import { PhaserPreview } from "../../preview/PhaserPreview";
+import { previewBackgroundHex } from "../../preview/previewBackground";
 import { BACKDROP_PIXEL_SCALES } from "../../persistence/previewBackdrop";
 import type {
   PreviewPerformanceSample,

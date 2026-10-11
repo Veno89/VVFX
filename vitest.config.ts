@@ -1,4 +1,5 @@
 import { configDefaults, defineConfig } from "vitest/config";
+import { htmlPlayer } from "./build/html-player-vite-plugin.ts";
 import {
   PRODUCTION_COVERAGE_INCLUDE,
   PRODUCTION_COVERAGE_THRESHOLDS,
@@ -6,6 +7,7 @@ import {
 } from "./scripts/coverage-policy.mjs";
 
 export default defineConfig({
+  plugins: [htmlPlayer()],
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],

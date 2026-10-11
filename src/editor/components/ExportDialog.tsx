@@ -9,6 +9,7 @@ import {
   FileCode2,
   FileJson,
   Film,
+  Globe,
   ShieldCheck,
   TriangleAlert,
   X,
@@ -32,6 +33,7 @@ import {
   type PreviewRecordingRequest,
 } from "../previewRecording";
 import { downloadBlob, downloadText, safeFilename } from "../download";
+import { buildHtmlPlayerPage } from "../htmlPlayerExport";
 import { planSpriteSheet, SPRITE_SHEET_FRAME_RATES } from "../spriteSheetPlan";
 import {
   analyzeRuntimeExportCapabilities,
@@ -48,10 +50,16 @@ import {
 import type { VfxProject } from "../../vfx/types";
 import { useFocusRegion } from "../useFocusRegion";
 
-export type ExportTab = "preview" | "runtime" | "phaser" | "project";
+export type ExportTab = "preview" | "html" | "runtime" | "phaser" | "project";
 type PreviewFormat = PreviewRecordingRequest["format"];
 
-const EXPORT_TABS: ExportTab[] = ["preview", "runtime", "phaser", "project"];
+const EXPORT_TABS: ExportTab[] = [
+  "preview",
+  "html",
+  "runtime",
+  "phaser",
+  "project",
+];
 const exportTabId = (tab: ExportTab) => `export-tab-${tab}`;
 const exportPanelId = (tab: ExportTab) => `export-panel-${tab}`;
 
@@ -140,6 +148,12 @@ export function ExportDialog({
     null,
   );
   const [webmSupported, setWebmSupported] = useState<boolean | null>(null);
+  const [htmlOffline, setHtmlOffline] = useState(true);
+  const [htmlLoop, setHtmlLoop] = useState(true);
+  const [htmlBuilding, setHtmlBuilding] = useState(false);
+  const [htmlError, setHtmlError] = useState<string | null>(null);
+  const [htmlDownloaded, setHtmlDownloaded] = useState<number | null>(null);
+  const htmlRequestRef = useRef(0);
   const cancelRecording = () => {
     const controller = recordingControllerRef.current;
     if (!controller || controller.signal.aborted) return;
@@ -169,6 +183,7 @@ export function ExportDialog({
     return () => {
       copyRequestRef.current += 1;
       recordingRequestRef.current += 1;
+      htmlRequestRef.current += 1;
       recordingControllerRef.current?.abort();
       window.clearTimeout(timer);
       if (copyResetTimerRef.current !== null)
@@ -197,7 +212,7 @@ export function ExportDialog({
   }, [project]);
   const values = preparedExports.values;
   const integrityError = preparedExports.error;
-  const content = tab === "preview" ? "" : values[tab];
+  const content = tab === "preview" || tab === "html" ? "" : values[tab];
   const base = safeFilename(project.metadata.name);
   const runtimeCapabilities = useMemo(
     () => analyzeRuntimeExportCapabilities(project),
@@ -265,13 +280,15 @@ export function ExportDialog({
       ? `Its ${cueCount} Timeline marker${cueCount === 1 ? "" : "s"} fire${cueCount === 1 ? "s" : ""} the runtime's onCue callback by name, for syncing sound or screen shake. `
       : "Add Timeline markers to fire named onCue callbacks in your game. ";
   const info =
-    tab === "preview"
-      ? "Export the clean Phaser preview at normal speed, without editor guides. Choose WebM video or an animated GIF plus a centered size and aspect preset."
-      : tab === "runtime"
-        ? `Recommended for game integration: drop this exact definition into your effect library and play it with @vvfx/phaser-runtime. ${cueSummary}${runtimeCapabilities.beamEndpoints ? `It contains ${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}, so the game can supply world-space endpoints.` : "It has no Beam layers, so it plays at an origin x/y and does not advertise endpoint fitting."}`
-        : tab === "phaser"
-          ? `Advanced standalone source-file wrapper. It embeds the Runtime JSON and calls @vvfx/phaser-runtime; use it when you want one typed helper file instead of your game's shared effect loader. ${runtimeCapabilities.beamEndpoints ? "Its helper accepts world-space Beam endpoints." : "Because this effect has no Beam layers, its helper intentionally exposes only point placement."}`
-          : "The complete editable project, including uploaded images. Re-import this .vvfx file to continue later.";
+    tab === "html"
+      ? "One web page that plays this effect in any modern browser, with Pause and Replay. Send it to a friend, attach it to a message, or put it in a portfolio. No game or editor needed."
+      : tab === "preview"
+        ? "Export the clean Phaser preview at normal speed, without editor guides. Choose WebM video or an animated GIF plus a centered size and aspect preset."
+        : tab === "runtime"
+          ? `Recommended for game integration: drop this exact definition into your effect library and play it with @vvfx/phaser-runtime. ${cueSummary}${runtimeCapabilities.beamEndpoints ? `It contains ${runtimeCapabilities.beamLayerCount} Beam layer${runtimeCapabilities.beamLayerCount === 1 ? "" : "s"}, so the game can supply world-space endpoints.` : "It has no Beam layers, so it plays at an origin x/y and does not advertise endpoint fitting."}`
+          : tab === "phaser"
+            ? `Advanced standalone source-file wrapper. It embeds the Runtime JSON and calls @vvfx/phaser-runtime; use it when you want one typed helper file instead of your game's shared effect loader. ${runtimeCapabilities.beamEndpoints ? "Its helper accepts world-space Beam endpoints." : "Because this effect has no Beam layers, its helper intentionally exposes only point placement."}`
+            : "The complete editable project, including uploaded images. Re-import this .vvfx file to continue later.";
   const extension =
     tab === "runtime"
       ? ".vvfx-runtime.json"
@@ -365,6 +382,32 @@ export function ExportDialog({
           ? error.message
           : "This export could not be copied to the clipboard.",
       );
+    }
+  };
+
+  const downloadHtmlPage = async () => {
+    if (htmlBuilding) return;
+    const request = ++htmlRequestRef.current;
+    setHtmlBuilding(true);
+    setHtmlError(null);
+    setHtmlDownloaded(null);
+    try {
+      const page = await buildHtmlPlayerPage(project, {
+        offline: htmlOffline,
+        loop: htmlLoop,
+      });
+      if (request !== htmlRequestRef.current) return;
+      downloadText(`${base}.html`, page, "text/html");
+      setHtmlDownloaded(new Blob([page]).size);
+    } catch (error) {
+      if (request !== htmlRequestRef.current) return;
+      setHtmlError(
+        error instanceof Error
+          ? error.message
+          : "The web page could not be created.",
+      );
+    } finally {
+      if (request === htmlRequestRef.current) setHtmlBuilding(false);
     }
   };
 
@@ -471,6 +514,20 @@ export function ExportDialog({
             disabled={recording}
           >
             <Film size={15} /> Preview video
+          </button>
+          <button
+            id={exportTabId("html")}
+            type="button"
+            role="tab"
+            aria-selected={tab === "html"}
+            aria-controls={exportPanelId("html")}
+            tabIndex={tab === "html" ? 0 : -1}
+            className={tab === "html" ? "is-active" : ""}
+            onClick={() => selectTab("html")}
+            onKeyDown={moveTabFocus}
+            disabled={recording}
+          >
+            <Globe size={15} /> Web page
           </button>
           <button
             id={exportTabId("runtime")}
@@ -748,6 +805,78 @@ export function ExportDialog({
               </p>
             )}
           </div>
+        ) : tab === "html" ? (
+          <div
+            id={exportPanelId("html")}
+            className="preview-export-panel"
+            role="tabpanel"
+            aria-labelledby={exportTabId("html")}
+          >
+            <div className="preview-export-options html-export-options">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={htmlOffline}
+                  disabled={htmlBuilding}
+                  onChange={(event) => setHtmlOffline(event.target.checked)}
+                />
+                Works offline (adds about 1.2 MB)
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={htmlLoop}
+                  disabled={htmlBuilding}
+                  onChange={(event) => setHtmlLoop(event.target.checked)}
+                />
+                Loop playback
+              </label>
+            </div>
+            <div className="preview-export-summary">
+              <span className="preview-export-icon">
+                <Globe size={23} />
+              </span>
+              <div>
+                <strong>Shareable web page</strong>
+                <p>
+                  {(exportPlaybackDuration(project) / 1000).toFixed(2)} seconds
+                  {htmlLoop ? ", looping" : ", plays once"} · fits any window
+                </p>
+              </div>
+              <span className="preview-export-format">.html</span>
+            </div>
+            <ul className="preview-export-details">
+              <li>
+                Plays with the same Phaser runtime your game uses, including
+                pixel effects in browsers with WebGL.
+              </li>
+              <li>
+                Uses your preview background. Change it in Preview appearance
+                before exporting.
+              </li>
+              <li>
+                {htmlOffline
+                  ? "Phaser is downloaded once now and stored inside the file, so the page also works without internet."
+                  : "Smaller file that loads Phaser from the jsDelivr CDN, so viewers need an internet connection."}
+              </li>
+            </ul>
+            {htmlError && (
+              <p className="preview-export-error" role="alert">
+                {htmlError}
+              </p>
+            )}
+            {htmlDownloaded !== null && !htmlBuilding && !htmlError && (
+              <p className="preview-export-success" role="status">
+                Downloaded {base}.html ·{" "}
+                {Math.max(1, Math.ceil(htmlDownloaded / 1024))} KB
+              </p>
+            )}
+            {!hasExportableLayer && (
+              <p className="preview-export-error" role="alert">
+                Add and enable a visible image layer before exporting.
+              </p>
+            )}
+          </div>
         ) : (
           <pre
             id={exportPanelId(tab)}
@@ -765,7 +894,25 @@ export function ExportDialog({
           </p>
         )}
         <footer>
-          {tab === "preview" ? (
+          {tab === "html" ? (
+            <>
+              <span>Built in your browser · nothing is uploaded</span>
+              <button
+                className="primary-action"
+                type="button"
+                disabled={
+                  htmlBuilding ||
+                  !hasExportableLayer ||
+                  preflightBlocksExport ||
+                  Boolean(integrityError)
+                }
+                onClick={() => void downloadHtmlPage()}
+              >
+                <Download size={15} />{" "}
+                {htmlBuilding ? "Building page…" : "Download .html"}
+              </button>
+            </>
+          ) : tab === "preview" ? (
             <>
               <span>Records locally in your browser · no upload</span>
               {recording ? (

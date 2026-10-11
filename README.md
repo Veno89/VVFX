@@ -57,6 +57,8 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
 - Live Phaser 4 preview with play, pause, restart, content-aware loop, four
   playback speeds, zoom, grid, several test backgrounds, and an optional game
   screenshot backdrop for judging size and color in context.
+- A shareable **Web page** export: one `.html` file that plays the effect in
+  any modern browser, offline by default.
 - Still image, animated image, endpoint-fitted Beam, burst, and
   repeating-copy/emitter layers.
 - Beam endpoint authoring with a draggable preview handle, automatic rotation

@@ -19,6 +19,13 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- A **Web page** export: one `.html` file that plays the effect in any modern
+  browser with the real Phaser runtime, fitted to the window, with Pause,
+  Replay, Space, and R. **Works offline** (default) downloads the pinned
+  Phaser build once, checks it against its SHA-384 fingerprint, and inlines it
+  (about 1.5 MB); otherwise the page links Phaser from jsDelivr with
+  Subresource Integrity (about 150 KB). The player script is bundled at build
+  time and loads only when this export runs.
 - A **game screenshot backdrop** (Preview appearance → Game screenshot) shows
   a PNG, JPEG, or WebP screenshot behind the effect, centered on its origin,
   at 0.5–4× screenshot pixel size and 10–100% opacity, following preview zoom.

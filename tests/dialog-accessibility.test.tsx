@@ -356,12 +356,13 @@ describe("dialog keyboard accessibility", () => {
     const advancedTab = within(tablist).getByRole("tab", {
       name: "Advanced TypeScript",
     });
+    const webTab = within(tablist).getByRole("tab", { name: "Web page" });
     const projectTab = within(tablist).getByRole("tab", {
       name: "Vvfx project",
     });
     let panel = screen.getByRole("tabpanel", { name: "Preview video" });
 
-    expect(tabs).toHaveLength(4);
+    expect(tabs).toHaveLength(5);
     expect(previewTab).toHaveAttribute("aria-selected", "true");
     expect(previewTab).toHaveAttribute("tabindex", "0");
     expect(runtimeTab).toHaveAttribute("aria-selected", "false");
@@ -372,6 +373,11 @@ describe("dialog keyboard accessibility", () => {
 
     previewTab.focus();
     fireEvent.keyDown(previewTab, { key: "ArrowRight" });
+    await waitFor(() => expect(webTab).toHaveFocus());
+    expect(webTab).toHaveAttribute("aria-selected", "true");
+    panel = screen.getByRole("tabpanel", { name: "Web page" });
+    expect(panel).toHaveTextContent(/Works offline/);
+    fireEvent.keyDown(webTab, { key: "ArrowRight" });
     await waitFor(() => expect(runtimeTab).toHaveFocus());
     expect(runtimeTab).toHaveAttribute("aria-selected", "true");
     expect(previewTab).toHaveAttribute("aria-selected", "false");

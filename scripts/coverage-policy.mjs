@@ -9,10 +9,13 @@ export const PRODUCTION_COVERAGE_INCLUDE = Object.freeze([
 // Generated declarations have their own byte-for-byte freshness gate. Vite
 // config modules execute before coverage starts, so lint/build/entrypoint tests
 // own those two reviewed paths instead of pretending they are instrumented.
+// The HTML player plugin also runs while Vitest loads its config; the
+// html-player-export test executes the bundle it produces.
 export const REVIEWED_COVERAGE_EXCLUSIONS = Object.freeze([
   "**/*.d.ts",
   "vite.config.ts",
   "packages/phaser-runtime/vite.config.ts",
+  "build/html-player-vite-plugin.ts",
 ]);
 
 export const PRODUCTION_COVERAGE_BASELINE = Object.freeze({

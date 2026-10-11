@@ -39,6 +39,7 @@ import {
   applyPreviewRestartRevision,
   destroyStalePreviewSprites,
 } from "./spriteLifecycle";
+import { previewBackgroundHex } from "./previewBackground";
 
 /**
  * The preview only needs Phaser's render loop while something changes. After
@@ -355,19 +356,6 @@ function createBuiltInTextures(scene: Phaser.Scene) {
     g.lineStyle(5, 0xff6d8d, 0.9).strokeRoundedRect(20, 20, 88, 88, 16);
     g.lineBetween(40, 40, 88, 88).lineBetween(88, 40, 40, 88);
   });
-}
-
-/** The solid preview background as a CSS hex color. */
-export function previewBackgroundHex(project: VfxProject): string {
-  return project.preview.background === "black"
-    ? "#000000"
-    : project.preview.background === "dark"
-      ? "#11151f"
-      : project.preview.background === "white"
-        ? "#ffffff"
-        : project.preview.background === "custom"
-          ? project.preview.customColor
-          : "#141723";
 }
 
 function backgroundColor(project: VfxProject): number {

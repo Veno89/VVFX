@@ -19,6 +19,14 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- **Motion curves and an attractor.** Behaviors gain **Change speed over
+  life** (a speed curve that keeps the total distance) and **Pull toward a
+  point**, an attractor with pull and swirl that also works as a vortex.
+  Repeating-copy emitters gain **Change emission rate over time**, a rate
+  curve over a set length after the emitter starts. All three are deterministic
+  and carried in Runtime JSON as optional fields (additive within format 16;
+  older runtimes ignore them), with matching preview and runtime playback. The
+  curve graphs share one editor with the keyframe curve.
 - A **curve graph** in the Inspector's Keyframes section draws size (or width
   and height), opacity, or rotation over the layer's life with the same
   per-segment easing the engine uses. Drag points in time and value, click the

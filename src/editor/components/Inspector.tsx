@@ -83,6 +83,7 @@ import {
   Toggle,
 } from "./Controls";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
+import { ValueCurveEditor } from "./ValueCurveEditor";
 
 function FieldGroup({ children }: { children: ReactNode }) {
   return <div className="field-grid">{children}</div>;
@@ -2498,6 +2499,105 @@ export function Inspector({
                 }
               />
             )}
+            <Toggle
+              label="Change speed over life"
+              checked={layer.behavior.physics.speedCurve.enabled}
+              help="Draw how fast each copy moves along its route, from start to end of its life. It still ends at the same place. Replaces Slow down while on."
+              onChange={(enabled) =>
+                setBehavior("physics", {
+                  speedCurve: { ...layer.behavior.physics.speedCurve, enabled },
+                })
+              }
+            />
+            {layer.behavior.physics.speedCurve.enabled && (
+              <ValueCurveEditor
+                label="Speed"
+                points={layer.behavior.physics.speedCurve.points}
+                durationMs={layer.timing.duration}
+                help="Higher points move faster; 0× pauses."
+                onChange={(points) =>
+                  setBehavior("physics", {
+                    speedCurve: {
+                      ...layer.behavior.physics.speedCurve,
+                      points,
+                    },
+                  })
+                }
+              />
+            )}
+            <Toggle
+              label="Pull toward a point (attractor)"
+              checked={layer.behavior.physics.attractor.enabled}
+              help="Draws copies toward a point near the layer as they age, and can swirl them around it like a vortex."
+              onChange={(enabled) =>
+                setBehavior("physics", {
+                  attractor: { ...layer.behavior.physics.attractor, enabled },
+                })
+              }
+            />
+            {layer.behavior.physics.attractor.enabled && (
+              <FieldGroup>
+                <RangeField
+                  label="Point X"
+                  value={layer.behavior.physics.attractor.x}
+                  defaultValue={0}
+                  min={-800}
+                  max={800}
+                  unit="px"
+                  help="Horizontal position of the point, measured from the layer's position."
+                  onChange={(x) =>
+                    setBehavior("physics", {
+                      attractor: { ...layer.behavior.physics.attractor, x },
+                    })
+                  }
+                />
+                <RangeField
+                  label="Point Y"
+                  value={layer.behavior.physics.attractor.y}
+                  defaultValue={0}
+                  min={-800}
+                  max={800}
+                  unit="px"
+                  help="Vertical position of the point, measured from the layer's position."
+                  onChange={(y) =>
+                    setBehavior("physics", {
+                      attractor: { ...layer.behavior.physics.attractor, y },
+                    })
+                  }
+                />
+                <RangeField
+                  label="Pull"
+                  value={layer.behavior.physics.attractor.pull * 100}
+                  defaultValue={60}
+                  min={0}
+                  max={100}
+                  unit="%"
+                  help="How much of the way to the point each copy travels by the end of its life. 100% arrives exactly."
+                  onChange={(value) =>
+                    setBehavior("physics", {
+                      attractor: {
+                        ...layer.behavior.physics.attractor,
+                        pull: value / 100,
+                      },
+                    })
+                  }
+                />
+                <RangeField
+                  label="Swirl"
+                  value={layer.behavior.physics.attractor.swirl}
+                  defaultValue={0}
+                  min={-1080}
+                  max={1080}
+                  unit="°"
+                  help="How far copies turn around the point over their life. Negative values turn the other way."
+                  onChange={(swirl) =>
+                    setBehavior("physics", {
+                      attractor: { ...layer.behavior.physics.attractor, swirl },
+                    })
+                  }
+                />
+              </FieldGroup>
+            )}
           </SettingsSection>
         )}
 
@@ -2574,6 +2674,50 @@ export function Inspector({
                   }
                 />
               </FieldGroup>
+            )}
+            {layer.type === "emitter" && (
+              <>
+                <Toggle
+                  label="Change emission rate over time"
+                  checked={layer.spawn.rateCurve.enabled}
+                  help="Draw how quickly new copies appear after the emitter starts, such as a strong opening that tapers off. After the curve ends, its last value holds."
+                  onChange={(enabled) =>
+                    setSpawn({
+                      rateCurve: { ...layer.spawn.rateCurve, enabled },
+                    })
+                  }
+                />
+                {layer.spawn.rateCurve.enabled && (
+                  <>
+                    <RangeField
+                      label="Curve length"
+                      value={layer.spawn.rateCurve.length}
+                      defaultValue={2000}
+                      min={100}
+                      max={10000}
+                      step={50}
+                      unit="ms"
+                      help="How long after the emitter starts the curve takes to play out."
+                      onChange={(length) =>
+                        setSpawn({
+                          rateCurve: { ...layer.spawn.rateCurve, length },
+                        })
+                      }
+                    />
+                    <ValueCurveEditor
+                      label="Emission rate"
+                      points={layer.spawn.rateCurve.points}
+                      durationMs={layer.spawn.rateCurve.length}
+                      help="2× emits twice as often; 0× pauses emission."
+                      onChange={(points) =>
+                        setSpawn({
+                          rateCurve: { ...layer.spawn.rateCurve, points },
+                        })
+                      }
+                    />
+                  </>
+                )}
+              </>
             )}
             <SelectField
               label="Where copies appear"

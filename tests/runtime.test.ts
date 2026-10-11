@@ -9,6 +9,7 @@ import {
 import { resolveRuntimeRenderingAssetFrame } from "../packages/phaser-runtime/src/VvfxEffect";
 import { runtimeAssetTextureKey } from "../packages/phaser-runtime/src/textures";
 import { createEmptyProject, createLayer } from "../src/vfx/defaults";
+import { defaultAttractor, defaultSpeedCurve } from "../src/vfx/curves";
 import { evaluateProject } from "../src/vfx/engine";
 import {
   IMAGE_DECODE_TIMEOUT_MS,
@@ -773,6 +774,8 @@ describe("Phaser runtime package", () => {
         releaseStart: 1,
         end: 1,
       },
+      speedCurve: defaultSpeedCurve(),
+      attractor: defaultAttractor(),
     });
     expect(migratedSeven?.layers[0].appearance.colorOverLifetime.enabled).toBe(
       false,

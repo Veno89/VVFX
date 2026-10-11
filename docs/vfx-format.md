@@ -392,6 +392,30 @@ For example, an animated or spawn layer may contain:
 }
 ```
 
+### Motion curves and attractor (additive within v18)
+
+Project v18 and Runtime JSON v16 accept three optional blocks. Files without
+them load with each one disabled, so older effects play exactly as before, and
+runtimes without support ignore them.
+
+- `behavior.physics.speedCurve` `{ enabled, points }` reshapes how quickly each
+  copy covers its movement over its life. `points` holds 2–8 `{ time, value }`
+  entries sorted by `time` (0–1, first at 0 and last at 1) with `value` a speed
+  multiplier from 0 to 4. The total distance never changes. While enabled it
+  replaces `drag`.
+- `behavior.physics.attractor` `{ enabled, x, y, pull, swirl }` pulls copies
+  toward a point relative to the layer's position (`x`, `y` within ±4000) and
+  turns them around it as their life progresses: `pull` (0–1) is the share of
+  the distance closed by the end of life, and `swirl` (−1080 to 1080) is the
+  degrees turned.
+- `spawn.rateCurve` `{ enabled, length, points }` multiplies an emitter's
+  emission rate over the first `length` milliseconds (100 to 30,000) after it
+  starts, using the same point format; the last value holds afterwards and
+  values below 0.02 pause emission. Bursts ignore it.
+
+All three are closed-form and seed-free, so the editor and the runtime stay
+identical.
+
 ### Optional-feature state
 
 Current project v18 keeps most optional behavior blocks structurally present so

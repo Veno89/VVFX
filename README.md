@@ -59,6 +59,8 @@ color-over-lifetime can then reuse the same image in many whole-image colors.
   screenshot backdrop for judging size and color in context.
 - A keyframe **curve graph**: drag points to shape size, opacity, or rotation
   over a layer's life.
+- **Speed over life** and **emission rate** curves, plus an **attractor/vortex**
+  that pulls and swirls copies around a point.
 - **Variations**: try six versions of an effect with new colors, size, speed,
   or random pattern in the live preview, then keep one or go back.
 - A shareable **Web page** export: one `.html` file that plays the effect in

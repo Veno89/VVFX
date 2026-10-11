@@ -148,7 +148,15 @@ export function describeLayer(layer: VfxLayer): string {
         : "gently sways",
     );
   if (layer.behavior.physics.gravity) extras.push("falls under gravity");
-  if (layer.behavior.physics.drag) extras.push("slows along its route");
+  if (layer.behavior.physics.speedCurve?.enabled)
+    extras.push("changes speed along its route");
+  else if (layer.behavior.physics.drag) extras.push("slows along its route");
+  if (layer.behavior.physics.attractor?.enabled)
+    extras.push(
+      layer.behavior.physics.attractor.swirl
+        ? "swirls around a point"
+        : "is pulled toward a point",
+    );
   if (layer.trail.enabled) extras.push("leaves fading trail copies");
   if (layer.keyframes.enabled) extras.push("uses multiple transform keyframes");
   const enabledEvents = layer.events.filter((event) => event.enabled);

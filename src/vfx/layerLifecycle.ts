@@ -1,4 +1,5 @@
 import {
+  createDefaultPhysics,
   DEFAULT_BEHAVIOR,
   DEFAULT_COLOR_OVER_LIFETIME,
   DEFAULT_FRAME_ANIMATION,
@@ -41,10 +42,7 @@ function defaultBehavior(): VfxLayer["behavior"] {
       ...DEFAULT_BEHAVIOR.wobble,
       envelope: { ...DEFAULT_BEHAVIOR.wobble.envelope },
     },
-    physics: {
-      ...DEFAULT_BEHAVIOR.physics,
-      gravityEnvelope: { ...DEFAULT_BEHAVIOR.physics.gravityEnvelope },
-    },
+    physics: createDefaultPhysics(),
   };
 }
 
@@ -114,7 +112,9 @@ function isDefaultBehavior(behavior: VfxLayer["behavior"]): boolean {
     isDefaultEnvelope(
       behavior.physics.gravityEnvelope,
       DEFAULT_BEHAVIOR.physics.gravityEnvelope,
-    )
+    ) &&
+    behavior.physics.speedCurve?.enabled !== true &&
+    behavior.physics.attractor?.enabled !== true
   );
 }
 

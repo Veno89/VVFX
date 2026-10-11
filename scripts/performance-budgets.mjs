@@ -43,19 +43,22 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
     maximum: 10_000,
     description: "off-main-thread GIF encoding worker",
   },
+  // 2026-10: runtime budgets re-baselined for the reviewed runtime transform
+  // controls (scale, rotation, flip, time scale, tint, follow) and the
+  // speed/emission curves and attractor, all shared with the editor engine.
   runtimeJavaScriptBytes: {
-    baseline: 245_264,
-    maximum: 260_000,
+    baseline: 265_833,
+    maximum: 279_000,
     description: "packaged runtime JavaScript",
   },
   runtimeSourceMapBytes: {
-    baseline: 567_974,
-    maximum: 600_000,
+    baseline: 614_609,
+    maximum: 645_000,
     description: "packaged runtime source map",
   },
   runtimeTotalBytes: {
-    baseline: 813_238,
-    maximum: 860_000,
+    baseline: 880_442,
+    maximum: 925_000,
     description: "complete packaged runtime build output",
   },
 });

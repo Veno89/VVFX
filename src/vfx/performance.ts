@@ -6,6 +6,7 @@ import {
   type RenderingEffectName,
 } from "./renderingEffectsModel";
 import type { EvaluatedInstance, VfxLayer, VfxProject } from "./types";
+import { peakEmissionRate } from "./curves";
 
 export { MAX_EFFECT_INSTANCES };
 export const MAX_STRESS_INSTANCES = 2_000;
@@ -137,6 +138,9 @@ export function analyzeLayerLifecycle(
       );
     if (layer.behavior.physics.gravity !== 0) modifiers.push("Gravity");
     if (layer.behavior.physics.drag !== 0) modifiers.push("Slowdown / drag");
+    if (layer.behavior.physics.speedCurve?.enabled)
+      modifiers.push("Speed over life");
+    if (layer.behavior.physics.attractor?.enabled) modifiers.push("Attractor");
     if (Object.values(layer.random).some((value) => value !== 0))
       modifiers.push("Spawn variation");
     if (layer.motionPath.enabled) modifiers.push("Motion path");
@@ -219,7 +223,11 @@ function layerEstimate(
       1,
       Math.min(25, Math.floor(layer.spawn.count)),
     );
-    const shortestGap = Math.max(30, layer.spawn.intervalMin);
+    const peakRate = Math.max(
+      1,
+      peakEmissionRate(layer.spawn.rateCurve ?? null),
+    );
+    const shortestGap = Math.max(30, layer.spawn.intervalMin / peakRate);
     const longestPossibleLifetime = Math.max(
       50,
       layer.timing.duration + layer.random.duration + layer.random.delay,

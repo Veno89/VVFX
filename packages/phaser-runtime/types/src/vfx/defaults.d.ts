@@ -38,6 +38,22 @@ export declare const DEFAULT_BEHAVIOR_ENVELOPE: {
 export declare const DEFAULT_BEHAVIOR: BehaviorSettings;
 export declare const DEFAULT_RANDOM: RandomSettings;
 export declare const DEFAULT_SPAWN: SpawnSettings;
+/** A fresh spawn block; nested curves are never shared between layers. */
+export declare const createDefaultSpawn: () => SpawnSettings;
+/** Fresh physics settings with their own envelope and curve objects. */
+export declare const createDefaultPhysics: () => {
+  gravityEnvelope: {
+    enabled: boolean;
+    start: number;
+    attackEnd: number;
+    releaseStart: number;
+    end: number;
+  };
+  speedCurve: import("./types").ValueCurveSettings;
+  attractor: import("./types").AttractorSettings;
+  gravity: number;
+  drag: number;
+};
 export declare const DEFAULT_FRAME_ANIMATION: FrameAnimationSettings;
 export declare const DEFAULT_TRAIL: TrailSettings;
 export declare const DEFAULT_BEAM: {

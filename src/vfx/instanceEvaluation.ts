@@ -1,4 +1,5 @@
-import { evaluateBehavior, movementProgress } from "./behaviors";
+import { evaluateBehavior, physicsMovementProgress } from "./behaviors";
+import { applyAttractor, emissionRateAt } from "./curves";
 import { animationProgress, applyEasing } from "./interpolation";
 import { evaluateTransformKeyframes } from "./keyframes";
 import { evaluateMotionPath } from "./motionPath";
@@ -96,7 +97,19 @@ export function emitterSpawnEvents(
     MAX_EMITTER_SPAWN_EVENTS,
     Math.max(1, Math.ceil((Math.max(0, until - activation.start) + 30) / 30)),
   );
-  while (cursor <= until && index < hardLimit) {
+  const rateCurve = layer.spawn.rateCurve;
+  // Quiet stretches of a rate curve advance in 30 ms steps; this bounds them
+  // the same way the event limit bounds emission.
+  let steps = 0;
+  while (cursor <= until && index < hardLimit && steps < hardLimit * 2) {
+    steps += 1;
+    const rate = rateCurve?.enabled
+      ? emissionRateAt(rateCurve, cursor - activation.start)
+      : 1;
+    if (rate < 0.02) {
+      cursor += 30;
+      continue;
+    }
     times.push({ time: cursor, index });
     const seed = layerInstanceSeed(
       project,
@@ -105,11 +118,14 @@ export function emitterSpawnEvents(
       index,
       activation.context?.seed,
     );
-    cursor += randomBetween(
-      seed,
-      51,
-      Math.max(30, layer.spawn.intervalMin),
-      Math.max(30, layer.spawn.intervalMax),
+    cursor += Math.max(
+      30,
+      randomBetween(
+        seed,
+        51,
+        Math.max(30, layer.spawn.intervalMin),
+        Math.max(30, layer.spawn.intervalMax),
+      ) / rate,
     );
     index += 1;
   }
@@ -648,6 +664,18 @@ function movementFor(
   };
 }
 
+function applyLayerAttractor(
+  layer: VfxLayer,
+  x: number,
+  y: number,
+  progress: number,
+) {
+  const attractor = layer.behavior.physics.attractor;
+  return attractor?.enabled
+    ? applyAttractor(attractor, x, y, progress)
+    : { x, y };
+}
+
 function contextsMatch(
   left: LayerActivationContext | null,
   right: LayerActivationContext | null,
@@ -702,7 +730,7 @@ function parentPosition(
       x: parent.transform.movementX,
       y: parent.transform.movementY,
     },
-    movementProgress(progress, parent.behavior.physics.drag),
+    physicsMovementProgress(parent.behavior.physics, progress),
   );
   const parentSeed = layerInstanceSeed(
     project,
@@ -717,9 +745,15 @@ function parentPosition(
     parent.timing.duration,
     parentSeed,
   );
+  const attracted = applyLayerAttractor(
+    parent,
+    motion.x + behavior.x,
+    motion.y + behavior.y,
+    progress,
+  );
   return {
-    x: inherited.x + parent.transform.x + motion.x + behavior.x,
-    y: inherited.y + parent.transform.y + motion.y + behavior.y,
+    x: inherited.x + parent.transform.x + attracted.x,
+    y: inherited.y + parent.transform.y + attracted.y,
   };
 }
 
@@ -774,7 +808,7 @@ export function evaluateInstanceSpatialState(
   const pathMotion = evaluateMotionPath(
     layer.motionPath,
     movement,
-    movementProgress(progress, layer.behavior.physics.drag),
+    physicsMovementProgress(layer.behavior.physics, progress),
   );
   const behavior = evaluateBehavior(
     layer.behavior,
@@ -824,6 +858,20 @@ export function evaluateInstanceSpatialState(
       alignmentVariation;
   }
 
+  // Copy position relative to the layer's own position, where the
+  // attractor point lives.
+  const local = applyLayerAttractor(
+    layer,
+    offset.x +
+      randomSigned(timing.seed, 21, layer.random.positionX) +
+      pathMotion.x +
+      behavior.x,
+    offset.y +
+      randomSigned(timing.seed, 22, layer.random.positionY) +
+      pathMotion.y +
+      behavior.y,
+    progress,
+  );
   return {
     ...timing,
     elapsed,
@@ -832,22 +880,8 @@ export function evaluateInstanceSpatialState(
     progress,
     behavior,
     keyed,
-    x:
-      (activation.context?.x ?? 0) +
-      parent.x +
-      layer.transform.x +
-      offset.x +
-      randomSigned(timing.seed, 21, layer.random.positionX) +
-      pathMotion.x +
-      behavior.x,
-    y:
-      (activation.context?.y ?? 0) +
-      parent.y +
-      layer.transform.y +
-      offset.y +
-      randomSigned(timing.seed, 22, layer.random.positionY) +
-      pathMotion.y +
-      behavior.y,
+    x: (activation.context?.x ?? 0) + parent.x + layer.transform.x + local.x,
+    y: (activation.context?.y ?? 0) + parent.y + layer.transform.y + local.y,
     rotation: rotation + behavior.rotation,
   };
 }

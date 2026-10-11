@@ -1,4 +1,8 @@
-import type { BehaviorEnvelopeSettings, BehaviorSettings } from "./types";
+import type {
+  BehaviorEnvelopeSettings,
+  BehaviorSettings,
+  PhysicsSettings,
+} from "./types";
 export interface EvaluatedBehavior {
   x: number;
   y: number;
@@ -23,6 +27,14 @@ export declare function integratedBehaviorEnvelope(
 export declare function movementProgress(
   progress: number,
   drag: number,
+): number;
+/**
+ * Share of a copy's movement covered at a progress: the speed curve when it
+ * is enabled, otherwise Slow down's exponential ease-out.
+ */
+export declare function physicsMovementProgress(
+  physics: PhysicsSettings,
+  progress: number,
 ): number;
 export declare function evaluateBehavior(
   behavior: BehaviorSettings,

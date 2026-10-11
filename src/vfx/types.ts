@@ -237,10 +237,42 @@ export interface LayerActivationContext {
   seed: number;
 }
 
+export interface CurvePoint {
+  /** Normalized 0–1. */
+  time: number;
+  /** Multiplier, 0–4. */
+  value: number;
+}
+
+export interface ValueCurveSettings {
+  enabled: boolean;
+  points: CurvePoint[];
+}
+
+/** Emission-rate multiplier over the first `length` ms after an emitter starts. */
+export interface EmissionCurveSettings extends ValueCurveSettings {
+  length: number;
+}
+
+/** Pulls copies toward a point and swirls them around it over their life. */
+export interface AttractorSettings {
+  enabled: boolean;
+  /** Point relative to the layer's position. */
+  x: number;
+  y: number;
+  /** Share of the distance to the point closed by the end of life, 0–1. */
+  pull: number;
+  /** Degrees turned around the point by the end of life. */
+  swirl: number;
+}
+
 export interface PhysicsSettings {
   gravity: number;
   drag: number;
   gravityEnvelope: BehaviorEnvelopeSettings;
+  /** Speed over each copy's life; replaces Slow down while enabled. */
+  speedCurve: ValueCurveSettings;
+  attractor: AttractorSettings;
 }
 
 export interface BehaviorSettings {
@@ -294,6 +326,8 @@ export interface SpawnSettings {
   rotateToDirection: boolean;
   artworkForwardAngle: number;
   alignmentVariation: number;
+  /** Repeating copies only: emission rate over the emitter's first moments. */
+  rateCurve: EmissionCurveSettings;
 }
 
 interface BaseLayer {

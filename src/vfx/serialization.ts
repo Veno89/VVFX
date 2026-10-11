@@ -76,6 +76,11 @@ import {
   maximumAlphaMaskValue,
   normalizeAssetAlphaMask,
 } from "./alphaMask";
+import {
+  normalizeAttractor,
+  normalizeEmissionCurve,
+  normalizeSpeedCurve,
+} from "./curves";
 import { isSpawnLayer } from "./types";
 import type {
   FrameAnimationSettings,
@@ -594,6 +599,8 @@ function normalizeLayer(
           1,
         ),
         gravityEnvelope: normalizeBehaviorEnvelope(physics.gravityEnvelope),
+        speedCurve: normalizeSpeedCurve(physics.speedCurve),
+        attractor: normalizeAttractor(physics.attractor),
       },
     },
     random: {
@@ -968,6 +975,7 @@ function normalizeLayer(
         360,
       ),
       alignmentVariation: clamp(numberOr(spawn.alignmentVariation, 0), 0, 180),
+      rateCurve: normalizeEmissionCurve(spawn.rateCurve, MAX_VFX_TIMING_MS),
     },
   } as VfxLayer;
 }

@@ -1,5 +1,10 @@
 import { seededRandom } from "./random";
-import type { BehaviorEnvelopeSettings, BehaviorSettings } from "./types";
+import type {
+  BehaviorEnvelopeSettings,
+  BehaviorSettings,
+  PhysicsSettings,
+} from "./types";
+import { speedCurveProgress } from "./curves";
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -123,6 +128,19 @@ export function movementProgress(progress: number, drag: number): number {
   const strength = clamp01(drag) * 4;
   if (strength < 0.0001) return time;
   return (1 - Math.exp(-strength * time)) / (1 - Math.exp(-strength));
+}
+
+/**
+ * Share of a copy's movement covered at a progress: the speed curve when it
+ * is enabled, otherwise Slow down's exponential ease-out.
+ */
+export function physicsMovementProgress(
+  physics: PhysicsSettings,
+  progress: number,
+): number {
+  return physics.speedCurve?.enabled
+    ? speedCurveProgress(physics.speedCurve, progress)
+    : movementProgress(progress, physics.drag);
 }
 
 export function evaluateBehavior(

@@ -14,6 +14,7 @@ import {
   createRenderingEffectClip,
 } from "../src/vfx/renderingEffects";
 import { validPngDataUrl } from "./fixtures/portableImages";
+import { defaultAttractor, defaultSpeedCurve } from "../src/vfx/curves";
 
 describe("Vvfx project files", () => {
   it("starts new users with an empty composition and reusable practice shapes", () => {
@@ -595,6 +596,8 @@ describe("Vvfx project files", () => {
         gravity: 2000,
         drag: 1,
         gravityEnvelope: disabledEnvelope,
+        speedCurve: defaultSpeedCurve(),
+        attractor: defaultAttractor(),
       },
     });
   });

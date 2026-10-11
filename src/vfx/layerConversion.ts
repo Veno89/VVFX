@@ -1,4 +1,4 @@
-import { DEFAULT_BEAM, DEFAULT_SPAWN } from "./defaults";
+import { createDefaultSpawn, DEFAULT_BEAM } from "./defaults";
 import { MAX_VFX_POSITION_MAGNITUDE } from "./inputLimits";
 import { canonicalizeLayerCapabilities } from "./layerLifecycle";
 import type { LayerType, VfxAsset, VfxLayer } from "./types";
@@ -86,7 +86,7 @@ export function convertLayerType(
     const spawn =
       layer.type === "burst" || layer.type === "emitter"
         ? { ...layer.spawn }
-        : { ...DEFAULT_SPAWN };
+        : createDefaultSpawn();
     return canonicalizeLayerCapabilities({
       ...layer,
       type: targetType,

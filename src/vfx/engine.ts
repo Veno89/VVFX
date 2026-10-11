@@ -23,6 +23,7 @@ import type {
   VfxLayer,
   VfxProject,
 } from "./types";
+import { peakEmissionRate } from "./curves";
 
 export const MAX_EFFECT_INSTANCES = 500;
 
@@ -343,7 +344,12 @@ function emitterSpawnTimes(
     Math.ceil(layer.spawn.maxAlive / Math.max(1, layer.spawn.count)),
   );
   const delayBuffer = Math.ceil(
-    layer.random.delay / Math.max(30, layer.spawn.intervalMin),
+    layer.random.delay /
+      Math.max(
+        30,
+        layer.spawn.intervalMin /
+          Math.max(1, peakEmissionRate(layer.spawn.rateCurve ?? null)),
+      ),
   );
   return times.slice(
     -Math.min(maximumEvents + delayBuffer + 2, MAX_EFFECT_INSTANCES),

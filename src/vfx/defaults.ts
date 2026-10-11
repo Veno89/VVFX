@@ -24,6 +24,11 @@ import type {
 } from "./types";
 import { createDefaultRenderingEffects } from "./renderingEffectsModel";
 import { MAX_VFX_NAME_LENGTH } from "./inputLimits";
+import {
+  defaultAttractor,
+  defaultEmissionCurve,
+  defaultSpeedCurve,
+} from "./curves";
 
 export const BUILT_IN_ASSETS: VfxAsset[] = [
   {
@@ -158,6 +163,8 @@ export const DEFAULT_BEHAVIOR: BehaviorSettings = {
     gravity: 0,
     drag: 0,
     gravityEnvelope: { ...DEFAULT_BEHAVIOR_ENVELOPE },
+    speedCurve: defaultSpeedCurve(),
+    attractor: defaultAttractor(),
   },
 };
 
@@ -200,7 +207,22 @@ export const DEFAULT_SPAWN: SpawnSettings = {
   rotateToDirection: false,
   artworkForwardAngle: 0,
   alignmentVariation: 0,
+  rateCurve: defaultEmissionCurve(),
 };
+
+/** A fresh spawn block; nested curves are never shared between layers. */
+export const createDefaultSpawn = (): SpawnSettings => ({
+  ...DEFAULT_SPAWN,
+  rateCurve: defaultEmissionCurve(),
+});
+
+/** Fresh physics settings with their own envelope and curve objects. */
+export const createDefaultPhysics = () => ({
+  ...DEFAULT_BEHAVIOR.physics,
+  gravityEnvelope: { ...DEFAULT_BEHAVIOR.physics.gravityEnvelope },
+  speedCurve: defaultSpeedCurve(),
+  attractor: defaultAttractor(),
+});
 
 export const DEFAULT_FRAME_ANIMATION: FrameAnimationSettings = {
   framesPerSecond: 12,
@@ -353,10 +375,7 @@ export function createLayer(
         ...DEFAULT_BEHAVIOR.wobble,
         envelope: { ...DEFAULT_BEHAVIOR.wobble.envelope },
       },
-      physics: {
-        ...DEFAULT_BEHAVIOR.physics,
-        gravityEnvelope: { ...DEFAULT_BEHAVIOR.physics.gravityEnvelope },
-      },
+      physics: createDefaultPhysics(),
     },
     random: { ...DEFAULT_RANDOM },
     frameAnimation: { ...DEFAULT_FRAME_ANIMATION },
@@ -404,7 +423,7 @@ export function createLayer(
       },
     };
   }
-  return { ...base, type, spawn: { ...DEFAULT_SPAWN } };
+  return { ...base, type, spawn: createDefaultSpawn() };
 }
 
 export function createExampleProject(): VfxProject {

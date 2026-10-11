@@ -96,7 +96,11 @@ ${phaserTag}
 }
 
 async function sha384Base64(data: ArrayBuffer) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-384", data));
+  // A view is accepted even when the buffer comes from another realm, which
+  // older Node versions reject for a bare ArrayBuffer.
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-384", new Uint8Array(data)),
+  );
   let binary = "";
   for (const byte of digest) binary += String.fromCharCode(byte);
   return btoa(binary);

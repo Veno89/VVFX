@@ -33,6 +33,7 @@ import { isSpawnLayer, type VfxProject } from "../vfx/types";
 import type { EvaluatedRenderingEffects } from "../vfx/renderingEffectsModel";
 import {
   layerPositionAfterPreviewDrag,
+  topSpriteAt,
   pathPointAfterPreviewDrag,
 } from "./dragPosition";
 import {
@@ -318,6 +319,93 @@ function fitPreviewToMount(
     scene.cameras.main.setZoom(pixelRatio);
 }
 
+/**
+ * Lets the user drag any visible copy to move its layer. A single set of
+ * scene pointer handlers finds the topmost editable copy under the pointer,
+ * moves it while dragging, and reports the layer's new position on release.
+ * Interactive path handles keep priority because they report themselves as
+ * "over" the pointer.
+ */
+function installCopyDragging(
+  scene: Phaser.Scene,
+  getSprites: () => Map<string, Phaser.GameObjects.Image> | null,
+  getEditing: () => { enabled: boolean; locked: ReadonlySet<string> },
+  onMove: (layerId: string, x: number, y: number) => void,
+) {
+  let drag: {
+    sprite: Phaser.GameObjects.Image;
+    offsetX: number;
+    offsetY: number;
+  } | null = null;
+  const pick = (pointer: Phaser.Input.Pointer) => {
+    const sprites = getSprites();
+    const editing = getEditing();
+    if (!sprites || !editing.enabled) return null;
+    const owned = new Set<Phaser.GameObjects.GameObject>(sprites.values());
+    // The display list is in drawing order once Phaser has depth-sorted it.
+    const ordered = scene.children.list.filter(
+      (child): child is Phaser.GameObjects.Image =>
+        owned.has(child) &&
+        !child.getData("vvfxTrail") &&
+        !editing.locked.has(String(child.getData("layerId"))),
+    );
+    return topSpriteAt(ordered, pointer.worldX, pointer.worldY);
+  };
+  const setCursor = (cursor: string) => {
+    const canvas = scene.game.canvas;
+    if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
+  };
+  scene.input.on(
+    "pointerdown",
+    (pointer: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
+      if (over.length > 0) return;
+      const sprite = pick(pointer);
+      if (!sprite) return;
+      sprite.setData("vvfxDragging", true);
+      sprite.setData("vvfxDragStartX", sprite.x);
+      sprite.setData("vvfxDragStartY", sprite.y);
+      drag = {
+        sprite,
+        offsetX: pointer.worldX - sprite.x,
+        offsetY: pointer.worldY - sprite.y,
+      };
+    },
+  );
+  scene.input.on(
+    "pointermove",
+    (pointer: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
+      if (drag) {
+        drag.sprite.setPosition(
+          pointer.worldX - drag.offsetX,
+          pointer.worldY - drag.offsetY,
+        );
+        return;
+      }
+      if (over.length === 0) setCursor(pick(pointer) ? "pointer" : "");
+    },
+  );
+  const finish = () => {
+    if (!drag) return;
+    const { sprite } = drag;
+    drag = null;
+    // A copy that ended mid-drag has nothing left to move.
+    if (!sprite.scene) return;
+    sprite.setData("vvfxDragging", false);
+    const nextPosition = layerPositionAfterPreviewDrag({
+      layerX: Number(sprite.getData("vvfxLayerX")),
+      layerY: Number(sprite.getData("vvfxLayerY")),
+      startPreviewX: Number(sprite.getData("vvfxDragStartX")),
+      startPreviewY: Number(sprite.getData("vvfxDragStartY")),
+      endPreviewX: sprite.x,
+      endPreviewY: sprite.y,
+      zoom: Number(sprite.getData("vvfxZoom")),
+    });
+    onMove(String(sprite.getData("layerId")), nextPosition.x, nextPosition.y);
+  };
+  scene.input.on("pointerup", finish);
+  scene.input.on("pointerupoutside", finish);
+}
+
 function createBuiltInTextures(scene: Phaser.Scene) {
   const make = (
     key: string,
@@ -449,6 +537,12 @@ export function PhaserPreview({
   );
   const gridSignatureRef = useRef("");
   const lockedIds = useMemo(() => new Set(lockedLayerIds), [lockedLayerIds]);
+  // Read by the scene's pointer handlers, which outlive any one render.
+  const editingRef = useRef({ enabled: false, locked: lockedIds });
+  editingRef.current = {
+    enabled: !captureMode && stressCopies === 1,
+    locked: lockedIds,
+  };
   const latestAssetsRef = useRef(project.assets);
   latestAssetsRef.current = project.assets;
 
@@ -553,6 +647,12 @@ export function PhaserPreview({
           create(this: Phaser.Scene) {
             this.cameras.main.setOrigin(0, 0).setZoom(pixelRatio);
             createBuiltInTextures(this);
+            installCopyDragging(
+              this,
+              () => liveRef.current?.sprites ?? null,
+              () => editingRef.current,
+              (layerId, x, y) => moveRef.current(layerId, x, y),
+            );
             liveRef.current = {
               scene: this,
               sprites: new Map(),
@@ -671,7 +771,7 @@ export function PhaserPreview({
     const resolveRenderingAssetFrame: PhaserRenderingAssetFrameResolver = (
       assetId,
     ) => resolvePreviewRenderingAssetFrame(scene, project.assets, assetId);
-    const editingEnabled = !captureMode && stressCopies === 1;
+
     const sampleTime = window.performance.now();
     const nextKeys = new Set(instances.map((instance) => instance.key));
     const { assetIds: currentAssetIds, layerIds: currentLayerIds } =
@@ -694,41 +794,10 @@ export function PhaserPreview({
           instance.frame ?? "__BASE",
         );
         draggableSprite.setData("layerId", instance.layerId);
-        if (
-          editingEnabled &&
-          instance.trailIndex === null &&
-          !lockedIds.has(instance.layerId)
-        ) {
-          draggableSprite.setInteractive({ useHandCursor: true });
-          scene.input.setDraggable(draggableSprite);
-          draggableSprite.on("dragstart", () => {
-            draggableSprite.setData("vvfxDragging", true);
-            draggableSprite.setData("vvfxDragStartX", draggableSprite.x);
-            draggableSprite.setData("vvfxDragStartY", draggableSprite.y);
-          });
-          draggableSprite.on(
-            "drag",
-            (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-              draggableSprite.setPosition(dragX, dragY);
-            },
-          );
-          draggableSprite.on("dragend", () => {
-            const layerId = String(draggableSprite.getData("layerId"));
-            const nextPosition = layerPositionAfterPreviewDrag({
-              layerX: Number(draggableSprite.getData("vvfxLayerX")),
-              layerY: Number(draggableSprite.getData("vvfxLayerY")),
-              startPreviewX: Number(draggableSprite.getData("vvfxDragStartX")),
-              startPreviewY: Number(draggableSprite.getData("vvfxDragStartY")),
-              // Phaser replaces dragX/dragY with the local grab offset
-              // before emitting dragend. The sprite retains the real drop point.
-              endPreviewX: draggableSprite.x,
-              endPreviewY: draggableSprite.y,
-              zoom: Number(draggableSprite.getData("vvfxZoom")),
-            });
-            draggableSprite.setData("vvfxDragging", false);
-            moveRef.current(layerId, nextPosition.x, nextPosition.y);
-          });
-        }
+        // Copies are not interactive objects: one scene-level handler hit-
+        // tests them on demand (see installCopyDragging), so bursts and
+        // emitters do not register hundreds of input targets.
+        draggableSprite.setData("vvfxTrail", instance.trailIndex !== null);
         sprite = draggableSprite;
         sprites.set(instance.key, draggableSprite);
         creationTimestampsRef.current.push(sampleTime);

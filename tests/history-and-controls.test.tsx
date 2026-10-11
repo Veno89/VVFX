@@ -47,6 +47,8 @@ import {
 import { createTemplateFromProject } from "../src/vfx/templates";
 import {
   layerPositionAfterPreviewDrag,
+  spriteContainsPoint,
+  topSpriteAt,
   pathPointAfterPreviewDrag,
 } from "../src/preview/dragPosition";
 
@@ -1538,5 +1540,39 @@ describe("beginner-friendly controls", () => {
 
     expect(screen.getByRole("button", { name: "Export all" })).toBeDisabled();
     expect(screen.getByText(/Export all is disabled/i)).toBeVisible();
+  });
+});
+
+describe("preview copy hit testing", () => {
+  const sprite = {
+    x: 100,
+    y: 100,
+    width: 40,
+    height: 10,
+    originX: 0.5,
+    originY: 0.5,
+    scaleX: 2,
+    scaleY: 2,
+    rotation: Math.PI / 2,
+    visible: true,
+    alpha: 1,
+  };
+
+  it("hits the rotated, scaled frame and nothing outside it", () => {
+    // Rotated a quarter turn, the 80×20 frame stands upright.
+    expect(spriteContainsPoint(sprite, 100, 135)).toBe(true);
+    expect(spriteContainsPoint(sprite, 135, 100)).toBe(false);
+    expect(spriteContainsPoint({ ...sprite, alpha: 0 }, 100, 100)).toBe(false);
+    expect(spriteContainsPoint({ ...sprite, visible: false }, 100, 100)).toBe(
+      false,
+    );
+    expect(spriteContainsPoint({ ...sprite, scaleX: 0 }, 100, 100)).toBe(false);
+  });
+
+  it("picks the copy drawn on top", () => {
+    const below = { ...sprite, id: "below" };
+    const above = { ...sprite, id: "above" };
+    expect(topSpriteAt([below, above], 100, 100)?.id).toBe("above");
+    expect(topSpriteAt([below, above], 400, 400)).toBeNull();
   });
 });

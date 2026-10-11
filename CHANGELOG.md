@@ -133,6 +133,14 @@ uses semantic versions for release artifacts.
 - The editor preview redraws its grid only when size, zoom, or visibility
   change, and looks layers and assets up from per-project maps instead of
   rebuilding sets and scanning the layer list for every copy on every frame.
+- Preview copies are no longer individual Phaser input targets: one scene
+  handler hit-tests the topmost editable copy (rotation and scale included)
+  when the pointer moves or presses, so bursts and emitters stop registering
+  hundreds of interactive objects. Dragging, the hand cursor, locked layers,
+  and path handles behave as before.
+- The Timeline playhead moves with a CSS transform inside a clipping track, so
+  playback no longer re-lays it out every frame (about 9% less layout time
+  in a three-effect test; script time was unchanged).
 - Interface text is now sized in rem with an 11 px floor (previously down to
   6.5 px), so browser text settings apply. Sliders, help icons, and switches
   have larger pointer targets; layer rows show a Solo icon instead of "S" and

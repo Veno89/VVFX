@@ -61,3 +61,58 @@ export function pathPointAfterPreviewDrag({
     y: (safeEndY - safeCenterY) / safeZoom - safeLayerY,
   };
 }
+
+/** The parts of a placed sprite a pointer hit test needs. */
+export interface HitTestSprite {
+  x: number;
+  y: number;
+  /** Unscaled frame size. */
+  width: number;
+  height: number;
+  originX: number;
+  originY: number;
+  scaleX: number;
+  scaleY: number;
+  /** Radians. */
+  rotation: number;
+  visible: boolean;
+  alpha: number;
+}
+
+/** True when a world point falls inside a sprite's rotated, scaled frame. */
+export function spriteContainsPoint(
+  sprite: HitTestSprite,
+  x: number,
+  y: number,
+) {
+  if (!sprite.visible || sprite.alpha <= 0.01) return false;
+  if (sprite.scaleX === 0 || sprite.scaleY === 0) return false;
+  const cos = Math.cos(-sprite.rotation);
+  const sin = Math.sin(-sprite.rotation);
+  const dx = x - sprite.x;
+  const dy = y - sprite.y;
+  const localX = (dx * cos - dy * sin) / sprite.scaleX;
+  const localY = (dx * sin + dy * cos) / sprite.scaleY;
+  const left = -sprite.originX * sprite.width;
+  const top = -sprite.originY * sprite.height;
+  return (
+    localX >= left &&
+    localX <= left + sprite.width &&
+    localY >= top &&
+    localY <= top + sprite.height
+  );
+}
+
+/**
+ * The topmost candidate under a point. `ordered` is in drawing order, so the
+ * last match is the one the user sees on top.
+ */
+export function topSpriteAt<T extends HitTestSprite>(
+  ordered: readonly T[],
+  x: number,
+  y: number,
+): T | null {
+  for (let index = ordered.length - 1; index >= 0; index -= 1)
+    if (spriteContainsPoint(ordered[index], x, y)) return ordered[index];
+  return null;
+}

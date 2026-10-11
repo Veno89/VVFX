@@ -4421,15 +4421,32 @@ button:disabled {
 .timeline-handle.end {
   right: -2px;
 }
-.playhead {
+.playhead-track {
   position: absolute;
   z-index: 6;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* As wide as the track, so translateX(%) moves its left edge by a share of
+   the track; the line itself is drawn on that edge. */
+.playhead {
+  position: absolute;
   top: 0;
   bottom: 0;
+  left: 0;
+  width: calc(100% - 1px);
+  will-change: transform;
+}
+.playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 1px;
   background: #ff6c8c;
   box-shadow: 0 0 4px rgba(255, 108, 140, 0.4);
-  pointer-events: none;
 }
 .playhead i {
   position: absolute;

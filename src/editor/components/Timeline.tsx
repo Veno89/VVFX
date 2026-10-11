@@ -2210,8 +2210,17 @@ export function Timeline({
               </div>
             );
           })}
-          <span className="playhead" style={{ left: percent(time, duration) }}>
-            <i />
+          {/* A transform moves the playhead without a layout per frame; the
+              clipping track keeps it from widening the timeline. */}
+          <span className="playhead-track" aria-hidden="true">
+            <span
+              className="playhead"
+              style={{
+                transform: `translateX(${percent(time, duration)})`,
+              }}
+            >
+              <i />
+            </span>
           </span>
         </div>
       </div>

@@ -32,6 +32,8 @@ import type {
 import { HelpTip } from "./Controls";
 import { PerformanceInspector } from "./PerformanceInspector";
 import { useFocusRegion } from "../useFocusRegion";
+import type { EffectVariation } from "../../vfx/variations";
+import { VariationsMenu } from "./VariationsMenu";
 import { usePreviewBackdrop } from "../usePreviewBackdrop";
 
 const PERFORMANCE_DIALOG_ID = "preview-performance-dialog";
@@ -66,8 +68,19 @@ export function PreviewPanel({
   onCanvasReady,
   lockedLayerIds = [],
   emptyState,
+  previewProject,
+  activeVariationId = null,
+  onTryVariation,
+  onKeepVariation,
+  onDiscardVariation,
 }: {
   project: VfxProject;
+  /** What the canvas plays, when it differs from the edited project. */
+  previewProject?: VfxProject;
+  activeVariationId?: string | null;
+  onTryVariation?: (variation: EffectVariation) => void;
+  onKeepVariation?: () => void;
+  onDiscardVariation?: () => void;
   time: number;
   playing: boolean;
   speed: number;
@@ -149,10 +162,18 @@ export function PreviewPanel({
     <main className="preview-panel">
       <div className="preview-heading">
         <div>
-          <span className="live-dot" /> LIVE PREVIEW{" "}
+          <span className="live-dot" />{" "}
+          <span className="preview-heading__label">LIVE PREVIEW</span>{" "}
           <small>{(time / 1000).toFixed(2)}s</small>
         </div>
         <div className="preview-tools">
+          {onTryVariation && (
+            <VariationsMenu
+              project={project}
+              activeVariationId={activeVariationId}
+              onTry={onTryVariation}
+            />
+          )}
           <div className="menu-wrap">
             <button
               ref={performanceTriggerRef}
@@ -476,7 +497,7 @@ export function PreviewPanel({
         )}
         <PhaserPreview
           transparentBackground={showBackdrop}
-          project={project}
+          project={previewProject ?? project}
           time={time}
           restartRevision={restartRevision}
           selectedId={selectedId}
@@ -489,6 +510,25 @@ export function PreviewPanel({
           lockedLayerIds={lockedLayerIds}
         />
         {emptyState}
+        {activeVariationId && (
+          <div
+            className="variation-trial-bar"
+            role="group"
+            aria-label="Variation preview"
+          >
+            <span>Previewing a variation</span>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={onKeepVariation}
+            >
+              Keep it
+            </button>
+            <button type="button" onClick={onDiscardVariation}>
+              Back to original
+            </button>
+          </div>
+        )}
         <div className="canvas-hint" hidden={Boolean(emptyState)}>
           {captureMode
             ? "Recording one clean effect copy"

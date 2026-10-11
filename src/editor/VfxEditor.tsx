@@ -170,6 +170,7 @@ import {
   type WorkspaceControlLevel,
   type WorkspaceTextScale,
 } from "./workspace";
+import type { EffectVariation } from "../vfx/variations";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -324,6 +325,14 @@ export function VfxEditor() {
   const initial = useMemo(() => createEmptyProject(), []);
   const history = useHistoryState(initial);
   const project = history.value;
+  const [variationTrial, setVariationTrial] = useState<{
+    base: VfxProject;
+    variation: EffectVariation;
+  } | null>(null);
+  // A variation being tried belongs to the project it came from, so any other
+  // edit quietly ends the trial.
+  const activeTrial = variationTrial?.base === project ? variationTrial : null;
+  const playbackProject = activeTrial?.variation.project ?? project;
   const [selectedId, setSelectedId] = useState<string | null>(
     initial.layers[0]?.id ?? null,
   );
@@ -572,19 +581,21 @@ export function VfxEditor() {
     [project],
   );
   const activePlaybackEnd = useMemo(
-    () => activeTimelineEnd(project),
-    [project],
+    () => activeTimelineEnd(playbackProject),
+    [playbackProject],
   );
   const playbackStart = Math.max(
     0,
-    Math.min(project.preview.duration - 50, projectWorkspace.workStart),
+    Math.min(playbackProject.preview.duration - 50, projectWorkspace.workStart),
   );
   const playbackEnd = Math.max(
     playbackStart + 50,
     Math.min(
-      project.preview.duration,
+      playbackProject.preview.duration,
       projectWorkspace.workEnd ??
-        (project.preview.loop ? activePlaybackEnd : project.preview.duration),
+        (playbackProject.preview.loop
+          ? activePlaybackEnd
+          : playbackProject.preview.duration),
     ),
   );
   const hasUnsavedChanges =
@@ -2460,6 +2471,24 @@ export function VfxEditor() {
           key={project.metadata.id}
           clock={playbackClock}
           project={project}
+          previewProject={playbackProject}
+          activeVariationId={activeTrial?.variation.id ?? null}
+          onTryVariation={(variation) => {
+            setVariationTrial({ base: project, variation });
+            restartPreview();
+          }}
+          onKeepVariation={() => {
+            if (!activeTrial) return;
+            history.set({
+              ...activeTrial.variation.project,
+              metadata: {
+                ...project.metadata,
+                updatedAt: new Date().toISOString(),
+              },
+            });
+            setVariationTrial(null);
+          }}
+          onDiscardVariation={() => setVariationTrial(null)}
           playing={playing}
           speed={speed}
           loopEnd={activePlaybackEnd}

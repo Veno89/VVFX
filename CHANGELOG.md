@@ -19,6 +19,12 @@ uses semantic versions for release artifacts.
   packed sheet, a TexturePacker-style JSON atlas read by Phaser and PixiJS,
   and every frame as its own PNG for engines such as Godot, Unity, GameMaker,
   or Construct. Sheets stay within 8192 px and 240 frames.
+- **Variations** (preview header) offers six versions of the whole effect that
+  change any mix of colors, size, speed, and random pattern. Choosing one plays
+  it in the real preview; **Keep it** applies it as one undoable change and
+  **Back to original** discards it. Speed variations move cues and the
+  composition length with the content, and every version is validated like an
+  imported project.
 - A **Web page** export: one `.html` file that plays the effect in any modern
   browser with the real Phaser runtime, fitted to the window, with Pause,
   Replay, Space, and R. **Works offline** (default) downloads the pinned

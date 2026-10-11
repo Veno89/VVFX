@@ -20,6 +20,11 @@ import { serializeProject, validateProject } from "../src/vfx/serialization";
 import type { VfxAsset, VfxProject } from "../src/vfx/types";
 import { validPngDataUrl } from "./fixtures/portableImages";
 
+function chooseFileAction(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "File" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 const projectPersistence = vi.hoisted(() => ({
   InvalidRecoveryDraftError: class InvalidRecoveryDraftError extends Error {
     constructor(reason: string) {
@@ -230,7 +235,7 @@ describe("New project safety", () => {
     expect(projectPersistence.clearRecoveryDraft).not.toHaveBeenCalled();
     expect(projectPersistence.saveRecoveryDraft).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    chooseFileAction("Load");
     expect(
       await screen.findByText("1 unreadable project save found"),
     ).toBeVisible();
@@ -251,7 +256,7 @@ describe("New project safety", () => {
     render(<VfxEditor />);
 
     await screen.findByText("Recovery autosave could not be checked.");
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    chooseFileAction("Load");
     await screen.findByRole("dialog", { name: "Load a saved project" });
     expect(screen.queryByText(/unreadable project save/i)).toBeNull();
     expect(
@@ -275,7 +280,7 @@ describe("New project safety", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<VfxEditor />);
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    chooseFileAction("Load");
 
     expect(
       await screen.findByText("1 unreadable project save found"),
@@ -308,8 +313,8 @@ describe("New project safety", () => {
     );
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save As" }));
+    chooseFileAction("Load");
+    chooseFileAction("Save As");
     const saveAs = screen.getByRole("dialog", { name: "Save project as" });
 
     await act(async () =>
@@ -344,9 +349,9 @@ describe("New project safety", () => {
   it("leaves Space available to a focused control instead of toggling playback", () => {
     render(<VfxEditor />);
 
-    const newProject = screen.getByRole("button", { name: "New" });
-    newProject.focus();
-    fireEvent.keyDown(newProject, { code: "Space", key: " " });
+    const learn = screen.getByRole("button", { name: "Learn" });
+    learn.focus();
+    fireEvent.keyDown(learn, { code: "Space", key: " " });
 
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
@@ -354,15 +359,15 @@ describe("New project safety", () => {
   it("keeps Space as play/pause when a button only has focus from a click", () => {
     render(<VfxEditor />);
 
-    const newProject = screen.getByRole("button", { name: "New" });
-    fireEvent.pointerDown(newProject);
-    newProject.focus();
-    fireEvent.keyDown(newProject, { code: "Space", key: " " });
+    const learn = screen.getByRole("button", { name: "Learn" });
+    fireEvent.pointerDown(learn);
+    learn.focus();
+    fireEvent.keyDown(learn, { code: "Space", key: " " });
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Tab" });
-    newProject.focus();
-    fireEvent.keyDown(newProject, { code: "Space", key: " " });
+    learn.focus();
+    fireEvent.keyDown(learn, { code: "Space", key: " " });
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
   });
 
@@ -373,9 +378,9 @@ describe("New project safety", () => {
     fireEvent.change(projectName, { target: { value: "First draft" } });
     fireEvent.change(projectName, { target: { value: "Second draft" } });
 
-    const newProject = screen.getByRole("button", { name: "New" });
-    newProject.focus();
-    fireEvent.click(newProject);
+    const fileMenu = screen.getByRole("button", { name: "File" });
+    fileMenu.focus();
+    chooseFileAction("New");
 
     expect(
       screen.getByRole("alertdialog", { name: "Start a new project?" }),
@@ -383,7 +388,7 @@ describe("New project safety", () => {
     expect(screen.getByRole("button", { name: "Keep editing" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(newProject).toHaveFocus();
+    expect(fileMenu).toHaveFocus();
 
     expect(projectName).toHaveValue("Second draft");
     expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled();
@@ -472,7 +477,7 @@ describe("New project safety", () => {
 
     const projectName = screen.getByRole("textbox", { name: "Project name" });
     fireEvent.change(projectName, { target: { value: "Discard me" } });
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    chooseFileAction("New");
     fireEvent.click(
       screen.getByRole("button", {
         name: "Discard changes and start new",
@@ -557,7 +562,7 @@ describe("Editor integrity mutations", () => {
   it("keeps a completed Save As successful without loading the saved library", async () => {
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Save As" }));
+    chooseFileAction("Save As");
     const dialog = screen.getByRole("dialog", { name: "Save project as" });
     fireEvent.change(within(dialog).getByLabelText("Project name"), {
       target: { value: "Durable lightning copy" },

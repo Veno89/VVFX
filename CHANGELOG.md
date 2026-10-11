@@ -92,6 +92,10 @@ uses semantic versions for release artifacts.
   6.5 px), so browser text settings apply. Sliders, help icons, and switches
   have larger pointer targets; layer rows show a Solo icon instead of "S" and
   keep their actions visible at 60% opacity.
+- The top bar now shows only **File**, Learn, Save, and Export at every width.
+  New, Save As, Load, Templates, and Import moved into the File menu, which
+  replaces the narrow-screen Actions menu, lists each action's purpose or
+  shortcut, and returns focus to File when a dialog it opened closes.
 - The Asset Library's upload and Shapes buttons share one compact row, and
   Beginner upload notices no longer mention spawn silhouettes.
 - The top bar no longer wraps, the layer panel's explainer paragraphs moved

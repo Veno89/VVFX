@@ -98,7 +98,7 @@ export const TOUR_STEPS: TourStep[] = [
     eyebrow: "6 · Keep your work",
     title: "Save locally, load later, or export for a game",
     description:
-      "Save stores the editable project in this browser. Load reopens it. Export creates a portable .vvfx file, recommended .vvfx-runtime.json, or an Advanced TypeScript wrapper.",
+      "Save stores the editable project in this browser. File → Load reopens it. Export creates a portable .vvfx file, recommended .vvfx-runtime.json, or an Advanced TypeScript wrapper.",
     detail:
       "Use both Save and an occasional .vvfx export if the project matters to you.",
     icon: <Save size={22} />,
@@ -223,7 +223,7 @@ const GUIDE_STEPS = [
   {
     focus: "projects" as TourFocus,
     title: "Save it for later",
-    text: "Save keeps the editable project in this browser. Use Load in the top bar whenever you want to reopen it.",
+    text: "Save keeps the editable project in this browser. Use File → Load in the top bar whenever you want to reopen it.",
     action: "Save project",
   },
 ];

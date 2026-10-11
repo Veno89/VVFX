@@ -273,9 +273,20 @@ button:disabled {
   align-items: center;
   gap: 4px;
 }
-.topbar-actions__more {
+.topbar-file-menu {
   position: relative;
-  display: none;
+}
+.topbar-file-menu .topbar-actions__menu {
+  right: auto;
+  left: 0;
+  width: min(260px, calc(100vw - 20px));
+}
+.topbar-actions__menu small {
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  white-space: nowrap;
 }
 .topbar-actions__menu {
   position: absolute;
@@ -6039,15 +6050,6 @@ kbd {
   }
   .topbar-actions button {
     flex: 0 0 auto;
-  }
-  .topbar-actions > .topbar-action--overflow {
-    display: none;
-  }
-  .topbar-actions__more {
-    display: block;
-  }
-  .topbar-actions .topbar-actions__menu button {
-    padding: 0 10px;
   }
   .editor-workspace {
     min-width: 0;

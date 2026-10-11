@@ -2,24 +2,25 @@
 
 import {
   BookOpen,
+  ChevronDown,
   CopyPlus,
   Download,
+  File as FileIcon,
   FileCode2,
   FilePlus2,
   FolderOpen,
   Library,
-  MoreHorizontal,
   Redo2,
   Save,
   Undo2,
   Upload,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { MAX_VFX_NAME_LENGTH } from "../../vfx/inputLimits";
 import { useFocusRegion } from "../useFocusRegion";
 
-const RESPONSIVE_ACTIONS_MENU_ID = "topbar-responsive-actions-menu";
+const FILE_MENU_ID = "topbar-file-menu";
 
 export type ProjectSaveStatus =
   "new" | "saved" | "unsaved" | "recovering" | "protected" | "error";
@@ -70,66 +71,71 @@ export function TopBar({
   onActionIntent?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const saveButtonRef = useRef<HTMLButtonElement>(null);
-  const exportButtonRef = useRef<HTMLButtonElement>(null);
-  const responsiveActionsTriggerRef = useRef<HTMLButtonElement>(null);
-  const restoreDesktopFocusRef = useRef(false);
-  const [responsiveActionsOpen, setResponsiveActionsOpen] = useState(false);
-  const [responsiveMenuIndex, setResponsiveMenuIndex] = useState(0);
-  const responsiveActionsMenuRef = useFocusRegion<HTMLDivElement>({
-    active: responsiveActionsOpen,
+  const fileTriggerRef = useRef<HTMLButtonElement>(null);
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [fileMenuIndex, setFileMenuIndex] = useState(0);
+  const fileMenuRef = useFocusRegion<HTMLDivElement>({
+    active: fileMenuOpen,
     trapFocus: false,
     dismissOnFocusOutside: true,
     dismissOnPointerOutside: true,
-    dismissBoundaryRef: responsiveActionsTriggerRef,
-    onEscape: () => setResponsiveActionsOpen(false),
+    dismissBoundaryRef: fileTriggerRef,
+    onEscape: () => setFileMenuOpen(false),
   });
 
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const compactLayout = window.matchMedia("(max-width: 1119px)");
-    const closeWhenDesktopReturns = () => {
-      if (compactLayout.matches) return;
-      const menu = responsiveActionsMenuRef.current;
-      const focused =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
-      restoreDesktopFocusRef.current =
-        menu !== null &&
-        focused !== null &&
-        (menu.contains(focused) ||
-          (responsiveActionsTriggerRef.current?.contains(focused) ?? false));
-      setResponsiveActionsOpen(false);
-    };
-    compactLayout.addEventListener("change", closeWhenDesktopReturns);
-    return () =>
-      compactLayout.removeEventListener("change", closeWhenDesktopReturns);
-  }, [responsiveActionsMenuRef]);
+  // Rarely used project actions share one menu so a beginner's top bar shows
+  // only Learn, Save, and Export.
+  const fileActions = [
+    {
+      label: "New",
+      icon: FilePlus2,
+      hint: "Start a new empty project",
+      run: onNewProject,
+    },
+    {
+      label: "Save As",
+      icon: CopyPlus,
+      hint: "Ctrl+Shift+S",
+      run: onSaveAs,
+    },
+    {
+      label: "Load",
+      icon: FolderOpen,
+      hint: "Saved projects",
+      run: onOpenProjects,
+    },
+    {
+      label: "Templates",
+      icon: Library,
+      hint: "Save and reuse effects",
+      run: onOpenTemplates,
+    },
+    {
+      label: "Import",
+      icon: Upload,
+      hint: ".vvfx file",
+      run: null,
+    },
+  ];
 
-  useEffect(() => {
-    if (responsiveActionsOpen || !restoreDesktopFocusRef.current) return;
-    restoreDesktopFocusRef.current = false;
-    const frame = window.requestAnimationFrame(() => {
-      const fallback = exportButtonRef.current ?? saveButtonRef.current;
-      if (fallback?.isConnected) fallback.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [responsiveActionsOpen]);
-
-  const runResponsiveAction = (action: () => void) => {
-    setResponsiveActionsOpen(false);
-    action();
+  const runFileAction = (action: (() => void) | null) => {
+    setFileMenuOpen(false);
+    // The menu item is about to unmount; dialogs opened by the action must
+    // return focus to something that still exists.
+    fileTriggerRef.current?.focus({ preventScroll: true });
+    // Import has no callback of its own: it opens the hidden file picker.
+    if (action) action();
+    else inputRef.current?.click();
   };
-  const toggleResponsiveActions = () => {
-    if (responsiveActionsOpen) {
-      setResponsiveActionsOpen(false);
+  const toggleFileMenu = () => {
+    if (fileMenuOpen) {
+      setFileMenuOpen(false);
       return;
     }
-    setResponsiveMenuIndex(0);
-    setResponsiveActionsOpen(true);
+    setFileMenuIndex(0);
+    setFileMenuOpen(true);
   };
-  const moveResponsiveMenuFocus = (event: KeyboardEvent<HTMLDivElement>) => {
+  const moveFileMenuFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const items = Array.from(
       event.currentTarget.querySelectorAll<HTMLButtonElement>(
@@ -153,7 +159,7 @@ export function TopBar({
             : event.key === "ArrowUp"
               ? (currentIndex - 1 + items.length) % items.length
               : (currentIndex + 1) % items.length;
-    setResponsiveMenuIndex(nextIndex);
+    setFileMenuIndex(nextIndex);
     items[nextIndex]?.focus();
   };
 
@@ -209,147 +215,65 @@ export function TopBar({
         onPointerEnter={onActionIntent}
         onFocus={onActionIntent}
       >
+        <div className="topbar-file-menu">
+          <button
+            ref={fileTriggerRef}
+            type="button"
+            className="topbar-file-menu__trigger"
+            aria-controls={FILE_MENU_ID}
+            aria-expanded={fileMenuOpen}
+            aria-haspopup="menu"
+            title="New, Save As, Load, Templates, and Import"
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              toggleFileMenu();
+            }}
+          >
+            <FileIcon size={14} /> File <ChevronDown size={13} />
+          </button>
+          {fileMenuOpen && (
+            <div
+              ref={fileMenuRef}
+              id={FILE_MENU_ID}
+              className="topbar-actions__menu"
+              role="menu"
+              aria-label="File"
+              tabIndex={-1}
+              onKeyDown={moveFileMenuFocus}
+            >
+              {fileActions.map((action, index) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.label}
+                    type="button"
+                    role="menuitem"
+                    tabIndex={fileMenuIndex === index ? 0 : -1}
+                    onFocus={() => setFileMenuIndex(index)}
+                    onClick={() => runFileAction(action.run)}
+                  >
+                    <Icon size={14} aria-hidden="true" />
+                    <span>{action.label}</span>
+                    <small aria-hidden="true">{action.hint}</small>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <button
-          className="topbar-action--overflow"
-          type="button"
-          onClick={onNewProject}
-          title="Start a new empty project"
-        >
-          <FilePlus2 size={14} /> New
-        </button>
-        <button
-          className="topbar-action--overflow"
           type="button"
           onClick={onLearn}
           title="Tours and beginner tutorials"
         >
           <BookOpen size={14} /> Learn
         </button>
-        <button ref={saveButtonRef} type="button" onClick={onSave}>
+        <button type="button" onClick={onSave} title="Save (Ctrl+S)">
           <Save size={14} /> Save
         </button>
-        <button
-          className="topbar-action--overflow"
-          type="button"
-          onClick={onSaveAs}
-          title="Save a separate copy (Ctrl+Shift+S)"
-        >
-          <CopyPlus size={14} /> Save As
-        </button>
-        <button
-          className="topbar-action--overflow"
-          type="button"
-          onClick={onOpenProjects}
-        >
-          <FolderOpen size={14} /> Load
-        </button>
-        <button
-          className="topbar-action--overflow"
-          type="button"
-          onClick={onOpenTemplates}
-          title="Save and reuse complete effects"
-        >
-          <Library size={14} /> Templates
-        </button>
-        <button
-          className="topbar-action--overflow"
-          type="button"
-          onClick={() => inputRef.current?.click()}
-        >
-          <Upload size={14} /> Import
-        </button>
-        <button
-          ref={exportButtonRef}
-          className="export-button"
-          type="button"
-          onClick={onExport}
-        >
+        <button className="export-button" type="button" onClick={onExport}>
           <Download size={14} /> Export <FileCode2 size={13} />
         </button>
-        <div className="topbar-actions__more">
-          <button
-            ref={responsiveActionsTriggerRef}
-            type="button"
-            className="topbar-actions__more-trigger"
-            aria-controls={RESPONSIVE_ACTIONS_MENU_ID}
-            aria-expanded={responsiveActionsOpen}
-            aria-haspopup="menu"
-            onClick={(event) => {
-              event.currentTarget.focus({ preventScroll: true });
-              toggleResponsiveActions();
-            }}
-          >
-            <MoreHorizontal size={15} /> Actions
-          </button>
-          {responsiveActionsOpen && (
-            <div
-              ref={responsiveActionsMenuRef}
-              id={RESPONSIVE_ACTIONS_MENU_ID}
-              className="topbar-actions__menu"
-              role="menu"
-              aria-label="More project actions"
-              tabIndex={-1}
-              onKeyDown={moveResponsiveMenuFocus}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 0 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(0)}
-                onClick={() => runResponsiveAction(onNewProject)}
-              >
-                <FilePlus2 size={14} /> New
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 1 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(1)}
-                onClick={() => runResponsiveAction(onLearn)}
-              >
-                <BookOpen size={14} /> Learn
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 2 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(2)}
-                onClick={() => runResponsiveAction(onSaveAs)}
-              >
-                <CopyPlus size={14} /> Save As
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 3 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(3)}
-                onClick={() => runResponsiveAction(onOpenProjects)}
-              >
-                <FolderOpen size={14} /> Load
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 4 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(4)}
-                onClick={() => runResponsiveAction(onOpenTemplates)}
-              >
-                <Library size={14} /> Templates
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={responsiveMenuIndex === 5 ? 0 : -1}
-                onFocus={() => setResponsiveMenuIndex(5)}
-                onClick={() =>
-                  runResponsiveAction(() => inputRef.current?.click())
-                }
-              >
-                <Upload size={14} /> Import
-              </button>
-            </div>
-          )}
-        </div>
       </nav>
       <input
         ref={inputRef}

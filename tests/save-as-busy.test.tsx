@@ -12,6 +12,11 @@ import { SaveAsDialog } from "../src/editor/components/ProjectSafetyDialogs";
 import { VfxEditor } from "../src/editor/VfxEditor";
 import type { VfxProject } from "../src/vfx/types";
 
+function chooseFileAction(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "File" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 const projectPersistence = vi.hoisted(() => ({
   InvalidRecoveryDraftError: class InvalidRecoveryDraftError extends Error {},
   clearRecoveryDraft: vi.fn().mockResolvedValue(undefined),
@@ -173,7 +178,7 @@ describe("SaveAsDialog pending mutation lock", () => {
       name: "Project name",
     });
     expect(originalName).toHaveValue("Untitled Effect");
-    fireEvent.click(screen.getByRole("button", { name: "Save As" }));
+    chooseFileAction("Save As");
 
     const dialog = screen.getByRole("dialog", { name: "Save project as" });
     const copyName = within(dialog).getByRole("textbox", {

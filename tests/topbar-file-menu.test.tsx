@@ -4,59 +4,12 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "../src/editor/components/TopBar";
 
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
-function installMatchMedia(initialMatches: boolean) {
-  type Listener = (event: MediaQueryListEvent) => void;
-  let matches = initialMatches;
-  const listeners = new Set<Listener>();
-  const mediaQueryList = {
-    get matches() {
-      return matches;
-    },
-    media: "(max-width: 1119px)",
-    onchange: null,
-    addEventListener: (
-      _type: string,
-      listener: EventListenerOrEventListenerObject,
-    ) => {
-      if (typeof listener === "function") listeners.add(listener as Listener);
-    },
-    removeEventListener: (
-      _type: string,
-      listener: EventListenerOrEventListenerObject,
-    ) => {
-      if (typeof listener === "function")
-        listeners.delete(listener as Listener);
-    },
-    addListener: (listener: Listener) => listeners.add(listener),
-    removeListener: (listener: Listener) => listeners.delete(listener),
-    dispatchEvent: () => true,
-  } as MediaQueryList;
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn(() => mediaQueryList),
-  );
-  return {
-    setMatches(nextMatches: boolean) {
-      matches = nextMatches;
-      const event = {
-        matches,
-        media: mediaQueryList.media,
-      } as MediaQueryListEvent;
-      listeners.forEach((listener) => listener(event));
-    },
-  };
-}
+afterEach(cleanup);
 
 function renderTopBar() {
   const actions = {
@@ -75,7 +28,7 @@ function renderTopBar() {
   render(
     <>
       <TopBar
-        projectName="Responsive effect"
+        projectName="File menu effect"
         canUndo
         canRedo
         saveStatus="unsaved"
@@ -101,38 +54,55 @@ function expectRovingTabStop(items: HTMLElement[], activeIndex: number) {
   );
 }
 
-describe("responsive TopBar actions", () => {
-  it("keeps Save and Export primary while marking secondary desktop actions for overflow", () => {
+describe("TopBar File menu", () => {
+  it("keeps only Learn, Save, and Export beside the File menu", () => {
     renderTopBar();
+    const nav = screen.getByRole("navigation", { name: "Project actions" });
+    expect(
+      within(nav)
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim()),
+    ).toEqual(["File", "Learn", "Save", "Export"]);
+    for (const name of ["New", "Save As", "Load", "Templates", "Import"])
+      expect(screen.queryByRole("button", { name })).toBeNull();
+  });
 
-    expect(screen.getByRole("button", { name: "Save" })).not.toHaveClass(
-      "topbar-action--overflow",
-    );
-    expect(screen.getByRole("button", { name: /Export/ })).not.toHaveClass(
-      "topbar-action--overflow",
-    );
-    for (const name of [
-      "New",
-      "Learn",
-      "Save As",
-      "Load",
-      "Templates",
-      "Import",
-    ])
-      expect(screen.getByRole("button", { name })).toHaveClass(
-        "topbar-action--overflow",
-      );
+  it("runs each file action from the menu and opens the import picker", () => {
+    const actions = renderTopBar();
+    const trigger = screen.getByRole("button", { name: "File" });
+    const expected: [string, () => void][] = [
+      ["New", actions.onNewProject],
+      ["Save As", actions.onSaveAs],
+      ["Load", actions.onOpenProjects],
+      ["Templates", actions.onOpenTemplates],
+    ];
+    for (const [name, callback] of expected) {
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByRole("menuitem", { name }));
+      expect(callback).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("menu")).toBeNull();
+    }
+
+    const picker =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const click = vi.spyOn(picker, "click");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Import" }));
+    expect(click).toHaveBeenCalledOnce();
+    const file = new File(["{}"], "effect.vvfx", { type: "application/json" });
+    fireEvent.change(picker, { target: { files: [file] } });
+    expect(actions.onImport).toHaveBeenCalledWith(file);
   });
 
   it("exposes an accessible menu with arrow navigation and Escape restoration", () => {
     renderTopBar();
-    const trigger = screen.getByRole("button", { name: "Actions" });
+    const trigger = screen.getByRole("button", { name: "File" });
 
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveAttribute("aria-haspopup", "menu");
     fireEvent.click(trigger);
 
-    const menu = screen.getByRole("menu", { name: "More project actions" });
+    const menu = screen.getByRole("menu", { name: "File" });
     const items = within(menu).getAllByRole("menuitem");
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(items[0]).toHaveFocus();
@@ -152,26 +122,24 @@ describe("responsive TopBar actions", () => {
     expectRovingTabStop(items, items.length - 1);
 
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(
-      screen.queryByRole("menu", { name: "More project actions" }),
-    ).toBeNull();
+    expect(screen.queryByRole("menu", { name: "File" })).toBeNull();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
   });
 
   it("lets Tab and Shift+Tab leave once without restoring or stalling", () => {
     const actions = renderTopBar();
-    const trigger = screen.getByRole("button", { name: "Actions" });
+    const trigger = screen.getByRole("button", { name: "File" });
     const outside = screen.getByRole("button", { name: "Outside control" });
 
     fireEvent.click(trigger);
-    let menu = screen.getByRole("menu", { name: "More project actions" });
+    let menu = screen.getByRole("menu", { name: "File" });
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Templates" }));
     expect(actions.onOpenTemplates).toHaveBeenCalledOnce();
     expect(screen.queryByRole("menu")).toBeNull();
 
     fireEvent.click(trigger);
-    menu = screen.getByRole("menu", { name: "More project actions" });
+    menu = screen.getByRole("menu", { name: "File" });
     const first = within(menu).getAllByRole("menuitem")[0];
     expect(fireEvent.keyDown(first, { key: "Tab" })).toBe(true);
     expect(menu).toBeInTheDocument();
@@ -180,7 +148,7 @@ describe("responsive TopBar actions", () => {
     expect(outside).toHaveFocus();
 
     fireEvent.click(trigger);
-    menu = screen.getByRole("menu", { name: "More project actions" });
+    menu = screen.getByRole("menu", { name: "File" });
     const backwardItem = within(menu).getAllByRole("menuitem")[0];
     expect(
       fireEvent.keyDown(backwardItem, { key: "Tab", shiftKey: true }),
@@ -199,9 +167,9 @@ describe("responsive TopBar actions", () => {
 
   it("toggle-closes when the focused menu hands focus back to its trigger", () => {
     renderTopBar();
-    const trigger = screen.getByRole("button", { name: "Actions" });
+    const trigger = screen.getByRole("button", { name: "File" });
     fireEvent.click(trigger);
-    const menu = screen.getByRole("menu", { name: "More project actions" });
+    const menu = screen.getByRole("menu", { name: "File" });
     const firstItem = within(menu).getAllByRole("menuitem")[0];
     expect(firstItem).toHaveFocus();
 
@@ -212,22 +180,5 @@ describe("responsive TopBar actions", () => {
 
     expect(screen.queryByRole("menu")).toBeNull();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("moves focus to Export when the desktop breakpoint closes the menu", async () => {
-    const compactLayout = installMatchMedia(true);
-    renderTopBar();
-    const trigger = screen.getByRole("button", { name: "Actions" });
-    fireEvent.click(trigger);
-
-    const menu = screen.getByRole("menu", { name: "More project actions" });
-    expect(within(menu).getAllByRole("menuitem")[0]).toHaveFocus();
-
-    act(() => compactLayout.setMatches(false));
-
-    expect(screen.queryByRole("menu")).toBeNull();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Export/ })).toHaveFocus(),
-    );
   });
 });

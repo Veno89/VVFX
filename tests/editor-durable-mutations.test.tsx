@@ -17,6 +17,11 @@ import {
 } from "../src/vfx/templates";
 import type { VfxProject } from "../src/vfx/types";
 
+function chooseFileAction(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "File" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 const projectPersistence = vi.hoisted(() => ({
   InvalidRecoveryDraftError: class InvalidRecoveryDraftError extends Error {
     constructor(reason: string) {
@@ -381,7 +386,7 @@ describe("truthful durable mutation feedback", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    chooseFileAction("Load");
     const dialog = await screen.findByRole("dialog", {
       name: "Load a saved project",
     });
@@ -427,7 +432,7 @@ describe("truthful durable mutation feedback", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     await restoreProject(project);
 
-    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    chooseFileAction("Templates");
     const dialog = await screen.findByRole("dialog", {
       name: "Effect templates",
     });
@@ -510,7 +515,7 @@ describe("truthful durable mutation feedback", () => {
     });
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    chooseFileAction("Templates");
     const dialog = await screen.findByRole("dialog", {
       name: "Effect templates",
     });
@@ -563,7 +568,7 @@ describe("truthful durable mutation feedback", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    chooseFileAction("Templates");
     const dialog = await screen.findByRole("dialog", {
       name: "Effect templates",
     });
@@ -596,7 +601,7 @@ describe("truthful durable mutation feedback", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<VfxEditor />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    chooseFileAction("Templates");
     const dialog = await screen.findByRole("dialog", {
       name: "Effect templates",
     });

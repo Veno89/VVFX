@@ -37,6 +37,14 @@ async function addPreset(page: Page, name: string) {
     .click();
 }
 
+async function chooseFileAction(page: Page, name: string) {
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page
+    .getByRole("menu", { name: "File" })
+    .getByRole("menuitem", { name, exact: true })
+    .click();
+}
+
 async function openPerformanceInspector(page: Page) {
   const trigger = page.getByRole("button", {
     name: "Effect performance and stress test",
@@ -71,13 +79,13 @@ test("@cross-browser loads the editor, routes focus, and protects unsaved work",
     .poll(() => page.evaluate(() => document.activeElement?.tagName))
     .not.toBe("BODY");
 
-  const newButton = page.getByRole("button", { name: "New", exact: true });
-  await newButton.focus();
+  const fileButton = page.getByRole("button", { name: "File", exact: true });
+  await fileButton.focus();
   await page.keyboard.press("Tab");
-  await expect(newButton).not.toBeFocused();
+  await expect(fileButton).not.toBeFocused();
 
   await page.getByRole("textbox", { name: "Project name" }).fill("QA draft");
-  await newButton.click();
+  await chooseFileAction(page, "New");
   const confirmation = page.getByRole("alertdialog", {
     name: "Start a new project?",
   });
@@ -129,9 +137,7 @@ test("two editor tabs preserve concurrent project saves", async ({
     );
 
     for (const editorPage of [page, secondPage]) {
-      await editorPage
-        .getByRole("button", { name: "Load", exact: true })
-        .click();
+      await chooseFileAction(editorPage, "Load");
       const projectsDialog = editorPage.getByRole("dialog", {
         name: "Load a saved project",
       });
@@ -166,8 +172,11 @@ for (const viewport of responsiveViewports) {
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /^Export/ })).toBeVisible();
 
-    await page.getByRole("button", { name: "Actions", exact: true }).click();
-    const menu = page.getByRole("menu", { name: "More project actions" });
+    await expect(
+      page.getByRole("button", { name: "Learn", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "File", exact: true }).click();
+    const menu = page.getByRole("menu", { name: "File" });
     await expect(menu).toBeVisible();
     await expect(
       menu.getByRole("menuitem", { name: "Templates", exact: true }),
@@ -294,7 +303,7 @@ test("the template library footer remains reachable at 720px height", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await openEditor(page);
-  await page.getByRole("button", { name: "Templates", exact: true }).click();
+  await chooseFileAction(page, "Templates");
 
   const dialog = page.getByRole("dialog", { name: "Effect templates" });
   const footer = dialog.locator(":scope > footer");

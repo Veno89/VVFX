@@ -14,6 +14,11 @@ import { MAX_UPLOAD_FILES } from "../src/vfx/inputLimits";
 import type { VfxAsset, VfxProject } from "../src/vfx/types";
 import { portableImageFile, validPngDataUrl } from "./fixtures/portableImages";
 
+function chooseFileAction(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "File" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 const alphaMaskImport = vi.hoisted(() => ({
   prepareAlphaMaskFromDataUrl: vi.fn(),
 }));
@@ -245,7 +250,7 @@ describe("asynchronous asset mutation integrity", () => {
         1,
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    chooseFileAction("New");
     fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), {
       target: { value: "Replacement project" },
     });
@@ -335,7 +340,7 @@ describe("asynchronous asset mutation integrity", () => {
         1,
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    chooseFileAction("New");
     fireEvent.click(
       screen.getByRole("button", {
         name: "Discard changes and start new",
